@@ -3,12 +3,24 @@
 import os
 from pathlib import Path
 
+"""
+Add the following environment variables to the host:
+    DJANGO_SECRET_KEY
+    DEBUG
+    ALLOWED_HOSTS
+    DJANGO_SETTINGS_MODULE = An_Tir_Authorization.settings
+    EMAIL_HOST_USER
+    EMAIL_HOST_PASSWORD
+"""
+
+
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY")
-DEBUG = os.environ.get("DEBUG") == "True"  # Convert string to boolean
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",")
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") # Stored in the environment
+DEBUG = os.environ.get("DEBUG") == "True"  # Stored in the environment
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",") # Stored in the environment
 
 DATABASES = {
     'default': {
@@ -28,9 +40,10 @@ CACHES = {
 # Email configuration using Gmail
 EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
 EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')  # Must be set in the environment
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')  # Must be set in the environment
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')  # Stored in the environment
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')  # Stored in the environment
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 
 # Static files (CSS, JavaScript, Images)

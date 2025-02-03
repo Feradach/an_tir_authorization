@@ -1,5 +1,6 @@
 from dateutil.relativedelta import relativedelta
 from django.core.mail import send_mail
+from django.conf import settings
 import random
 import string
 from django.db import transaction
@@ -693,7 +694,7 @@ def add_fighter(request):
                 'Your Account Has Been Created',
                 f'Your account has been created. Your email is your username: {person_form.cleaned_data['username']}. Use this password to log in: {random_password}\n'
                 f'Please reset your password after logging in.',
-                'no-reply@example.com',
+                settings.DEFAULT_FROM_EMAIL,
                 [user.email],
                 fail_silently=False,
             )
