@@ -1,6 +1,7 @@
 # An Tir Authorization Database
 
-## Video Demo:  https://youtu.be/jYRtl7xnbRw
+## Video Demo:
+[https://youtu.be/jYRtl7xnbRw](https://youtu.be/jYRtl7xnbRw)
 
 ## Description:
 The Society for Creative Anachronism (SCA) is a historical society that attempts to recreate pre-1600's life.
@@ -9,7 +10,7 @@ a person must be authorized to ensure that they know the rules and are capable o
 
 An Tir is a kingdom of the SCA that covers Oregon, Washington, and British Columbia. They maintain an online
 database of authorized fighters and marshals (safety officers) for the various combat sports. That database 
-can be viewed here: https://antirlists.org/
+can be viewed [here](https://antirlists.org/).
 
 The current database is outdated and has many errors. Its functionality is limited to only a lookup feature.
 In order to add new authorizations a marshal must fill out a paper form and email it in to the kingdom officer
