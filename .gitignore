@@ -18,7 +18,6 @@ venv.bak/
 # Django stuff:
 *.log
 local_settings.py
-production_settings.py
 db.sqlite3
 
 # If your Django app stores media or static files that are generated
