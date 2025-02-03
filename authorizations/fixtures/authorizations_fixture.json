@@ -896,6 +896,34 @@
   }
 },
 {
+  "model": "authorizations.user",
+  "pk": 33,
+  "fields": {
+    "password": "pbkdf2_sha256$870000$TeL3wdnJHCF7EHZUADbWvU$/Uch7wxLPHYJOLOSHNciRBq/u+3F7wtOK+p4ZY7wqO0=",
+    "last_login": null,
+    "is_superuser": false,
+    "username": "piaras2013@gmail.com",
+    "first_name": "Daniel",
+    "last_name": "Tharp",
+    "email": "piaras2013@gmail.com",
+    "is_staff": false,
+    "is_active": true,
+    "date_joined": "2025-02-03T20:26:44.849Z",
+    "membership": 454545454,
+    "membership_expiration": "2026-02-28",
+    "address": "372 Wilson Road",
+    "address2": "",
+    "city": "Central Point",
+    "state_province": "Oregon",
+    "postal_code": "97502",
+    "country": "United States",
+    "birthday": "1983-06-02",
+    "has_logged_in": false,
+    "groups": [],
+    "user_permissions": []
+  }
+},
+{
   "model": "authorizations.region",
   "pk": 1,
   "fields": {
@@ -1015,7 +1043,7 @@
   "model": "authorizations.branch",
   "pk": 12,
   "fields": {
-    "name": "Shire of Glyn Dwfn",
+    "name": "Barony of Glyn Dwfn",
     "region": 3
   }
 },
@@ -1883,7 +1911,17 @@
   "model": "authorizations.person",
   "pk": 32,
   "fields": {
-    "sca_name": "Taran Dµstingr",
+    "sca_name": "Taran Daestingr",
+    "branch": 12,
+    "is_minor": false,
+    "parent": null
+  }
+},
+{
+  "model": "authorizations.person",
+  "pk": 33,
+  "fields": {
+    "sca_name": "Piaras mac Toirdhealbhaigh",
     "branch": 12,
     "is_minor": false,
     "parent": null
@@ -4690,6 +4728,116 @@
     "person": 32,
     "style": 8,
     "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 256,
+  "fields": {
+    "person": 33,
+    "style": 14,
+    "status": 2,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 257,
+  "fields": {
+    "person": 33,
+    "style": 23,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 258,
+  "fields": {
+    "person": 33,
+    "style": 24,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 259,
+  "fields": {
+    "person": 33,
+    "style": 25,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 260,
+  "fields": {
+    "person": 33,
+    "style": 26,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 261,
+  "fields": {
+    "person": 33,
+    "style": 32,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 262,
+  "fields": {
+    "person": 33,
+    "style": 33,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 263,
+  "fields": {
+    "person": 33,
+    "style": 34,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 264,
+  "fields": {
+    "person": 33,
+    "style": 35,
+    "status": 1,
+    "marshal": 1,
+    "expiration": "2029-02-03"
+  }
+},
+{
+  "model": "authorizations.authorization",
+  "pk": 265,
+  "fields": {
+    "person": 33,
+    "style": 8,
+    "status": 2,
     "marshal": 1,
     "expiration": "2029-02-03"
   }
