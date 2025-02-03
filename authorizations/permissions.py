@@ -219,7 +219,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
     # Rule 14: In order to authorize someone in Mounted Archery, Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting,
     # the Senior Marshal must have the same Authorizations.
     if style.name in ['Mounted Archery', 'Crest Combat', 'Mounted Heavy Combat', 'Driving', 'Foam-Tipped Jousting']:
-        if not Authorization.objects.filter(person=marshal.person, style__name=style.name, status__name='Active').exists():
+        if not Authorization.objects.filter(person=marshal.person, style__name=style.name, style__discipline__name="Equestrian", status__name='Active').exists():
             return False, f'Must be authorized in {style.name} to authorize other participants.'
 
     # Rule 15: Junior and Senior marshals must be current members.
@@ -228,11 +228,11 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             return False, 'Must be a current member to be authorized as a marshal.'
 
     # Rule 16: You cannot renew a revoked authorization.
-    if all_authorizations.filter(style__name=style.name, status__name='Revoked').exists():
+    if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name='Revoked').exists():
         return False, 'Cannot renew a revoked authorization.'
 
     # Rule 17: Cannot duplicate/renew a pending authorization.
-    if all_authorizations.filter(style__name=style.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
+    if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
         return False, 'Cannot renew a pending authorization.'
 
     # Rule 18: Cannot make someone a junior marshal if they are already a senior marshal.
