@@ -1,0 +1,50 @@
+from django.test import TestCase
+from django.urls import reverse
+from authorizations.tests.setup_database import setup_test_database
+from authorizations.models import User, Region, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
+from authorizations.permissions import membership_is_current, is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization
+from authorizations.views import index, login_view, logout_view, search, fighter, generate_fighter_card, get_weapon_styles, generate_random_password, add_fighter, password_reset, add_authorization, user_account, reject_authorization, manage_sanctions, issue_sanctions, create_sanction, branch_marshals, appoint_branch_marshal
+
+"""
+Tests:
+Index:
+Which pending authorizations are returned based on the user role?
+
+add_fighter:
+Can add a fighter that follows the rules
+- Add maximum user
+- Add minimum user
+- Minor must have a birthday
+- Membership number must be unique
+- Membership expiration and number must be both present or both absent
+- User creation rejected if authorization violates rules
+- User creation approved if authorization follows rules
+
+add_authorization:
+- marshal authorizations are set to pending
+- new authorization can be added if it follows the rules
+- existing authorization can be updated if it follows the rules
+
+my_account:
+- Can update user information
+
+branch_marshal:
+- Can add a branch marshal
+- Cannot add a junior marshal as a regional marshal
+- Can add a junior marshal as a local branch marshal
+- Cannot add someone who doesn't have a marshal in the same discipline
+- Cannot add someone who is already a branch marshal
+"""
+# Create your tests here.
+class IndexViewTest(TestCase):
+    """Test the Index page"""
+
+    @classmethod
+    def setUpTestData(cls):
+        # This is very slow, so I am going to try and avoid using the database.
+        cls.data = setup_test_database()
+
+    def test_anonymous_view(self):
+        response = self.client.get(reverse('index'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'authorizations/index.html')

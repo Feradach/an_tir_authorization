@@ -1,0 +1,99 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    User Account {{ user.person.sca_name }}
+{% endblock %}
+{% block body %}
+    {% if messages %}
+            <div id="messages-container">
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }}" role="alert">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+<div class="card">
+    <div class="col-md-4">
+            <div class="mb-3">
+                <h2>User Account: {{ user.person.sca_name }}</h2>
+                <p><strong>Email:</strong> {{ user.email }}</p>
+                <p><strong>Username:</strong> {{ user.username }}</p>
+                <p><strong>First Name:</strong> {{ user.first_name }}</p>
+                <p><strong>Last Name:</strong> {{ user.last_name }}</p>
+                <p><strong>Membership:</strong> {{ user.membership }}</p>
+                <p><strong>Membership Expiration:</strong> {{ user.membership_expiration }}</p>
+                <p><strong>Address:</strong> {{ user.address }}
+                    {% if user.address2 %}
+                        <br>{{ user.address2 }}
+                    {% endif %}</p>
+                <p><strong>City:</strong> {{ user.city }}</p>
+                <p><strong>State/Province:</strong> {{ user.state_province }}</p>
+                <p><strong>Postal Code:</strong> {{ user.postal_code }}</p>
+                <p><strong>Country:</strong> {{ user.country }}</p>
+                <p><strong>Birthday:</strong> {{ user.birthday }}</p>
+                <p><strong>SCA Name:</strong> {{ user.person.sca_name }}</p>
+                <p><strong>Branch:</strong> {{ user.person.branch.name }}</p>
+                <p><strong>Is Minor:</strong> {{ user.person.is_minor }}</p>
+                <p><strong>Parent:</strong> {{ user.person.parent_id.name }}</p>
+            </div>
+    </div>
+</div>
+<div class="card">
+    <div class="col-md-4">
+            <div class="mb-3">
+                <h3>View Fighter Card</h3>
+                <a href="{% url 'fighter' person_id=user.id %}" class="btn btn-primary">View fighter card</a><br>
+            </div>
+    </div>
+</div>
+{% if children %}
+    <div class="card">
+        <div class="col-md-4">
+                <div class="mb-3">
+                    <h3>Children</h3>
+                    {% for child in children %}
+                        <p><a href="{% url 'user_account' user_id=child.id %}" class="btn btn-primary">View {{ child.sca_name }}'s Account</a></p>
+                    {% endfor %}
+                </div>
+        </div>
+    </div>
+{% endif %}
+
+<div class="card">
+    <div class="col-md-4">
+            <div class="mb-3">
+                <h3>Change Password</h3>
+                <a href="{% url 'password_reset' user.id %}" class="btn btn-primary">Change Password</a>
+            </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="col-md-4">
+            <div class="mb-3">
+                <h3>Edit Your Information</h3>
+                {% if messages %}
+                    <div id="messages-container">
+                        {% for message in messages %}
+                            <div class="alert alert-{{ message.tags }}" role="alert">
+                                {{ message }}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                <form method="post">
+                    {% csrf_token %}
+                    {{ form.as_p }}
+                    <button type="submit" class="btn btn-primary">Save Changes</button>
+                </form>
+            </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+
+{% endblock %}

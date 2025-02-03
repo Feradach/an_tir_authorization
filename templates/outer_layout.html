@@ -1,0 +1,16 @@
+{% extends "layout.html" %}
+{% load static %}
+
+{% block navbar %}
+        <a href="{% url 'homepage' %}" class="nav-link">Home</a>
+        <a href="{% url 'contact' %}" class="nav-link">Contact</a>
+        <a href="{% url 'forms' %}" class="nav-link">Forms</a>
+        <a href="{% url 'index' %}" class="nav-link">Authorizations</a>
+{% endblock %}
+
+{% block hamburger %}
+    <li><a href="{% url 'homepage' %}" class="hamburger-link">Home</a></li>
+    <li><a href="{% url 'contact' %}" class="hamburger-link">Contact</a></li>
+    <li><a href="{% url 'forms' %}" class="hamburger-link">Forms</a></li>
+    <li><a href="{% url 'index' %}" class="hamburger-link">Authorizations</a></li>
+{% endblock %}

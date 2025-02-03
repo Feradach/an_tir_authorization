@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% load static %}
+
+{% block navbar %}
+    <a href="{% url 'homepage' %}" class="nav-link">Home</a>
+    <a href="{% url 'index' %}" class="nav-link">Authorizations Homepage</a>
+    <a href="{% url 'search' %}?goal=search" class="nav-link">Search</a>
+    <a href="{% url 'search' %}" class="nav-link">Browse</a>
+    {% if user.is_authenticated %}
+        <a href="{% url 'user_account' user_id=user.id %}" class="nav-link">My Account</a>
+        <a href="{% url 'logout' %}" class="nav-link">Logout</a>
+    {% else %}
+        <a href="{% url 'login' %}" class="nav-link">Login</a>
+    {% endif %}
+{% endblock %}
+
+{% block hamburger %}
+    <li><a href="{% url 'homepage' %}" class="hamburger-link">Home</a></li>
+    <li><a href="{% url 'index' %}" class="hamburger-link">Authorizations Homepage</a></li>
+    <li><a href="{% url 'search' %}?goal=search" class="hamburger-link">Search</a></li>
+    <li><a href="{% url 'search' %}" class="hamburger-link">Browse</a></li>
+    {% if user.is_authenticated %}
+        <li><a href="{% url 'user_account' user_id=user.id %}" class="hamburger-link">My Account</a></li>
+        <li><a href="{% url 'logout' %}" class="hamburger-link">Logout</a></li>
+    {% else %}
+        <li><a href="{% url 'login' %}" class="hamburger-link">Login</a></li>
+    {% endif %}
+{% endblock %}

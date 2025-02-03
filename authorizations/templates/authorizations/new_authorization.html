@@ -1,0 +1,126 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Register a New Fighter
+{% endblock %}
+
+{% block body %}
+    {% if messages %}
+        <div id="messages-container">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}" role="alert">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+    <form method="post" id="new_authorization_form">
+        {% csrf_token %}
+        <h3>Fighter Information</h3>
+        {{ person_form.as_p }}
+
+        <h3>Authorization Information</h3>
+        <label for="discipline-select">Discipline:</label>
+        <select id="discipline-select" name="discipline" class="form-control">
+            <option value="">Select Discipline</option>
+            {% for discipline in auth_form.fields.discipline.queryset %}
+            <option value="{{ discipline.id }}">{{ discipline.name }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="weapon-styles-select">Weapon Styles:</label>
+        <select id="weapon-styles-select" name="weapon_styles" class="form-control" size="5" multiple>
+            <!-- Dynamically populated by JavaScript -->
+        </select>
+
+        <div id="cart-container">
+            <h3>Selected Styles</h3>
+            <!-- Cart items will be dynamically added here -->
+        </div>
+
+        <button type="submit" class="btn btn-primary mt-3">Submit</button>
+    </form>
+
+{% endblock %}
+
+{% block script %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const disciplineSelect = document.getElementById('discipline-select');
+        const stylesSelect = document.getElementById('weapon-styles-select');
+        const cartContainer = document.getElementById('cart-container');
+        const form = document.querySelector('form');
+
+        console.log('Initial Discipline Dropdown Content:', disciplineSelect.innerHTML);
+        console.log('Initial Weapon Styles Dropdown Content:', stylesSelect.innerHTML);
+
+        // Fetch weapon styles when discipline is selected
+        disciplineSelect.addEventListener('change', function () {
+            const disciplineId = this.value;
+            stylesSelect.innerHTML = ''; // Clear existing styles
+
+            if (disciplineId) {
+                fetch(`/authorizations/api/styles/${disciplineId}/`)
+                    .then(response => response.json())
+                    .then(data => {
+                        data.styles.forEach(style => {
+                            const option = document.createElement('option');
+                            option.value = style.id;
+                            option.textContent = style.name;
+                            stylesSelect.appendChild(option);
+                        });
+                    });
+            }
+        });
+
+        // Add selected style to the cart
+        stylesSelect.addEventListener('change', function () {
+            const selectedStyle = stylesSelect.options[stylesSelect.selectedIndex];
+            if (!selectedStyle) return;
+
+            // Check if the style is already in the cart
+            if ([...cartContainer.querySelectorAll('.cart-item')].some(item => item.dataset.styleId === selectedStyle.value)) {
+                alert('This style is already in the cart!');
+                return;
+            }
+
+            // Add to cart
+            const cartItem = document.createElement('div');
+            cartItem.className = 'cart-item';
+            cartItem.textContent = selectedStyle.textContent;
+            cartItem.dataset.styleId = selectedStyle.value;
+
+            // Add hidden input for submission
+            const hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.name = 'weapon_styles';
+            hiddenInput.value = selectedStyle.value;
+
+            cartItem.appendChild(hiddenInput);
+
+            // Add remove button
+            const removeButton = document.createElement('button');
+            removeButton.textContent = 'Remove';
+            removeButton.type = 'button';
+            removeButton.addEventListener('click', function () {
+                cartItem.remove();
+            });
+
+            cartItem.appendChild(removeButton);
+            cartContainer.appendChild(cartItem);
+        });
+
+        // Ensure all cart items are included in form submission
+        form.addEventListener('submit', function (event) {
+            const cartItems = cartContainer.querySelectorAll('.cart-item input[name="weapon_styles"]');
+            if (cartItems.length === 0) {
+                event.preventDefault();
+                alert('Please add at least one weapon style to the cart.');
+                return;
+            }
+        });
+    });
+</script>
+
+{% endblock %}

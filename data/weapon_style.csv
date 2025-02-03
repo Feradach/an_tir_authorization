@@ -1,0 +1,53 @@
+id,name,discipline_id
+1,Authorization Officer,1
+2,Earl Marshal,2
+3,Senior Marshal,3
+4,Senior Marshal,4
+5,Senior Marshal,5
+6,Senior Marshal,6
+7,Senior Marshal,7
+8,Senior Marshal,8
+9,Senior Marshal,9
+10,Senior Marshal,10
+11,Senior Marshal,11
+12,Senior Marshal,12
+13,Junior Marshal,3
+14,Junior Marshal,4
+15,Junior Marshal,5
+16,Junior Marshal,6
+17,Junior Marshal,7
+18,Junior Marshal,8
+19,Junior Marshal,9
+20,Junior Marshal,10
+21,Junior Marshal,11
+22,Junior Marshal,12
+23,Single Sword,4
+24,Sword & Offensive Secondary,4
+25,Sword & Defensive Secondary,4
+26,Two-Handed Sword,4
+27,Spear,4
+28,Siege Crew,6
+29,Bow & Arrow,7
+30,Crossbow,7
+31,Hand Thrown Weapons,7
+32,Single Sword,8
+33,Sword & Offensive Secondary,8
+34,Sword & Defensive Secondary,8
+35,Two-Handed Sword,8
+36,Spear,8
+37,Weapon & Shield,9
+38,Two-Handed,9
+39,Spear,9
+40,Junior Ground Crew,10
+41,Senior Ground Crew,10
+42,General Riding,10
+43,Mounted Gaming,10
+44,Mounted Archery,10
+45,Crest Combat,10
+46,Foam-Tipped Jousting,10
+47,Mounted Heavy Combat,10
+48,Driving,10
+49,Weapon & Shield,11
+50,Two-Handed,11
+51,Single Sword,12
+52,Sword & Defensive Secondary,12

@@ -1,0 +1,134 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Issue Sanctions
+{% endblock %}
+
+{% block body %}
+<h2>Issue Sanctions Against</h2>
+<h4><a href="{% url 'fighter' person_id=person.id %}">{{ person.sca_name }}</a></h4>
+{% if messages %}
+    <div id="messages-container">
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}" role="alert">
+                {{ message }}
+            </div>
+        {% endfor %}
+    </div>
+{% endif %}
+<p><strong>Select a Discipline</strong></p>
+<p>
+    <form method="get" id="disciplineForm">
+        <select id="discipline" name="discipline" class="choices-dropdown">
+            <option value="">Select Discipline</option>
+            {% for option in all_disciplines %}
+                <option value="{{ option.id }}" {% if discipline and discipline.id == option.id %}selected{% endif %}>
+                    {{ option }}
+                </option>
+            {% endfor %}
+        </select>
+    </form>
+</p>
+<p><strong>Select a Style</strong></p>
+<p>
+    <form method="get" id="styleForm">
+        <select id="style" name="style" class="choices-dropdown">
+            <option value="">Select Style</option>
+            {% for option in styles %}
+                <option value="{{ option.id }}" {% if request.GET.style == option.id|stringformat:"s" %}selected{% endif %}>
+                    {{ option }}
+                </option>
+            {% endfor %}
+        </select>
+    </form>
+</p>
+<form method="post">
+    {% csrf_token %}
+    <input type="hidden" id="sanction_type" name="sanction_type" value="">
+    <input type="hidden" id="discipline_id" name="discipline_id" value="">
+    <input type="hidden" id="style_id" name="style_id" value="">
+
+    <button type="submit" id="sanctionDiscipline" class="btn btn-danger">Sanction by Discipline</button>
+    <button type="submit" id="sanctionStyle" class="btn btn-warning">Sanction by Style</button>
+</form>
+
+{% endblock %}
+
+{% block script %}
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        let disciplineDropdown = document.getElementById("discipline");
+        let styleDropdown = document.getElementById("style");
+
+        disciplineDropdown.addEventListener("change", function() {
+            let selectedDiscipline = disciplineDropdown.value;
+            console.log("Selected Discipline:", selectedDiscipline);
+
+            // If no discipline is selected, clear the style dropdown
+            if (!selectedDiscipline) {
+                console.log("No discipline selected");
+                styleDropdown.innerHTML = '<option value="">Select Style</option>';
+                return;
+            }
+
+            console.log(`Fetching styles from /api/styles/${selectedDiscipline}/`);
+
+            // Fetch styles via AJAX
+            fetch(`/authorizations/api/styles/${selectedDiscipline}/`)  // Now using the existing function
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Received data:", data);
+                    if (data.styles) {
+                        // Clear and populate styles
+                        styleDropdown.innerHTML = '<option value="">Select Style</option>';
+                        data.styles.forEach(style => {
+                            let option = document.createElement("option");
+                            option.value = style.id;
+                            option.textContent = style.name;
+                            styleDropdown.appendChild(option);
+                        });
+                    }
+                })
+                .catch(error => console.error("Error fetching styles:", error));
+        });
+    });
+
+    document.addEventListener("DOMContentLoaded", function() {
+        let disciplineDropdown = document.getElementById("discipline");
+        let styleDropdown = document.getElementById("style");
+
+        let sanctionTypeInput = document.getElementById("sanction_type");
+        let disciplineInput = document.getElementById("discipline_id");
+        let styleInput = document.getElementById("style_id");
+
+        let sanctionDisciplineButton = document.getElementById("sanctionDiscipline");
+        let sanctionStyleButton = document.getElementById("sanctionStyle");
+
+        // Sanction by Discipline Button
+        sanctionDisciplineButton.addEventListener("click", function(event) {
+            if (!disciplineDropdown.value) {
+                alert("Please select a discipline before sanctioning.");
+                event.preventDefault();
+                return;
+            }
+            sanctionTypeInput.value = "discipline";
+            disciplineInput.value = disciplineDropdown.value;
+            styleInput.value = "";  // Clear style input
+        });
+
+        // Sanction by Style Button
+        sanctionStyleButton.addEventListener("click", function(event) {
+            if (!styleDropdown.value) {
+                alert("Please select a style before sanctioning.");
+                event.preventDefault();
+                return;
+            }
+            sanctionTypeInput.value = "style";
+            styleInput.value = styleDropdown.value;
+            disciplineInput.value = "";  // Clear discipline input
+        });
+    });
+
+</script>
+{% endblock %}

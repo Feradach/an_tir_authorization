@@ -1,0 +1,40 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Django stuff:
+*.log
+local_settings.py
+production_settings.py
+db.sqlite3
+
+# If your Django app stores media or static files that are generated
+# (if they're user-uploaded or created by Django), you might consider
+# ignoring those directories. Adjust as needed.
+# /media/
+# /static/
+
+# PyCharm files
+.idea/
+
+# VS Code files (if you ever use them)
+.vscode/
+
+# MacOS files
+.DS_Store
+
+# Windows thumbnail cache files
+Thumbs.db
