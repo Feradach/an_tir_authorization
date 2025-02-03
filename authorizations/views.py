@@ -692,7 +692,7 @@ def add_fighter(request):
             # Send the password via email
             send_mail(
                 'Your Account Has Been Created',
-                f'Your account has been created. Your email is your username: {person_form.cleaned_data['username']}. Use this password to log in: {random_password}\n'
+                f'Your account has been created. Your email is your username: {person_form.cleaned_data["username"]}. Use this password to log in: {random_password}\n'
                 f'Please reset your password after logging in.',
                 settings.DEFAULT_FROM_EMAIL,
                 [user.email],
