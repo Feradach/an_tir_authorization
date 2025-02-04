@@ -899,7 +899,7 @@
   "model": "authorizations.user",
   "pk": 33,
   "fields": {
-    "password": "pbkdf2_sha256$870000$TeL3wdnJHCF7EHZUADbWvU$/Uch7wxLPHYJOLOSHNciRBq/u+3F7wtOK+p4ZY7wqO0=",
+    "password": "pbkdf2_sha256$870000$lYPB0fFHRkCGmLvSUHLJsn$cRTkXjuUM1yzTsIj47um9e2F3SLmJeI/CTpJH+roawo=",
     "last_login": null,
     "is_superuser": false,
     "username": "piaras2013@gmail.com",
@@ -918,7 +918,7 @@
     "postal_code": "97502",
     "country": "United States",
     "birthday": "1983-06-02",
-    "has_logged_in": false,
+    "has_logged_in": true,
     "groups": [],
     "user_permissions": []
   }
