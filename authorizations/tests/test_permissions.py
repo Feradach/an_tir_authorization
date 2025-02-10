@@ -1,8 +1,11 @@
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 from django.test import TestCase, RequestFactory
+from win32com.client.gencache import clsidToTypelib
+
 from authorizations.models import User, Region, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
 from authorizations.permissions import authorization_follows_rules, approve_authorization, calculate_age
+from authorizations.views import branch_marshals
 
 """
 Tests:
@@ -865,6 +868,7 @@ class ApprovalTestRule1(TestCase):
     def setUpTestData(cls):
         cls.region_an_tir = Region.objects.create(name='An Tir')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
@@ -888,11 +892,11 @@ class ApprovalTestRule1(TestCase):
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
         cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
         cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
-        cls.style_auth_officer = WeaponStyle.objects.create(name='Authorization Officer', discipline=cls.discipline_auth_officer)
 
-        cls.auth_marshal_auth_officer = Authorization.objects.create(person=cls.person_marshal, style=cls.style_auth_officer,
-                                                                  status=cls.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1), marshal=cls.person_marshal)
+        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.branch_an_tir, person=cls.person_marshal,
+                                                               discipline=cls.discipline_auth_officer,
+                                                               start_date=date.today() - relativedelta(years=1),
+                                                               end_date=date.today() + relativedelta(years=1))
         cls.auth_adult_jm_armored = Authorization.objects.create(person=cls.person_adult,
                                                                  style=cls.style_jm_armored,
                                                                  status=cls.status_active,
@@ -1215,7 +1219,9 @@ class ApprovalTestRule5(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.region_an_tir = Region.objects.create(name='An Tir')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
+        cls.region_summits = Region.objects.create(name='Summits')
+        cls.branch_summits = Branch.objects.create(name='Summits', region=cls.region_summits)
+        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_summits)
         cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -1369,7 +1375,7 @@ class ApprovalTestRule5(TestCase):
                          'Missile Senior Marshal authorization approved!')
 
 
-    def test_must_(self):
+    def test_kingdom_must_approve_youth_marshal(self):
         discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
         style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal',
                                                                 discipline=discipline_youth_armored)
@@ -1407,6 +1413,55 @@ class ApprovalTestRule5(TestCase):
                          'Youth Armored Senior Marshal authorization ready for kingdom to confirm background check!')
         self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=style_sm_youth_armored,
                                                      status=self.status_kingdom).exists())
+
+    def test_earl_marshal(self):
+        discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
+        discipline_archery = Discipline.objects.create(name='Archery')
+        style_sm_archery = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_archery)
+        region_tir_righ = Region.objects.create(name='Tir Righ')
+        branch_tir_righ = Branch.objects.create(name='Tir Righ', region=region_tir_righ)
+
+        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=branch_tir_righ, person=self.person_marshal,
+                                                               discipline=discipline_earl_marshal,
+                                                               start_date=date.today() - relativedelta(years=1),
+                                                               end_date=date.today() + relativedelta(years=1))
+
+        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=self.branch_summits, person=self.person_other_marshal,
+                                                                    discipline=discipline_earl_marshal,
+                                                                    start_date=date.today() - relativedelta(years=1),
+                                                                    end_date=date.today() + relativedelta(years=1))
+
+        authorization_need_regional = Authorization.objects.create(person=self.person_adult, style=style_sm_archery,
+                                                                   status=self.status_regional, expiration=date.today() + relativedelta(years=1),
+                                                                     marshal=self.person_marshal)
+
+        # Prepare request
+        post_data = {'authorization_id': str(authorization_need_regional.id)}
+        request = self.factory.post('/dummy-url/', data=post_data)
+        request.user = self.user_marshal
+
+        # Do the test
+        # NEGATIVE: authorization_need_regional does not become approved because not in the region
+        result, message = approve_authorization(request)
+        self.assertFalse(result)
+        self.assertEqual(message,
+                         'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+        self.assertFalse(Authorization.objects.filter(person=self.person_adult, style=style_sm_archery,
+                                                     status=self.status_active).exists())
+
+        # Prepare request
+        post_data = {'authorization_id': str(authorization_need_regional.id)}
+        request = self.factory.post('/dummy-url/', data=post_data)
+        request.user = self.user_other_marshal
+
+        # POSITIVE: authorization_need_regional becomes approved
+        result, message = approve_authorization(request)
+        self.assertTrue(result)
+        self.assertEqual(message,
+                         'Archery Senior Marshal authorization approved!')
+        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=style_sm_archery,
+                                                     status=self.status_active).exists())
+
 
 
 class ApprovalTestRule6(TestCase):
@@ -1485,4 +1540,5 @@ class ApprovalTestRule6(TestCase):
         self.assertFalse(result)
         self.assertEqual(message,
                          'You must be the kingdom authorization officer to approve this authorization.')
+
 

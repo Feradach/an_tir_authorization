@@ -22,9 +22,15 @@ def is_senior_marshal(user, discipline=None):
     Checks if the user has an active Senior Marshal status for the given discipline.
     """
 
+    if is_kingdom_authorization_officer(user):
+        return True
+
+    if is_kingdom_earl_marshal(user):
+        return True
+
     query = Authorization.objects.filter(
         person__user=user,
-        style__name__in=['Senior Marshal', 'Earl Marshal', 'Authorization Officer'],
+        style__name='Senior Marshal',
         expiration__gte=date.today(),
         status__name = 'Active'
     )
@@ -33,7 +39,7 @@ def is_senior_marshal(user, discipline=None):
         return False
 
     if discipline:
-        query = query.filter(style__discipline__name__in=[discipline, 'Earl Marshal', 'Authorization Officer'])
+        query = query.filter(style__discipline__name=discipline)
 
     return query.exists()
 
@@ -60,7 +66,7 @@ def is_branch_marshal(user, branch=None, discipline=None):
     return query.exists()
 
 
-def is_regional_marshal(user, discipline=None):
+def is_regional_marshal(user, discipline=None, region=None):
     """
     Checks if the user is a current Regional Marshal for the given discipline or is the Earl Marshal.
     """
@@ -70,6 +76,9 @@ def is_regional_marshal(user, discipline=None):
     if is_kingdom_authorization_officer(user):
         return True
 
+    if is_kingdom_earl_marshal(user):
+        return True
+
     if discipline:
         if is_kingdom_marshal(user, discipline):
             return True
@@ -77,11 +86,18 @@ def is_regional_marshal(user, discipline=None):
         if is_kingdom_marshal(user):
             return True
 
-    query = BranchMarshal.objects.filter(
-        person__user=user,
-        branch__name__in=all_region_names,
-        end_date__gte=date.today(),
-    )
+    if region:
+        query = BranchMarshal.objects.filter(
+            person__user=user,
+            branch__name=region,
+            end_date__gte=date.today(),
+        )
+    else:
+        query = BranchMarshal.objects.filter(
+            person__user=user,
+            branch__name__in=all_region_names,
+            end_date__gte=date.today(),
+        )
 
     if discipline:
         query = query.filter(discipline__name__in=[discipline, 'Earl Marshal'])
@@ -92,6 +108,13 @@ def is_kingdom_marshal(user, discipline=None):
     """
     Checks if the user is a current Kingdom Marshal for the given discipline or is the Earl Marshal.
     """
+
+    if is_kingdom_authorization_officer(user):
+        return True
+
+    if is_kingdom_earl_marshal(user):
+        return True
+
     query = BranchMarshal.objects.filter(
         person__user=user,
         branch__name='An Tir',
@@ -99,7 +122,7 @@ def is_kingdom_marshal(user, discipline=None):
     )
 
     if discipline:
-        query = query.filter(discipline__name__in=[discipline, 'Earl Marshal'])
+        query = query.filter(discipline__name=discipline)
 
     if not membership_is_current(user):
         return False
@@ -111,16 +134,36 @@ def is_kingdom_authorization_officer(user):
     """
     Checks if the user is a current Kingdom Authorization Officer for the given discipline.
     """
-    query = Authorization.objects.filter(
+
+    query = BranchMarshal.objects.filter(
         person__user=user,
-        style__name='Authorization Officer',
-        expiration__gte=date.today()
+        branch__name='An Tir',
+        discipline__name='Authorization Officer',
+        end_date__gte=date.today(),
     )
 
     if not membership_is_current(user):
         return False
 
     return query.exists()
+
+
+def is_kingdom_earl_marshal(user):
+    """
+    Checks if the user is a current Earl Marshal.
+    """
+    query = BranchMarshal.objects.filter(
+        person__user=user,
+        branch__name='An Tir',
+        discipline__name='Earl Marshal',
+        end_date__gte=date.today(),
+    )
+
+    if not membership_is_current(user):
+        return False
+
+    return query.exists()
+
 
 def authorization_follows_rules(marshal, existing_fighter, style_id):
     """Will need marshal, fighter, style.
@@ -278,6 +321,7 @@ def approve_authorization(request):
 
     marshal = request.user
     authorization = Authorization.objects.get(id=request.POST['authorization_id'])
+    auth_region = authorization.person.branch.region.name
     discipline = authorization.style.discipline.name
 
     active_status = AuthorizationStatus.objects.get(name='Active')
@@ -299,17 +343,15 @@ def approve_authorization(request):
             remove_junior_marshal(authorization)
         return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
-    # Rule 2: must be a senior marshal in the discipline to approve (exception for missile marshal concurence).
-    if not is_senior_marshal(marshal, discipline):
-        if not (authorization.style.discipline.name == 'Missile' and is_senior_marshal(marshal, 'Armored')):
-            return False, 'You must be a senior marshal in this discipline to approve this authorization.'
 
-    # Rule 3: Cannot concur with an authorization you proposed.
-    if authorization.marshal.user == marshal:
-        return False, 'You cannot concur with your own authorization.'
-
-    # Rule 4: If a pending authorization for Senior marshal is approved, it then goes to the region for approval.
     if authorization.status.name == 'Pending':
+        # Rule 2: must be a senior marshal in the discipline to approve (exception for missile marshal concurence).
+        if not is_senior_marshal(marshal, discipline):
+            return False, 'You must be a senior marshal in this discipline to approve this authorization.'
+        # Rule 3: Cannot concur with an authorization you proposed.
+        if authorization.marshal.user == marshal:
+            return False, 'You cannot concur with your own authorization.'
+        # Rule 4: If a pending authorization for Senior marshal is approved, it then goes to the region for approval.
         if authorization.style.name == 'Senior Marshal':
             authorization.status = regional_status
             authorization.save()
@@ -327,12 +369,14 @@ def approve_authorization(request):
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored can approve Missile).
-    if authorization.status.name == 'Needs Regional Approval':
+    elif authorization.status.name == 'Needs Regional Approval':
+        if not is_regional_marshal(marshal, region=auth_region):
+            return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
         if authorization.style.discipline.name == 'Missile':
-            if not is_regional_marshal(marshal, 'Missile') and not is_regional_marshal(marshal, 'Armored'):
+            if not is_regional_marshal(marshal, 'Missile', auth_region) and not is_regional_marshal(marshal, 'Armored', auth_region):
                 return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
         else:
-            if not is_regional_marshal(marshal, discipline):
+            if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
         # Rule 5a: If the region approves a Youth Combat Senior marshal, it goes to the Kingdom authorization officer for confirmation.
         if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
@@ -349,9 +393,12 @@ def approve_authorization(request):
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     # Rule 6: If the authorization is out for kingdom approval, you need to be a kingdom authorization officer to approve it.
-    if authorization.status.name == 'Needs Kingdom Approval':
+    elif authorization.status.name == 'Needs Kingdom Approval':
         if not is_kingdom_authorization_officer(marshal):
             return False, 'You must be the kingdom authorization officer to approve this authorization.'
+
+    else:
+        return False, 'Authorization status not valid for confirmation.'
 
 
 

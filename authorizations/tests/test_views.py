@@ -309,15 +309,11 @@ class IndexViewTest(TestCase):
     def test_auth_officer_view(self):
         branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', region=self.region_summits)
         discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
-        style_auth_officer = WeaponStyle.objects.create(name='Authorization Officer', discipline=discipline_auth_officer)
 
         branch_marshal_an_tir = BranchMarshal.objects.create(person=self.marshal_person, branch=self.branch_an_tir,
                                                              discipline=discipline_auth_officer,
                                                              start_date=date.today() - relativedelta(years=1),
                                                              end_date=date.today() + relativedelta(years=1))
-        auth_marshal_auth_officer = Authorization.objects.create(person=self.marshal_person, style=style_auth_officer,
-                                                                 status=self.status_active,
-                                                                 expiration=date.today() + relativedelta(years=1))
 
         user_sara = User.objects.create_user(username='sara@hotmail.com', password='eGqNMC2D', membership='68908809',
                                              membership_expiration=date.today() + relativedelta(years=1))
@@ -356,6 +352,7 @@ class IndexViewTest(TestCase):
         auth_sm_rapier_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_rapier,
                                                             status=self.status_kingdom,
                                                             expiration=date.today() + relativedelta(years=1))
+
 
         # POSITIVE: See kingdom approvals
         # NEGATIVE: Don't see pending or regional approvals
@@ -733,7 +730,6 @@ class MyAccountViewTest(TestCase):
         cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.discipline_auth = Discipline.objects.create(name='Authorization Officer')
-        cls.style_auth = WeaponStyle.objects.create(name='Authorization Officer', discipline=cls.discipline_auth)
 
         cls.marshal_user = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
                                                     membership='31913662',
@@ -754,10 +750,10 @@ class MyAccountViewTest(TestCase):
         cls.north_person = Person.objects.create(user=cls.north_user, sca_name='Francis du Pont',
                                                  branch=cls.branch_gd, is_minor=True, parent=cls.south_person)
 
-        cls.auth_auth_officer_marshal = Authorization.objects.create(person=cls.marshal_person, style=cls.style_auth,
-                                                                   status=cls.status_active,
-                                                                   expiration=date.today() + relativedelta(years=1),
-                                                                   marshal=cls.marshal_person)
+        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.branch_an_tir, person=cls.marshal_person,
+                                                               discipline=cls.discipline_auth,
+                                                               start_date=date.today() - relativedelta(years=1),
+                                                               end_date=date.today() + relativedelta(years=1))
 
         cls.branch_auth_officer_marshal = BranchMarshal.objects.create(person=cls.marshal_person, branch=cls.branch_an_tir,
                                                                    start_date=date.today() - relativedelta(years=1),
@@ -812,7 +808,6 @@ class BranchMarshalViewTest(TestCase):
         cls.branch_summits = Branch.objects.create(name='Summits', region=cls.region_summits)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.discipline_auth = Discipline.objects.create(name='Authorization Officer')
-        cls.style_auth = WeaponStyle.objects.create(name='Authorization Officer', discipline=cls.discipline_auth)
         cls.discipline_armored = Discipline.objects.create(name='Armored')
         cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
 
@@ -836,10 +831,10 @@ class BranchMarshalViewTest(TestCase):
         cls.north_person = Person.objects.create(user=cls.north_user, sca_name='Francis du Pont',
                                                  branch=cls.branch_gd, is_minor=True, parent=cls.south_person)
 
-        cls.auth_auth_officer_marshal = Authorization.objects.create(person=cls.marshal_person, style=cls.style_auth,
-                                                                     status=cls.status_active,
-                                                                     expiration=date.today() + relativedelta(years=1),
-                                                                     marshal=cls.marshal_person)
+        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.branch_an_tir, person=cls.marshal_person,
+                                                               discipline=cls.discipline_auth,
+                                                               start_date=date.today() - relativedelta(years=1),
+                                                               end_date=date.today() + relativedelta(years=1))
 
         cls.branch_auth_officer_marshal = BranchMarshal.objects.create(person=cls.marshal_person,
                                                                        branch=cls.branch_an_tir,

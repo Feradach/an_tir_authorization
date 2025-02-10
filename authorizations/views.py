@@ -1251,24 +1251,6 @@ def appoint_branch_marshal(request):
         end_date=start_date + relativedelta(years=2),
     )
 
-    if discipline.name == 'Earl Marshal':
-        # create earl marshal authorization
-        Authorization.objects.create(
-            person=person,
-            style=WeaponStyle.objects.get(name='Earl Marshal'),
-            expiration=start_date + relativedelta(years=2),
-            status=AuthorizationStatus.objects.get(name='Active')
-        )
-
-    if discipline.name == 'Authorization Officer':
-        # create authorization officer authorization
-        Authorization.objects.create(
-            person=person,
-            style=WeaponStyle.objects.get(name='Authorization Officer'),
-            expiration=start_date + relativedelta(years=2),
-            status=AuthorizationStatus.objects.get(name='Active')
-        )
-
     return True, 'Branch marshal appointed.'
 
 
