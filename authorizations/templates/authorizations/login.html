@@ -1,13 +1,24 @@
 {% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Login
+{% endblock %}
 
 {% block body %}
 
     <h2>Login</h2>
 
-    {% if message %}
-        <div>{{ message }}</div>
+    {% if messages %}
+        <div id="messages-container">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}" role="alert">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
     {% endif %}
-
+<div class="col-md-4">
     <form action="{% url 'login' %}" method="post">
         {% csrf_token %}
         <div class="form-group">
@@ -18,5 +29,10 @@
         </div>
         <input class="btn btn-primary" type="submit" value="Login">
     </form>
-
+</div>
+    <br><br>
+<div class="col-md-4">
+    <p>Forgot password or username?</p>
+    <p><a href="{% url 'recover_account' %}" class="btn btn-warning">Recover Account</a></p>
+</div>
 {% endblock %}

@@ -11,19 +11,22 @@
     <p>The actions you will be able to perform will depend on whether you are logged in and your marshal role.</p>
 
     <div class="col-md-3">
-    <p><form method="get" id="sca_name_form">
-        <label for="sca_name"><strong>Go to fighter card for:</strong></label>
-        <select id="sca_name" name="sca_name" class="choices-dropdown">
-            <option value=""></option>
-            {% for person in all_people %}
-            <option value="{{ person }}" selected>
-                {{ person }}
-            </option>
-            {% endfor %}
-        </select>
-    </form></p>
+        <p>
+            <form method="get" id="sca_name_form">
+                <label for="sca_name"><strong>Go to fighter card for:</strong></label>
+                <select id="sca_name" name="sca_name" class="choices-dropdown">
+                    <option value="">-- Select a fighter --</option>
+                    {% for person in all_people %}
+                        <option value="{{ person }}"{% if request.GET.sca_name == person %} selected{% endif %}>
+                            {{ person }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </p>
     </div>
     <p><a href="{% url 'branch_marshals' %}" class="btn btn-primary">View Branch Marshals</a></p>
+    <p><a href="{% url 'search' %}" class="btn btn-primary">Browse All Fighters</a></p>
     {% if senior_marshal %}
         <p><a href="{% url 'add_fighter' %}" class="btn btn-primary">Add a New Fighter to the Database</a></p>
     {% endif %}

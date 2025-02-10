@@ -13,6 +13,7 @@
 </head>
 <body>
     <!-- Navbar -->
+<div class="sticky-header">
     <header class="navbar navbar-dark bg-dark">
         <a class="navbar-brand ms-3" href="https://antir.org/"><img src="{% static 'AnTirWebLogo.png' %}" alt="Kingdom of An Tir" class="logo"></a>
         <!-- Desktop Navigation -->
@@ -32,7 +33,7 @@
             {% endblock %}
         </ul>
     </div>
-
+</div>
     <!-- Main Content -->
     <div class="container-fluid my-4">
         {% block body %}
@@ -57,6 +58,16 @@
                     $(".cross").hide();
                     $(".hamburger").show();
                 });
+            });
+
+            // When the window is resized to desktop, reset mobile elements.
+            $(window).resize(function() {
+                if ($(window).width() > 768) {
+                    // Remove any inline styles that were added by slideToggle
+                    $(".menu").removeAttr("style");
+                    $(".cross").removeAttr("style").hide();
+                    $(".hamburger").removeAttr("style")();
+                }
             });
         });
     </script>

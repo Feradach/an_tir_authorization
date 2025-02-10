@@ -1,0 +1,34 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Login
+{% endblock %}
+{% block body %}
+
+    <h2>Recover Account</h2>
+
+    {% if messages %}
+        <div id="messages-container">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}" role="alert">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+<div class="col-md-4">
+    <label>Email Address</label>
+    <form method="post" action="">
+    <input autofocus class="form-control" name="email" placeholder="Email Address">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="reset_password">
+        <button type="submit" class="btn btn-success">Forgot Password</button>
+        <input type="hidden" name="action" value="get_username">
+        <button type="submit" class="btn btn-success">Forgot Username</button>
+    </form>
+<p>If you do not have access to the email you set up your account with,
+    please contact the <a href="mailto:marshal.authorizations@antir.org">Martial Authorization Officer</a> to update your email.</p>
+</div>
+
+{% endblock %}

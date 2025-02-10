@@ -1,4 +1,5 @@
 from dateutil.relativedelta import relativedelta
+from django.contrib.sites.models import Site
 from django.core.mail import send_mail
 from django.conf import settings
 import random
@@ -206,6 +207,110 @@ def login_view(request):
 def logout_view(request):
     logout(request)
     return HttpResponseRedirect(reverse('index'))
+
+
+@login_required
+def password_reset(request, user_id):
+    # Make sure it is the right user.
+    if request.user.id != user_id:
+        messages.error(request, "You don't have permission to reset this password.")
+        return redirect('index')
+
+
+    # Get the old password
+    if request.method == 'POST':
+        old_password = request.POST['old_password']
+        username = request.user.username
+        user = authenticate(request, username=username, password=old_password)
+        if user is None:
+            return render(request, 'authorizations/password_reset.html', {
+                'message': 'Invalid old password.'
+            })
+
+        # Create new password
+        password = request.POST['password']
+        confirmation = request.POST['confirmation']
+        if password != confirmation:
+            return render(request, 'authorizations/password_reset.html', {
+                'message': 'Passwords must match.'
+            })
+
+        # Validate the new password
+        try:
+            validate_password(password, user=request.user)
+        except ValidationError as e:
+            return render(request, 'authorizations/password_reset.html', {
+                'message': ' '.join(e.messages),
+            })
+
+        # Set the new password
+        user = User.objects.get(id=user_id)
+        user.set_password(password)
+        user.has_logged_in = True
+        user.save()
+        login(request, user)
+        messages.success(request, 'Your password has been reset successfully.')
+        return redirect('index')
+    else:
+        return render(request, 'authorizations/password_reset.html')
+
+
+def recover_account(request):
+    if request.method == 'POST':
+        email = request.POST['email']
+        if not email:
+            messages.error(request, 'Please enter an email.')
+            return render(request, 'authorizations/recover_account.html')
+        action = request.POST.get('action')
+        new_password = generate_random_password()
+        current_site = Site.objects.get_current()
+        login_path = reverse('login')
+        login_url = f"https://{current_site.domain}{login_path}"
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            messages.error(request, 'No account with that email was found.')
+            return render(request, 'authorizations/recover_account.html')
+        username = user.username
+        if action == 'reset_password':
+            user.set_password(new_password)
+            user.has_logged_in = False
+            user.save()
+            # Send the password via email
+            send_mail(
+                'An Tir Authorization: Password Reset',
+                f'Your password has been reset. Your credentials are:\nTemporary Password: {new_password}\n'
+                f'Please reset your password after logging in.',
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=False,
+            )
+            messages.success(request,
+                             'Temporary Password sent')
+            return redirect('login')
+        elif action == 'get_username':
+            send_mail(
+                'An Tir Authorization: Username Request',
+                f'Your username is: {username}\n'
+                f'You can click this link to log in: {login_url}',
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=False,
+            )
+            messages.success(request,
+                             'Username sent')
+            return redirect('login')
+        else:
+            messages.error(request, 'Invalid action.')
+            return render(request, 'authorizations/recover_account.html')
+
+    return render(request, 'authorizations/recover_account.html')
+
+
+def generate_random_password(length=12):
+    characters = string.ascii_letters + string.digits + string.punctuation
+    password = ''.join(random.choice(characters) for _ in range(length))
+    return password
 
 
 def search(request):
@@ -601,12 +706,6 @@ def get_weapon_styles(request, discipline_id):
     return JsonResponse({'styles': list(styles)})
 
 
-def generate_random_password(length=12):
-    characters = string.ascii_letters + string.digits + string.punctuation
-    password = ''.join(random.choice(characters) for _ in range(length))
-    return password
-
-
 @login_required
 def add_fighter(request):
     """This will create a new fighter and add them to the database.
@@ -688,11 +787,12 @@ def add_fighter(request):
                     'person_form': person_form,
                     'auth_form': auth_form,
                 })
-
-            # Send the password via email
+            current_site = Site.objects.get_current()
+            login_path = reverse('login')
+            login_url = f"https://{current_site.domain}{login_path}"
             send_mail(
-                'Your Account Has Been Created',
-                f'Your account has been created. Your email is your username: {person_form.cleaned_data["username"]}. Use this password to log in: {random_password}\n'
+                'An Tir Authorization: New Account',
+                f'Your account has been created. Your credentials are:\nURL: {login_url}\nUsername: {person_form.cleaned_data["username"]}\nPassword: {random_password}\n'
                 f'Please reset your password after logging in.',
                 settings.DEFAULT_FROM_EMAIL,
                 [user.email],
@@ -717,52 +817,6 @@ def add_fighter(request):
         auth_form = CreateAuthorizationForm(user=request.user)
 
     return render(request, 'authorizations/new_authorization.html', {'person_form': person_form, 'auth_form': auth_form})
-
-
-@login_required
-def password_reset(request, user_id):
-    # Make sure it is the right user.
-    if request.user.id != user_id:
-        messages.error(request, "You don't have permission to reset this password.")
-        return redirect('index')
-
-
-    # Get the old password
-    if request.method == 'POST':
-        old_password = request.POST['old_password']
-        username = request.user.username
-        user = authenticate(request, username=username, password=old_password)
-        if user is None:
-            return render(request, 'authorizations/password_reset.html', {
-                'message': 'Invalid old password.'
-            })
-
-        # Create new password
-        password = request.POST['password']
-        confirmation = request.POST['confirmation']
-        if password != confirmation:
-            return render(request, 'authorizations/password_reset.html', {
-                'message': 'Passwords must match.'
-            })
-
-        # Validate the new password
-        try:
-            validate_password(password, user=request.user)
-        except ValidationError as e:
-            return render(request, 'authorizations/password_reset.html', {
-                'message': ' '.join(e.messages),
-            })
-
-        # Set the new password
-        user = User.objects.get(id=user_id)
-        user.set_password(password)
-        user.has_logged_in = True
-        user.save()
-        login(request, user)
-        messages.success(request, 'Your password has been reset successfully.')
-        return redirect('index')
-    else:
-        return render(request, 'authorizations/password_reset.html')
 
 
 @login_required
@@ -1182,6 +1236,11 @@ def appoint_branch_marshal(request):
     if branch_marshal_status:
         return False, 'Can only serve as one branch marshal position at a time.'
 
+    # Rule 4: An Tir is the only branch that can have the authorization officer.
+    if discipline.name == 'Authorization Officer':
+        if not branch.name == 'An Tir':
+            return False, 'An Tir is the only branch that can have the authorization officer.'
+
     start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
 
     BranchMarshal.objects.create(
@@ -1191,6 +1250,24 @@ def appoint_branch_marshal(request):
         start_date=start_date,
         end_date=start_date + relativedelta(years=2),
     )
+
+    if discipline.name == 'Earl Marshal':
+        # create earl marshal authorization
+        Authorization.objects.create(
+            person=person,
+            style=WeaponStyle.objects.get(name='Earl Marshal'),
+            expiration=start_date + relativedelta(years=2),
+            status=AuthorizationStatus.objects.get(name='Active')
+        )
+
+    if discipline.name == 'Authorization Officer':
+        # create authorization officer authorization
+        Authorization.objects.create(
+            person=person,
+            style=WeaponStyle.objects.get(name='Authorization Officer'),
+            expiration=start_date + relativedelta(years=2),
+            status=AuthorizationStatus.objects.get(name='Active')
+        )
 
     return True, 'Branch marshal appointed.'
 

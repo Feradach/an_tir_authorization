@@ -121,7 +121,7 @@
                 </form>
             </div>
             <div class="mb-3">
-                <a href="?{% for key, value in request.GET.items %}{% if key != 'goal' %}{{ key }}={{ value }}&{% endif %}{% endfor %}">
+                <a href="?{% for key, value in request.GET.items %}{% if key != 'goal' %}{{ key|urlencode }}={{ value|urlencode }}&{% endif %}{% endfor %}">
                     <button type="button" class="btn btn-success">Search Authorizations</button>
                 </a>
             </div>
@@ -368,7 +368,7 @@
             <div class="sticky-container mb-3">
                 <div class="row">
                     <div class="col-md-2">
-                        <a href="?goal=search{% for key, value in request.GET.items %}{% if key != 'goal' and key != 'view' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                        <a href="?goal=search{% for key, value in request.GET.items %}{% if key != 'goal' and key != 'view' %}&{{ key|urlencode }}={{ value|urlencode }}{% endif %}{% endfor %}">
                             <button class="btn btn-primary">Search</button>
                         </a>
                     </div>

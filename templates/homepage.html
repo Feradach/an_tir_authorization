@@ -8,11 +8,13 @@
 {% block body %}
     <h1>An Tir Lists Database</h1>
     <p>Welcome to the An Tir Lists Database!</p>
+    <p><a href="{% url 'search' %}" class="btn btn-primary">Browse Authorizations</a></p>
     <p>This website is a prototype of the new authorization database developed by Feradach mac Tralin.</p>
     <p>This outer area has the welcome page, the contact page, and forms page. There is also a link to the authorization database.
-        Please explore around and make sure to send any feedback to Feradach.</p>
+        Please explore around and make sure to send any feedback to Feradach through the contact page.</p>
+    <p>If you would like to have an account, please fill out the form below. You must already be authorized in An Tir.</p>
+    <p><a href="https://docs.google.com/forms/d/e/1FAIpQLSfhiwQVaztXC5MxqLvfU38HAyhu266-o2vnQMgtigdRrUEY3w/viewform?usp=dialog" class="btn btn-primary">Request an Account</a></p>
 {% endblock %}
 
 {% block script %}
-
 {% endblock %}
