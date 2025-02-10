@@ -1267,11 +1267,14 @@ class CreateAuthorizationForm(forms.Form):
 
         if user:
             # Filter disciplines based on the user's senior marshal authorizations
-            senior_authorizations = Authorization.objects.filter(
-                person__user=user,
-                style__name='Senior Marshal',  # Assuming 'Senior Marshal' is the style name
-                expiration__gte=date.today()  # Ensure the authorization is still valid
-            ).values_list('style__discipline', flat=True)
+            if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name__in=['Authorization Officer', 'Earl Marshal']).exists():
+                self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
+            else:
+                senior_authorizations = Authorization.objects.filter(
+                    person__user=user,
+                    style__name='Senior Marshal',  # Assuming 'Senior Marshal' is the style name
+                    expiration__gte=date.today()  # Ensure the authorization is still valid
+                ).values_list('style__discipline', flat=True)
 
-            # Update the discipline queryset with the filtered disciplines
-            self.fields['discipline'].queryset = Discipline.objects.filter(id__in=senior_authorizations)
+                # Update the discipline queryset with the filtered disciplines
+                self.fields['discipline'].queryset = Discipline.objects.filter(id__in=senior_authorizations)
