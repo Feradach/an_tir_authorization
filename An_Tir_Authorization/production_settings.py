@@ -20,6 +20,8 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") # Stored in the environment
 DEBUG = os.environ.get("DEBUG") == "True"  # Stored in the environment
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",") # Stored in the environment
 
+SITE_URL = "https://an-tir-authorization.onrender.com"
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',

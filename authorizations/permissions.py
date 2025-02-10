@@ -450,6 +450,8 @@ def appoint_branch_marshal(request):
             end_date=start_date + relativedelta(years=2),
         )
 
+        return True, 'Authorization officer appointed.'
+
     # all_branch_names is for the non-regions. If the branch isn't in there then it is a regional marshal position.
     # Rule 4: A regional marshal must be a senior marshal.
     if not branch.name in all_branch_names:

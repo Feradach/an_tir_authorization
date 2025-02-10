@@ -1,5 +1,4 @@
 from dateutil.relativedelta import relativedelta
-from django.contrib.sites.models import Site
 from django.core.mail import send_mail
 from django.conf import settings
 import random
@@ -182,6 +181,9 @@ def index(request):
 
 
 def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('index')
+
     if request.method == 'POST':
 
         # Attempt to sign user in
@@ -263,9 +265,8 @@ def recover_account(request):
             return render(request, 'authorizations/recover_account.html')
         action = request.POST.get('action')
         new_password = generate_random_password()
-        current_site = Site.objects.get_current()
         login_path = reverse('login')
-        login_url = f"https://{current_site.domain}{login_path}"
+        login_url = f"{settings.SITE_URL}{login_path}"
         try:
             user = User.objects.get(email=email)
         except User.DoesNotExist:
@@ -787,9 +788,8 @@ def add_fighter(request):
                     'person_form': person_form,
                     'auth_form': auth_form,
                 })
-            current_site = Site.objects.get_current()
             login_path = reverse('login')
-            login_url = f"https://{current_site.domain}{login_path}"
+            login_url = f"{settings.SITE_URL}{login_path}"
             send_mail(
                 'An Tir Authorization: New Account',
                 f'Your account has been created. Your credentials are:\nURL: {login_url}\nUsername: {person_form.cleaned_data["username"]}\nPassword: {random_password}\n'
