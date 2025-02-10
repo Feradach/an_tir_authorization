@@ -13,7 +13,12 @@ class Command(BaseCommand):
         try:
             # Use sys.executable to ensure the correct interpreter is used
             backup_data = subprocess.check_output(
-                [sys.executable, 'manage.py', 'dumpdata', '--indent', '2'],
+                [
+                    sys.executable, 'manage.py', 'dumpdata', '--indent', '2',
+                    '--exclude', 'contenttypes',
+                    '--exclude', 'auth.permission',
+                    '--exclude', 'auth.group'
+                ],
                 stderr=subprocess.STDOUT
             )
         except subprocess.CalledProcessError as e:
