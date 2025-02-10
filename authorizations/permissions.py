@@ -1,8 +1,10 @@
-from datetime import date
+from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
+from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 
-from authorizations.models import BranchMarshal, Authorization, Region, WeaponStyle, User, Branch, AuthorizationStatus
+from authorizations.models import BranchMarshal, Authorization, Region, WeaponStyle, User, Branch, AuthorizationStatus, \
+    Person, Discipline
 
 regions = Region.objects.exclude(name='An Tir').values_list('name', flat=True)
 all_region_names = Region.objects.exclude(name='An Tir').values_list('name', flat=True)
@@ -400,6 +402,68 @@ def approve_authorization(request):
     else:
         return False, 'Authorization status not valid for confirmation.'
 
+@login_required
+def appoint_branch_marshal(request):
+    """Adds a new branch marshal to the database. Only available to branch marshals or the authorization officer.
+    Each branch can have at most two branch marshals for each discipline, a deputy and an actual.
+    The system does not distinguish between the two."""
 
+    try:
+        person = Person.objects.get(sca_name=request.POST['person'])
+        branch = Branch.objects.get(name=request.POST['branch'])
+        discipline = Discipline.objects.get(name=request.POST['discipline'])
+        start_date = request.POST['start_date']
+    except:
+        return False, 'Missing data'
+
+    # Rule 0: Only the authorization officer can appoint branch marshals
+    if not is_kingdom_authorization_officer(request.user):
+        return False, 'Only the authorization officer can appoint branch marshals.'
+
+    # all_branch_names is for the non-regions. If the branch isn't in there then it is a regional marshal position.
+    # Rule 1: A regional marshal must be a senior marshal.
+    if not branch.name in all_branch_names:
+        if not is_senior_marshal(person.user):
+            return False, 'Must be a senior marshal to be a regional marshal.'
+
+    # This captures whether the user is a Junior or Senior marshal in the discipline.
+    marshal_status = Authorization.objects.filter(
+        person=person,
+        style__discipline=discipline,
+        expiration__gte=date.today(),
+        status__name = 'Active',
+        style__name__in=['Senior Marshal', 'Junior Marshal']
+    ).exists()
+
+    # Rule 2: Must be a marshal in the appropriate discipline to be a branch marshal. Can be a Junior marshal.
+    if not marshal_status:
+        return False, 'Must be a marshal in the discipline to be a branch marshal.'
+
+    # Check if they are currently a branch marshal.
+    branch_marshal_status = BranchMarshal.objects.filter(
+        person=person,
+        end_date__gte=date.today(),
+    ).exists()
+
+    # Rule 3: A branch marshal can only serve as one position at a time
+    if branch_marshal_status:
+        return False, 'Can only serve as one branch marshal position at a time.'
+
+    # Rule 4: An Tir is the only branch that can have the authorization officer.
+    if discipline.name == 'Authorization Officer':
+        if not branch.name == 'An Tir':
+            return False, 'An Tir is the only branch that can have the authorization officer.'
+
+    start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+
+    BranchMarshal.objects.create(
+        person=person,
+        branch=branch,
+        discipline=discipline,
+        start_date=start_date,
+        end_date=start_date + relativedelta(years=2),
+    )
+
+    return True, 'Branch marshal appointed.'
 
 
