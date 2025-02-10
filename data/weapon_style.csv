@@ -1,53 +1,51 @@
 id,name,discipline_id
-1,Authorization Officer,1
-2,Earl Marshal,2
-3,Senior Marshal,3
-4,Senior Marshal,4
-5,Senior Marshal,5
-6,Senior Marshal,6
-7,Senior Marshal,7
-8,Senior Marshal,8
-9,Senior Marshal,9
-10,Senior Marshal,10
-11,Senior Marshal,11
-12,Senior Marshal,12
-13,Junior Marshal,3
-14,Junior Marshal,4
-15,Junior Marshal,5
-16,Junior Marshal,6
-17,Junior Marshal,7
-18,Junior Marshal,8
-19,Junior Marshal,9
-20,Junior Marshal,10
-21,Junior Marshal,11
-22,Junior Marshal,12
-23,Single Sword,4
-24,Sword & Offensive Secondary,4
-25,Sword & Defensive Secondary,4
-26,Two-Handed Sword,4
-27,Spear,4
-28,Siege Crew,6
-29,Bow & Arrow,7
-30,Crossbow,7
-31,Hand Thrown Weapons,7
-32,Single Sword,8
-33,Sword & Offensive Secondary,8
-34,Sword & Defensive Secondary,8
-35,Two-Handed Sword,8
-36,Spear,8
-37,Weapon & Shield,9
-38,Two-Handed,9
-39,Spear,9
-40,Junior Ground Crew,10
-41,Senior Ground Crew,10
-42,General Riding,10
-43,Mounted Gaming,10
-44,Mounted Archery,10
-45,Crest Combat,10
-46,Foam-Tipped Jousting,10
-47,Mounted Heavy Combat,10
-48,Driving,10
-49,Weapon & Shield,11
-50,Two-Handed,11
-51,Single Sword,12
-52,Sword & Defensive Secondary,12
+1,Senior Marshal,3
+2,Senior Marshal,4
+3,Senior Marshal,5
+4,Senior Marshal,6
+5,Senior Marshal,7
+6,Senior Marshal,8
+7,Senior Marshal,9
+8,Senior Marshal,10
+9,Senior Marshal,11
+10,Senior Marshal,12
+11,Junior Marshal,3
+12,Junior Marshal,4
+13,Junior Marshal,5
+14,Junior Marshal,6
+15,Junior Marshal,7
+16,Junior Marshal,8
+17,Junior Marshal,9
+18,Junior Marshal,10
+19,Junior Marshal,11
+20,Junior Marshal,12
+21,Single Sword,4
+22,Sword & Offensive Secondary,4
+23,Sword & Defensive Secondary,4
+24,Two-Handed Sword,4
+25,Spear,4
+26,Siege Crew,6
+27,Bow & Arrow,7
+28,Crossbow,7
+29,Hand Thrown Weapons,7
+30,Single Sword,8
+31,Sword & Offensive Secondary,8
+32,Sword & Defensive Secondary,8
+33,Two-Handed Sword,8
+34,Spear,8
+35,Weapon & Shield,9
+36,Two-Handed,9
+37,Spear,9
+38,Junior Ground Crew,10
+39,Senior Ground Crew,10
+40,General Riding,10
+41,Mounted Gaming,10
+42,Mounted Archery,10
+43,Crest Combat,10
+44,Foam-Tipped Jousting,10
+45,Mounted Heavy Combat,10
+46,Driving,10
+47,Weapon & Shield,11
+48,Two-Handed,11
+49,Single Sword,12
+50,Sword & Defensive Secondary,12
