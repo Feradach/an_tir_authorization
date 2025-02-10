@@ -416,12 +416,42 @@ def appoint_branch_marshal(request):
     except:
         return False, 'Missing data'
 
+    # Must be a current member.
+    if not membership_is_current(person.user):
+        return False, 'Must be a current member to be a branch marshal.'
+
     # Rule 0: Only the authorization officer can appoint branch marshals
     if not is_kingdom_authorization_officer(request.user):
         return False, 'Only the authorization officer can appoint branch marshals.'
 
+    # Rule 1: A branch marshal can only serve as one position at a time
+    # Check if they are currently a branch marshal.
+    branch_marshal_status = BranchMarshal.objects.filter(
+        person=person,
+        end_date__gte=date.today(),
+    ).exists()
+    if branch_marshal_status:
+        return False, 'Can only serve as one branch marshal position at a time.'
+
+    # Rule 2: An Tir is the only branch that can have the authorization officer.
+    if discipline.name == 'Authorization Officer':
+        if not branch.name == 'An Tir':
+            return False, 'An Tir is the only branch that can have the authorization officer.'
+
+    # Rule 3: The Authorization Officer doesn't need to be a senior marshal.
+    if discipline.name == 'Authorization Officer':
+        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+
+        BranchMarshal.objects.create(
+            person=person,
+            branch=branch,
+            discipline=discipline,
+            start_date=start_date,
+            end_date=start_date + relativedelta(years=2),
+        )
+
     # all_branch_names is for the non-regions. If the branch isn't in there then it is a regional marshal position.
-    # Rule 1: A regional marshal must be a senior marshal.
+    # Rule 4: A regional marshal must be a senior marshal.
     if not branch.name in all_branch_names:
         if not is_senior_marshal(person.user):
             return False, 'Must be a senior marshal to be a regional marshal.'
@@ -435,24 +465,10 @@ def appoint_branch_marshal(request):
         style__name__in=['Senior Marshal', 'Junior Marshal']
     ).exists()
 
-    # Rule 2: Must be a marshal in the appropriate discipline to be a branch marshal. Can be a Junior marshal.
+    # Rule 5: Must be a marshal in the appropriate discipline to be a branch marshal. Can be a Junior marshal.
     if not marshal_status:
-        return False, 'Must be a marshal in the discipline to be a branch marshal.'
-
-    # Check if they are currently a branch marshal.
-    branch_marshal_status = BranchMarshal.objects.filter(
-        person=person,
-        end_date__gte=date.today(),
-    ).exists()
-
-    # Rule 3: A branch marshal can only serve as one position at a time
-    if branch_marshal_status:
-        return False, 'Can only serve as one branch marshal position at a time.'
-
-    # Rule 4: An Tir is the only branch that can have the authorization officer.
-    if discipline.name == 'Authorization Officer':
-        if not branch.name == 'An Tir':
-            return False, 'An Tir is the only branch that can have the authorization officer.'
+        if not discipline.name == 'Earl Marshal':
+            return False, 'Must be a marshal in the discipline to be a branch marshal.'
 
     start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
 
