@@ -24,7 +24,8 @@
     "birthday": null,
     "has_logged_in": true,
     "groups": [],
-    "user_permissions": []
+    "user_permissions": [],
+    "phone_number": []
   }
 },
 {
