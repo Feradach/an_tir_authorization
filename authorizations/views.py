@@ -15,13 +15,14 @@ from django.core.paginator import Paginator
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.urls import reverse
-from .models import User, Authorization, Region, Branch, Discipline,  WeaponStyle, AuthorizationStatus, Person, BranchMarshal
+from .models import User, Authorization, Region, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal
 from itertools import groupby
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName
 from django.contrib import messages
 from django import forms
+import re
 
 all_region_names = Region.objects.exclude(name='An Tir').values_list('name', flat=True)
 all_branch_names = Branch.objects.exclude(Q(name__in=all_region_names) | Q(name='An Tir')).values_list('name', flat=True)
@@ -745,6 +746,7 @@ def add_fighter(request):
                         state_province=person_form.cleaned_data['state_province'],
                         postal_code=person_form.cleaned_data['postal_code'],
                         country=person_form.cleaned_data['country'],
+                        phone_number=person_form.cleaned_data.get('phone_number', None),
                         birthday=person_form.cleaned_data.get('birthday', None),
                     )
 
@@ -752,6 +754,7 @@ def add_fighter(request):
                     person = Person.objects.create(
                         user=user,
                         sca_name=person_form.cleaned_data['sca_name'],
+                        title=person_form.cleaned_data['title'],
                         branch=person_form.cleaned_data['branch'],
                         is_minor=person_form.cleaned_data['is_minor'],
                         parent=person_form.cleaned_data.get('parent', None),
@@ -921,6 +924,7 @@ def user_account(request, user_id):
         'state_province': user.state_province,
         'postal_code': user.postal_code,
         'country': user.country,
+        'phone_number': user.phone_number,
         'birthday': user.birthday,
 
         # Person fields
@@ -952,11 +956,13 @@ def user_account(request, user_id):
             user.state_province = form.cleaned_data['state_province']
             user.postal_code = form.cleaned_data['postal_code']
             user.country = form.cleaned_data['country']
+            user.phone_number = form.cleaned_data.get('phone_number')
             user.birthday = form.cleaned_data.get('birthday')
             user.save()
 
             # Update Person fields
             person.sca_name = form.cleaned_data['sca_name']
+            person.title = form.cleaned_data['title']
             person.branch = form.cleaned_data['branch']
             person.is_minor = form.cleaned_data['is_minor']
             person.parent = form.cleaned_data.get('parent_id')
@@ -1188,10 +1194,28 @@ def branch_marshals(request):
         'auth_officer': auth_officer
     })
 
+# This is where the Forms are kept
 
+class TitleModelChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, obj):
+        # show “Duke (Ducal)” etc.
+        return f"{obj.name} ({obj.rank})"
 
 class CreatePersonForm(forms.Form):
     """Creates the initial person and user."""
+    # only these titles ever show up in the dropdown:
+    ALLOWED_TITLES = [
+        "Duke", "Duchess",
+        "Count", "Countess",
+        "Viscount", "Viscountess",
+        "Sir", "Dame",
+        "Master", "Maestra",
+        "Baron", "Baroness",
+        "Don", "Dona",
+        "Honorable Lord", "Honorable Lady", "The Honorable",
+        "Lord", "Lady", "Gentle",
+    ]
+
     # User fields
     email = forms.EmailField(label='Email', required=True)
     username = forms.CharField(label='Username', required=True)
@@ -1206,11 +1230,31 @@ class CreatePersonForm(forms.Form):
     state_province = forms.ChoiceField(label='State/Province', choices=state_province_choices, required=True)
     postal_code = forms.CharField(label='Postal Code', required=True)
     country = forms.ChoiceField(label='Country', choices=[('Canada', 'Canada'), ('United States', 'United States')], required=True)
+    phone_number = forms.CharField(label='Phone Number', required=True, help_text='Enter a 10 digit phone number')
     birthday = forms.DateField(label='Birthday', required=False, widget=forms.DateInput(attrs={'type': 'date'}))
 
     # Person fields
     discipline_names = Discipline.objects.values_list('name', flat=True)
     sca_name = forms.CharField(label='SCA Name', required=False)
+    # 1) existing titles
+    title = TitleModelChoiceField(
+        label='Title',
+        queryset=Title.objects.none(),
+        required=False,
+        empty_label='— choose one —'
+    )
+    # 2) new title fields
+    new_title = forms.CharField(
+        label='Or enter a new title',
+        required=False,
+        help_text='Type a custom title'
+    )
+    # collect the set of existing rank values for the dropdown
+    new_title_rank = forms.ChoiceField(
+        label='Rank for new title',
+        choices=[('', '— select a rank —')] + list(TITLE_RANK_CHOICES),
+        required=False
+    )
     branch = forms.ModelChoiceField(label='Branch', queryset = Branch.objects.filter(name__in=all_branch_names), required=True)
     is_minor = forms.BooleanField(label='Is Minor', required=False)
     parent_id = forms.ModelChoiceField(label='Parent ID', queryset=Person.objects.all().exclude(sca_name='admin'),required=False)
@@ -1219,9 +1263,24 @@ class CreatePersonForm(forms.Form):
         """Allow passing a user instance when updating."""
         self.user_instance = kwargs.pop('user_instance', None)
         super().__init__(*args, **kwargs)
+        qs = Title.objects.filter(name__in=self.ALLOWED_TITLES)
+        qs = qs.order_by('pk')
+        self.fields['title'].queryset = qs
+
+    def clean_phone_number(self):
+        raw = self.cleaned_data['phone_number']
+        # strip out everything but digits
+        digits = re.sub(r'\D', '', raw)
+        if len(digits) != 10:
+            raise ValidationError("Enter a 10-digit U.S. phone number.")
+        # format as (###) ###-####
+        formatted = f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"
+        return formatted
 
     def clean(self):
         cleaned_data = super().clean()
+        new_title = cleaned_data.get('new_title')
+        new_title_rank = cleaned_data.get('new_title_rank')
 
         user_id = self.user_instance.id if self.user_instance else None
 
@@ -1241,6 +1300,13 @@ class CreatePersonForm(forms.Form):
 
         if cleaned_data.get('is_minor') and not cleaned_data.get('birthday'):
             raise forms.ValidationError('A birthday must be provided for minors.')
+
+        if new_title:
+            if not new_title_rank:
+                self.add_error('new_title_rank', 'Please select one of the existing ranks.')
+                raise forms.ValidationError('Creating a new title requires choosing a rank.')
+            title_obj, _ = Title.objects.get_or_create(name=new_title, rank=new_title_rank)
+            cleaned_data['title'] = title_obj
 
         return cleaned_data
 

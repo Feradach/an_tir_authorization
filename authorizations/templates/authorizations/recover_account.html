@@ -19,16 +19,21 @@
     {% endif %}
 <div class="col-md-4">
     <label>Email Address</label>
-    <form method="post" action="">
-    <input autofocus class="form-control" name="email" placeholder="Email Address">
+    <form method="post" action="" id="recoverForm">
+        <input autofocus class="form-control" name="email" placeholder="Email Address" required>
         {% csrf_token %}
-        <input type="hidden" name="action" value="reset_password">
-        <button type="submit" class="btn btn-success">Forgot Password</button>
-        <input type="hidden" name="action" value="get_username">
-        <button type="submit" class="btn btn-success">Forgot Username</button>
+        <input type="hidden" name="action" id="actionInput">
+        <button type="button" class="btn btn-success btn-pad" onclick="setAction('reset_password')">Forgot Password</button>
+        <button type="button" class="btn btn-success btn-pad" onclick="setAction('get_username')">Forgot Username</button>
     </form>
 <p>If you do not have access to the email you set up your account with,
     please contact the <a href="mailto:marshal.authorizations@antir.org">Martial Authorization Officer</a> to update your email.</p>
 </div>
 
+<script>
+function setAction(action) {
+    document.getElementById('actionInput').value = action;
+    document.getElementById('recoverForm').submit();
+}
+</script>
 {% endblock %}

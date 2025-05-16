@@ -7,7 +7,11 @@
 
 {% block body %}
 <div class="card">
-    <h3>{{ person.sca_name }}</h3>
+    <h3>
+    {% if person.title  %}
+    	{{ person.title.name }}
+    {% endif %}
+    {{ person.sca_name }}</h3>
     <p><strong>Region:</strong> {{ person.branch.region.name }}</p>
     <p><strong>Branch:</strong> {{ person.branch.name }}</p>
     <p><strong>Minor Status:</strong> {{ person.minor_status }}</p>

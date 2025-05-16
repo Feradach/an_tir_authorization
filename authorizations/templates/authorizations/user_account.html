@@ -32,7 +32,10 @@
                 <p><strong>State/Province:</strong> {{ user.state_province }}</p>
                 <p><strong>Postal Code:</strong> {{ user.postal_code }}</p>
                 <p><strong>Country:</strong> {{ user.country }}</p>
+                <p><strong>Phone Number:</strong> {{ user.phone_number }}</p>
                 <p><strong>Birthday:</strong> {{ user.birthday }}</p>
+                <p><strong>SCA Title:</strong> {% if user.person.title %}{{ user.person.title.name }} ({{ user.person.title.rank }})
+                {% endif %}</p>
                 <p><strong>SCA Name:</strong> {{ user.person.sca_name }}</p>
                 <p><strong>Branch:</strong> {{ user.person.branch.name }}</p>
                 <p><strong>Is Minor:</strong> {{ user.person.is_minor }}</p>

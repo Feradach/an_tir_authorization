@@ -87,6 +87,11 @@ td {
     font-weight: bold;
 }
 
+/* Button Padding */
+.btn-pad {
+    margin: 10px !important;
+}
+
 
 /* Hide mobile menu buttons and menu on larger screens */
 .cross  {

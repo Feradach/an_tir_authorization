@@ -3,6 +3,33 @@ from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
 
+BRANCH_TYPE_CHOICES = [
+    ('Kingdom', 'Kingdom'),
+    ('Principality', 'Principality'),
+    ('Region', 'Region'),
+    ('Barony', 'Barony'),
+    ('Province', 'Province'),
+    ('Shire', 'Shire'),
+    ('Riding', 'Riding'),
+    ('Canton', 'Canton'),
+    ('College', 'College'),
+    ('Stronghold', 'Stronghold'),
+    ('Port', 'Port'),
+    ('Incipient Shire', 'Incipient Shire'),
+    ('Other', 'Other'),
+]
+
+TITLE_RANK_CHOICES = [
+    ('Ducal', 'Ducal'),
+    ('County', 'County'),
+    ('Viscounty', 'Viscounty'),
+    ('Peerage', 'Peerage'),
+    ('Baronial', 'Baronial'),
+    ('Grant of Arms', 'Grant of Arms'),
+    ('Award of Arms', 'Award of Arms'),
+    ('Non-Armigerous', 'Non-Armigerous'),
+]
+
 # Create your models here.
 class User(AbstractUser):
     """User model. It is extended to include the membership information and their address."""
@@ -22,6 +49,7 @@ class User(AbstractUser):
         help_text='Enter a valid postal code: 12345, 12345-6789, or A1A 1A1.'
     )
     country = models.CharField(max_length=100,null=True, blank=True)
+    phone_number = models.CharField(max_length=20,null=True, blank=True)
     birthday = models.DateField(null=True, blank=True)
     has_logged_in = models.BooleanField(default=False)
     pass
@@ -48,6 +76,7 @@ class Branch(models.Model):
     Include all regions as branches so that we can assign them regional marshals."""
     name = models.CharField(max_length=150)
     region = models.ForeignKey(Region, on_delete=models.CASCADE)
+    type = models.CharField(max_length=50, choices=BRANCH_TYPE_CHOICES, default='Other')
 
     def __str__(self):
         return self.name
@@ -90,11 +119,20 @@ class AuthorizationStatus(models.Model):
         verbose_name_plural = 'authorization statuses'
 
 
+class Title(models.Model):
+    """Titles that people can have. Each title has a rank in the SCA."""
+    name = models.CharField(max_length=50)
+    rank = models.CharField(max_length=50, choices=TITLE_RANK_CHOICES, default='Non-Armigerous')
+
+    def __str__(self):
+        return self.name
+
 class Person(models.Model):
     """This is the public information about a person. It is attached to the user and the authorization."""
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
     sca_name = models.CharField(max_length=255, null=True, blank=True)
     branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True)
+    title = models.ForeignKey(Title, on_delete=models.SET_NULL, null=True, blank=True)
     is_minor = models.BooleanField(default=False)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
 
