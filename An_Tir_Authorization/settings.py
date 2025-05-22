@@ -19,7 +19,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 import os
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'default-development-key')
+try:
+    from .local_settings import *
+except ImportError:
+    SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'default-development-key')
+    DEBUG = True
+    ALLOWED_HOSTS = []
 
 # For sending login emails
 EMAIL_BACKEND = 'django.core.mail.backends.filebased.EmailBackend'
