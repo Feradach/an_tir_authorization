@@ -6,7 +6,7 @@ from django.core.exceptions import PermissionDenied
 from django.test import TestCase, RequestFactory
 from django.urls import reverse
 
-from authorizations.models import User, Region, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
+from authorizations.models import User, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
 from authorizations.permissions import is_kingdom_authorization_officer
 from authorizations.views import add_authorization, appoint_branch_marshal
 
@@ -61,14 +61,11 @@ class IndexViewTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_tir_righ = Region.objects.create(name='Tir Righ')
-        cls.region_summits = Region.objects.create(name='Summits')
-        cls.region_an_tir = Region.objects.create(name='An Tir')
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', region=cls.region_summits)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', region=cls.region_tir_righ)
-        cls.branch_sm = Branch.objects.create(name='Summits', region=cls.region_summits)
-        cls.branch_tr = Branch.objects.create(name='Tir Righ', region=cls.region_tir_righ)
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.branch_sm = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
+        cls.branch_tr = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.branch_sm)
+        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.branch_tr)
         cls.discipline_armored = Discipline.objects.create(name='Armored')
         cls.discipline_rapier = Discipline.objects.create(name='Rapier')
         cls.discipline_archery = Discipline.objects.create(name='Archery')
@@ -238,7 +235,7 @@ class IndexViewTest(TestCase):
         self.assertNotIn(auth_sm_armored_claudia, response.context['pending_authorizations'])
 
     def test_kingdom_marshal_view(self):
-        branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', region=self.region_summits)
+        branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', type='Shire', region=self.branch_sm)
 
         branch_marshal_an_tir = BranchMarshal.objects.create(person=self.marshal_person, branch=self.branch_an_tir,
                                                          discipline=self.discipline_armored,
@@ -307,7 +304,7 @@ class IndexViewTest(TestCase):
         self.assertNotIn(auth_sm_armored_claudia, response.context['pending_authorizations'])
 
     def test_auth_officer_view(self):
-        branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', region=self.region_summits)
+        branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', type='Shire', region=self.branch_sm)
         discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
 
         branch_marshal_an_tir = BranchMarshal.objects.create(person=self.marshal_person, branch=self.branch_an_tir,
@@ -391,10 +388,11 @@ class FighterViewTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_tir_righ = Region.objects.create(name='Tir Righ')
-        cls.region_summits = Region.objects.create(name='Summits')
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', region=cls.region_summits)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', region=cls.region_tir_righ)
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
+        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
+        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
@@ -536,10 +534,11 @@ class AddFighterViewTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_tir_righ = Region.objects.create(name='Tir Righ')
-        cls.region_summits = Region.objects.create(name='Summits')
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', region=cls.region_summits)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', region=cls.region_tir_righ)
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
+        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
+        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
@@ -643,10 +642,11 @@ class AddAuthorizationViewTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_tir_righ = Region.objects.create(name='Tir Righ')
-        cls.region_summits = Region.objects.create(name='Summits')
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', region=cls.region_summits)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', region=cls.region_tir_righ)
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
+        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
+        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
@@ -724,10 +724,11 @@ class MyAccountViewTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
-        cls.region_summits = Region.objects.create(name='Summits')
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', region=cls.region_summits)
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
+        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
+        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.discipline_auth = Discipline.objects.create(name='Authorization Officer')
 
@@ -801,11 +802,10 @@ class BranchMarshalViewTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
-        cls.region_summits = Region.objects.create(name='Summits')
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', region=cls.region_summits)
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
-        cls.branch_summits = Branch.objects.create(name='Summits', region=cls.region_summits)
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.branch_sm = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
+        cls.branch_tr = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.branch_sm)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.discipline_auth = Discipline.objects.create(name='Authorization Officer')
         cls.discipline_armored = Discipline.objects.create(name='Armored')

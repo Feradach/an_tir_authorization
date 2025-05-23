@@ -3,7 +3,7 @@ from dateutil.relativedelta import relativedelta
 from django.test import TestCase, RequestFactory
 from win32com.client.gencache import clsidToTypelib
 
-from authorizations.models import User, Region, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
+from authorizations.models import User, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
 from authorizations.permissions import authorization_follows_rules, approve_authorization, calculate_age
 from authorizations.views import branch_marshals
 
@@ -62,7 +62,7 @@ class Rule1_20Test(TestCase):
         cls.user_adult = User.objects.create_user(username='Frank_Smith@samplemail.com', password='eGqNMC2D',
                                           membership='4687335',
                                           membership_expiration=date.today() + relativedelta(years=1))
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.discipline_armored = Discipline.objects.create(name='Armored')
         cls.discipline_rapier = Discipline.objects.create(name='Rapier')
@@ -112,7 +112,7 @@ class AgeTest(TestCase):
     @classmethod
     def setUpTestData(cls):
         # Shared Setup
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -442,7 +442,7 @@ class Rule4Test(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -491,7 +491,7 @@ class Rule11Test(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -545,7 +545,7 @@ class RuleEquestrianAuthsTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -657,7 +657,7 @@ class Rule15Test(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -720,7 +720,7 @@ class Rule16Test(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
@@ -769,7 +769,7 @@ class RulePendingTest(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -866,9 +866,8 @@ class ApprovalTestRule1(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
@@ -893,7 +892,7 @@ class ApprovalTestRule1(TestCase):
         cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
         cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
 
-        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.branch_an_tir, person=cls.person_marshal,
+        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.region_an_tir, person=cls.person_marshal,
                                                                discipline=cls.discipline_auth_officer,
                                                                start_date=date.today() - relativedelta(years=1),
                                                                end_date=date.today() + relativedelta(years=1))
@@ -958,7 +957,7 @@ class ApprovalTestRule2(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -1027,7 +1026,7 @@ class ApprovalTestRule3(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -1108,7 +1107,7 @@ class ApprovalTestRule4(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
@@ -1218,11 +1217,9 @@ class ApprovalTestRule5(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
-        cls.region_summits = Region.objects.create(name='Summits')
-        cls.branch_summits = Branch.objects.create(name='Summits', region=cls.region_summits)
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.region_summits = Branch.objects.create(name='Summits', type='Principality', region=cls.region_an_tir)
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_summits)
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
@@ -1283,10 +1280,10 @@ class ApprovalTestRule5(TestCase):
         auth_sm_rapier_marshal = Authorization.objects.create(person=person_rapier_marshal, style=style_sm_rapier,status=self.status_active,
                                                                                expiration=date.today() + relativedelta(
                                                                                    years=1))
-        rapier_branch_marshal = BranchMarshal.objects.create(person=person_rapier_marshal, branch=self.branch_an_tir, discipline=discipline_rapier,start_date=date.today() - relativedelta(
+        rapier_branch_marshal = BranchMarshal.objects.create(person=person_rapier_marshal, branch=self.region_an_tir, discipline=discipline_rapier,start_date=date.today() - relativedelta(
                                                                                    years=1), end_date=date.today() + relativedelta(
         ))
-        branch_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.branch_an_tir,
+        branch_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.region_an_tir,
                                                                   discipline=discipline_armored,
                                                                   start_date=date.today() - relativedelta(
                                                                       years=1), end_date=date.today() + relativedelta(years=1))
@@ -1351,7 +1348,7 @@ class ApprovalTestRule5(TestCase):
                                                                      status=self.status_active,
                                                                      expiration=date.today() + relativedelta(
                                                                          years=1))
-        branch_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.branch_an_tir,
+        branch_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.region_an_tir,
                                                               discipline=discipline_armored,
                                                               start_date=date.today() - relativedelta(
                                                                   years=1),
@@ -1394,7 +1391,7 @@ class ApprovalTestRule5(TestCase):
                                                                            status=self.status_regional,
                                                                            expiration=date.today() + relativedelta(
                                                                                years=1), marshal=self.person_other_marshal)
-        branch_youth_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.branch_an_tir,
+        branch_youth_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.region_an_tir,
                                                               discipline=discipline_youth_armored,
                                                               start_date=date.today() - relativedelta(
                                                                   years=1),
@@ -1418,15 +1415,14 @@ class ApprovalTestRule5(TestCase):
         discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
         discipline_archery = Discipline.objects.create(name='Archery')
         style_sm_archery = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_archery)
-        region_tir_righ = Region.objects.create(name='Tir Righ')
-        branch_tir_righ = Branch.objects.create(name='Tir Righ', region=region_tir_righ)
+        region_tir_righ = Branch.objects.create(name='Tir Righ', region=self.region_an_tir)
 
-        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=branch_tir_righ, person=self.person_marshal,
+        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=region_tir_righ, person=self.person_marshal,
                                                                discipline=discipline_earl_marshal,
                                                                start_date=date.today() - relativedelta(years=1),
                                                                end_date=date.today() + relativedelta(years=1))
 
-        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=self.branch_summits, person=self.person_other_marshal,
+        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=region_tir_righ, person=self.person_other_marshal,
                                                                     discipline=discipline_earl_marshal,
                                                                     start_date=date.today() - relativedelta(years=1),
                                                                     end_date=date.today() + relativedelta(years=1))
@@ -1471,9 +1467,8 @@ class ApprovalTestRule6(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.region_an_tir = Region.objects.create(name='An Tir')
+        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', region=cls.region_an_tir)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
@@ -1519,7 +1514,7 @@ class ApprovalTestRule6(TestCase):
                                                                    expiration=date.today() + relativedelta(
                                                                        years=1), marshal=cls.person_other_marshal)
         cls.branch_youth_armored_marshal = BranchMarshal.objects.create(person=cls.person_marshal,
-                                                                    branch=cls.branch_an_tir,
+                                                                    branch=cls.region_an_tir,
                                                                     discipline=cls.discipline_youth_armored,
                                                                     start_date=date.today() - relativedelta(
                                                                         years=1),

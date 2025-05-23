@@ -15,7 +15,8 @@ from django.core.paginator import Paginator
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.urls import reverse
-from .models import User, Authorization, Region, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
+from django.contrib.staticfiles import finders
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal
 from itertools import groupby
 from operator import attrgetter
@@ -24,8 +25,7 @@ from django.contrib import messages
 from django import forms
 import re
 
-all_region_names = Region.objects.exclude(name='An Tir').values_list('name', flat=True)
-all_branch_names = Branch.objects.exclude(Q(name__in=all_region_names) | Q(name='An Tir')).values_list('name', flat=True)
+# Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
     'Alabama',
     'Alaska',
@@ -135,9 +135,8 @@ def index(request):
                 discipline = marshal.discipline
                 pending_authorizations = Authorization.objects.filter(person__branch=branch, style__discipline=discipline, status__name='Pending').order_by('expiration')
         if regional_marshal:
-            region = Region.objects.get(name=marshal.branch.name)
             discipline = marshal.discipline
-            pending_authorizations = Authorization.objects.filter(person__branch__region__name=region, style__discipline=discipline, status__name='Needs Regional Approval').order_by('expiration')
+            pending_authorizations = Authorization.objects.filter(person__branch__region=marshal.branch, style__discipline=discipline, status__name='Needs Regional Approval').order_by('expiration')
         if kingdom_marshal:
             discipline = marshal.discipline
             pending_authorizations = Authorization.objects.filter(style__discipline=discipline,
@@ -359,7 +358,7 @@ def search(request):
 
     # Create table drop down options based on dynamic filters
     sca_name_options = authorization_list.order_by('person__sca_name').values_list('person__sca_name', flat=True).distinct()
-    region_options = authorization_list.order_by('person__branch__region__name').values_list('person__branch__region__name', flat=True).distinct()
+    region_options = Branch.objects.regions().order_by('name').values_list('name', flat=True).distinct()
     branch_options = authorization_list.order_by('person__branch__name').values_list('person__branch__name', flat=True).distinct()
     discipline_options = authorization_list.order_by('style__discipline__name').values_list('style__discipline__name', flat=True).distinct()
     style_options = authorization_list.order_by('style__name').values_list('style__name', flat=True).distinct()
@@ -407,8 +406,10 @@ def fighter(request, person_id):
 
     Create a link on the authorization search to go to this page."""
 
+    # Get the person who's card is being requested
     person = Person.objects.get(user_id=person_id)
 
+    # If there is a post, confirm that they are authenticated.
     if request.method == 'POST':
         if not request.user.is_authenticated:
             messages.error(request, 'You must be logged in to perform this action.')
@@ -438,9 +439,6 @@ def fighter(request, person_id):
                 messages.error(request, mssg)
             else:
                 messages.success(request, mssg)
-
-
-
 
     # Get the lists of authorizations
     authorization_list = Authorization.objects.select_related(
@@ -591,13 +589,12 @@ def generate_fighter_card(request, person_id, template_id):
 
     # Get core information
     authorization_list = Authorization.objects.select_related(
-        'person__branch__region',
+        'person__branch',
         'style__discipline',
     ).filter(
         person_id=person_id,
         expiration__gte=date.today(),
-    ).exclude(
-        status__name='Revoked'
+        status__name='Active'
     ).order_by(
         'style__discipline__name',
         'expiration', 'style__name')
@@ -606,21 +603,21 @@ def generate_fighter_card(request, person_id, template_id):
 
     # Determine the type of card to generate
     if template_id == '1':
-        template_path = 'authorizations/static/pdf_forms/fighter_auth.pdf'
+        template_path = 'pdf_forms/fighter_auth.pdf'
         authorization_list = authorization_list.exclude(
             style__discipline__name__in=['Equestrian', 'Youth Armored', 'Youth Rapier']
         )
         if authorization_list.count() == 0:
             raise Exception('No fighter authorizations found')
     elif template_id == '2':
-        template_path = 'authorizations/static/pdf_forms/youth_auth.pdf'
+        template_path = 'pdf_forms/youth_auth.pdf'
         authorization_list = authorization_list.filter(
             style__discipline__name__in=['Youth Armored', 'Youth Rapier']
         )
         if authorization_list.count() == 0:
             raise Exception('No youth authorizations found')
     elif template_id == '3':
-        template_path = 'authorizations/static/pdf_forms/equestrian_auth.pdf'
+        template_path = 'pdf_forms/equestrian_auth.pdf'
         authorization_list = authorization_list.filter(
             style__discipline__name='Equestrian'
         )
@@ -684,7 +681,20 @@ def generate_fighter_card(request, person_id, template_id):
 
 
     # Build the card
-    template = PdfReader(template_path)
+    # Find the absolute path to the template using Django's static files finder
+    absolute_template_path = finders.find(template_path)
+    if not absolute_template_path:
+        # Try to find the file in the static directory
+        absolute_template_path = finders.find(f'authorizations/static/{template_path}')
+    if not absolute_template_path:
+        raise Exception(f'Could not find PDF template file: {template_path}. Looked in: {finders.searched_locations}')
+    
+    try:
+        template = PdfReader(absolute_template_path)
+    except Exception as e:
+        raise Exception(f'Error reading PDF template file {absolute_template_path}: {str(e)}')
+    
+    print(f'Successfully loaded template from: {absolute_template_path}')
     for page in template.pages:
         annotations = page.Annots
         if annotations:
@@ -1255,7 +1265,7 @@ class CreatePersonForm(forms.Form):
         choices=[('', '— select a rank —')] + list(TITLE_RANK_CHOICES),
         required=False
     )
-    branch = forms.ModelChoiceField(label='Branch', queryset = Branch.objects.filter(name__in=all_branch_names), required=True)
+    branch = forms.ModelChoiceField(label='Branch', queryset=Branch.objects.non_regions(), required=True)
     is_minor = forms.BooleanField(label='Is Minor', required=False)
     parent_id = forms.ModelChoiceField(label='Parent ID', queryset=Person.objects.all().exclude(sca_name='admin'),required=False)
 

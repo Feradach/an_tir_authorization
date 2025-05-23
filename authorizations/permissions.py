@@ -3,12 +3,9 @@ from dateutil.relativedelta import relativedelta
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
 
-from authorizations.models import BranchMarshal, Authorization, Region, WeaponStyle, User, Branch, AuthorizationStatus, \
+from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
     Person, Discipline
 
-regions = Region.objects.exclude(name='An Tir').values_list('name', flat=True)
-all_region_names = Region.objects.exclude(name='An Tir').values_list('name', flat=True)
-all_branch_names = Branch.objects.exclude(Q(name__in=all_region_names) | Q(name='An Tir')).values_list('name', flat=True)
 
 def membership_is_current(user):
     if not user.membership:
@@ -53,7 +50,7 @@ def is_branch_marshal(user, branch=None, discipline=None):
     query = BranchMarshal.objects.filter(
         person__user=user,
         end_date__gte=date.today(),
-        branch__name__in=[all_branch_names]
+        branch__in=Branch.objects.non_regions()
     )
 
     if discipline:
@@ -89,18 +86,29 @@ def is_regional_marshal(user, discipline=None, region=None):
             return True
 
     if region:
-        query = BranchMarshal.objects.filter(
-            person__user=user,
-            branch__name=region,
-            end_date__gte=date.today(),
-        )
+        # Check if the region sent by the user is in fact a region.
+        # Get the region branch by name and check if they are a marshal for it
+        try:
+            branch = Branch.objects.get(name=region)
+            if not branch in Branch.objects.regions():
+                return False
+            query = BranchMarshal.objects.filter(
+                person__user=user,
+                branch=branch,
+                end_date__gte=date.today(),
+            )
+        except Branch.DoesNotExist:
+            return False
     else:
+        # Get all region branches and check if they are a marshal for any of them
+        # Get all region branches
+        region_branches = Branch.objects.regions()
         query = BranchMarshal.objects.filter(
             person__user=user,
-            branch__name__in=all_region_names,
+            branch__in=region_branches,
             end_date__gte=date.today(),
         )
-
+    
     if discipline:
         query = query.filter(discipline__name__in=[discipline, 'Earl Marshal'])
 
@@ -200,18 +208,21 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
         if existing_fighter.is_minor:
             return False, 'Must be an adult to become a senior marshal.'
 
-    # Rule 4: A Rapier, Cut & Thrust or Youth Rapier fighter must have single sword as their first weapon authorization
+    # Rule 4: A Rapier or Youth Rapier fighter must have single sword as their first weapon authorization
     # Since these require single sword first, they rely on single sword being before the other combat styles so that they can be added in the same form submission.
     if not style.name in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
         if style.discipline.name == 'Rapier':
             if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier', status__name='Active').exists():
                 return False, 'A fighter must be authorized with single sword as their first rapier authorization.'
-        if style.discipline.name == 'Cut & Thrust':
-            if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Cut & Thrust', status__name='Active').exists():
-                return False, 'A fighter must be authorized with single sword as their first cut and thrust authorization.'
         if style.discipline.name == 'Youth Rapier':
             if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Youth Rapier', status__name='Active').exists():
                 return False, 'A fighter must be authorized with single sword as their first youth rapier authorization.'
+    
+    # Rule 4a: A Cut & Thrust fighter cannot have spear as their first authorization.
+    if style.discipline.name == 'Cut & Thrust':
+        if not all_authorizations.filter(style__name='Spear', style__discipline__name='Cut & Thrust', status__name='Active').exists():
+            return False, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.'
+    
 
     # Rule 5: Rapier fighters must be at lest 14 years old
     if style.discipline.name == 'Rapier':
@@ -297,11 +308,14 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
         if all_authorizations.filter(style__name='Junior Marshal', style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
             return False, 'Cannot have a new senior marshal if a junior marshal is pending.'
 
-
     # Rule 20: Cannot make an authorization for yourself.
     if existing_fighter.user == marshal:
         return False, 'Cannot make an authorization for yourself.'
 
+    # Rule 21: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored combat, they can only be authorized by a regional marshal.
+    if existing_fighter.is_minor and style.discipline.name in ['Rapier', 'Cut & Thrust', 'Armored']:
+        if not is_regional_marshal(marshal):
+            return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored combat unless you are a regional marshal.'
 
     return True, 'Authorization follows all rules.'
 
@@ -323,7 +337,7 @@ def approve_authorization(request):
 
     marshal = request.user
     authorization = Authorization.objects.get(id=request.POST['authorization_id'])
-    auth_region = authorization.person.branch.region.name
+    auth_region = authorization.person.branch.name if authorization.person.branch.is_region() else None
     discipline = authorization.style.discipline.name
 
     active_status = AuthorizationStatus.objects.get(name='Active')
@@ -408,6 +422,7 @@ def appoint_branch_marshal(request):
     Each branch can have at most two branch marshals for each discipline, a deputy and an actual.
     The system does not distinguish between the two."""
 
+    # Get the data from the request.
     try:
         person = Person.objects.get(sca_name=request.POST['person'])
         branch = Branch.objects.get(name=request.POST['branch'])
@@ -452,9 +467,9 @@ def appoint_branch_marshal(request):
 
         return True, 'Authorization officer appointed.'
 
-    # all_branch_names is for the non-regions. If the branch isn't in there then it is a regional marshal position.
+    # Check is_region() to see if they are being made a regional marshal.
     # Rule 4: A regional marshal must be a senior marshal.
-    if not branch.name in all_branch_names:
+    if branch.is_region():
         if not is_senior_marshal(person.user):
             return False, 'Must be a senior marshal to be a regional marshal.'
 

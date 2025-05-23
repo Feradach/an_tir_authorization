@@ -303,7 +303,15 @@
             cartContainer.appendChild(cartItem);
         });
 
-
+        // Ensure all cart items are included in form submission
+        form.addEventListener('submit', function (event) {
+            const cartItems = cartContainer.querySelectorAll('.cart-item input[name="weapon_styles"]');
+            if (cartItems.length === 0) {
+                event.preventDefault();
+                alert('Please add at least one weapon style to the cart.');
+                return;
+            }
+        });
     });
 </script>
 

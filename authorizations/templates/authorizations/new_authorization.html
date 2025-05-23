@@ -52,6 +52,11 @@
         const cartContainer = document.getElementById('cart-container');
         const form = document.querySelector('form');
 
+        console.log('Discipline select:', disciplineSelect);
+        console.log('Styles select:', stylesSelect);
+        console.log('Cart container:', cartContainer);
+        console.log('Form:', form);
+
         console.log('Initial Discipline Dropdown Content:', disciplineSelect.innerHTML);
         console.log('Initial Weapon Styles Dropdown Content:', stylesSelect.innerHTML);
 
@@ -61,7 +66,7 @@
             stylesSelect.innerHTML = ''; // Clear existing styles
 
             if (disciplineId) {
-                fetch(`/authorizations/api/styles/${disciplineId}/`)
+                fetch(`/api/styles/${disciplineId}/`)
                     .then(response => response.json())
                     .then(data => {
                         data.styles.forEach(style => {

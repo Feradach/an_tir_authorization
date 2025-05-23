@@ -62,24 +62,52 @@ class User(AbstractUser):
 
         super().save(*args, **kwargs)
 
+class BranchManager(models.Manager):
+    def regions(self):
+        """Return all region branches (Kingdom, Principality, Region)"""
+        return self.filter(type__in=['Kingdom', 'Principality', 'Region'])
 
-class Region(models.Model):
-    """This is the region of An Tir the person is in."""
-    name = models.CharField(max_length=150)
+    def non_regions(self):
+        """Return all non-region branches"""
+        return self.exclude(type__in=['Kingdom', 'Principality', 'Region'])
 
-    def __str__(self):
-        return self.name
-
+    def get_all_sub_branches(self, region):
+        """Get all branches that are under the given region"""
+        if region.type in ['Kingdom', 'Principality', 'Region']:
+            return region.sub_branches.all()
+        return self.none()
 
 class Branch(models.Model):
     """This is the inidividual branch of An Tir the person is in.
     Include all regions as branches so that we can assign them regional marshals."""
+    objects = BranchManager()
     name = models.CharField(max_length=150)
-    region = models.ForeignKey(Region, on_delete=models.CASCADE)
+    region = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_branches')
     type = models.CharField(max_length=50, choices=BRANCH_TYPE_CHOICES, default='Other')
 
     def __str__(self):
         return self.name
+
+    def is_region(self):
+        """Return True if this branch is a region (Kingdom, Principality, or Region type)"""
+        return self.type in ['Kingdom', 'Principality', 'Region']
+
+    def get_all_sub_branches(self):
+        """Get all branches that are under this region"""
+        return Branch.objects.get_all_sub_branches(self)
+
+    def __str__(self):
+        return self.name
+
+    def is_region(self):
+        """Return True if this branch is a region (Kingdom, Principality, or Region type)"""
+        return self.type in ['Kingdom', 'Principality', 'Region']
+
+    def get_all_sub_branches(self):
+        """Get all branches that are under this region"""
+        if self.is_region():
+            return self.sub_branches.all()
+        return Branch.objects.none()
 
     class Meta:
         verbose_name = 'branch'
