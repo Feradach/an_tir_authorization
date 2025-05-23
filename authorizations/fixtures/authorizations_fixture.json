@@ -1044,60 +1044,11 @@
   }
 },
 {
-  "model": "authorizations.region",
-  "pk": 1,
-  "fields": {
-    "name": "An Tir"
-  }
-},
-{
-  "model": "authorizations.region",
-  "pk": 2,
-  "fields": {
-    "name": "Summits"
-  }
-},
-{
-  "model": "authorizations.region",
-  "pk": 3,
-  "fields": {
-    "name": "Tir Righ"
-  }
-},
-{
-  "model": "authorizations.region",
-  "pk": 4,
-  "fields": {
-    "name": "Central"
-  }
-},
-{
-  "model": "authorizations.region",
-  "pk": 5,
-  "fields": {
-    "name": "Inlands"
-  }
-},
-{
-  "model": "authorizations.region",
-  "pk": 6,
-  "fields": {
-    "name": "Rivers"
-  }
-},
-{
-  "model": "authorizations.region",
-  "pk": 7,
-  "fields": {
-    "name": "Other"
-  }
-},
-{
   "model": "authorizations.branch",
   "pk": 1,
   "fields": {
     "name": "An Tir",
-    "region": 1,
+    "region": null,
     "type": "Kingdom"
   }
 },
@@ -1106,7 +1057,7 @@
   "pk": 2,
   "fields": {
     "name": "Summits",
-    "region": 2,
+    "region": 1,
     "type": "Principality"
   }
 },
@@ -1115,7 +1066,7 @@
   "pk": 3,
   "fields": {
     "name": "Tir Righ",
-    "region": 3,
+    "region": 1,
     "type": "Principality"
   }
 },
@@ -1124,7 +1075,7 @@
   "pk": 4,
   "fields": {
     "name": "Central",
-    "region": 4,
+    "region": 1,
     "type": "Region"
   }
 },
@@ -1133,7 +1084,7 @@
   "pk": 5,
   "fields": {
     "name": "Inlands",
-    "region": 5,
+    "region": 1,
     "type": "Region"
   }
 },
@@ -1142,7 +1093,7 @@
   "pk": 6,
   "fields": {
     "name": "Rivers",
-    "region": 6,
+    "region": 1,
     "type": "Region"
   }
 },
@@ -1151,7 +1102,7 @@
   "pk": 7,
   "fields": {
     "name": "Avacal",
-    "region": 7,
+    "region": null,
     "type": "Kingdom"
   }
 },
@@ -1160,7 +1111,7 @@
   "pk": 8,
   "fields": {
     "name": "Other",
-    "region": 7,
+    "region": null,
     "type": "Other"
   }
 },
