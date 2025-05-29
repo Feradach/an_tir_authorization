@@ -11,7 +11,7 @@
 
 {% block body %}
     {% if goal == 'search' %}
-        <div class="col-md-4" xmlns="http://www.w3.org/1999/html">
+        <div class="col-md-4">
             <div class="mb-3">
                 <form method="get" id="sca_name_form">
                     <label for="sca_name">SCA Name:</label>
@@ -110,6 +110,20 @@
                     >
                     </div>
                 </form>
+                {% if request.GET.start_date or request.GET.end_date %}
+                    <form method="get" id="clear_dates_form" style="display: inline-block;">
+                        <button type="submit" class="btn btn-danger btn-sm">
+                            X
+                        </button>
+                        {% for key, value in request.GET.items %}
+                            {% if key != 'start_date' and key != 'end_date' %}
+                            <input type="hidden" name="{{ key }}" value="{{ value }}">
+                            {% endif %}
+                        {% endfor %}
+                        <input type="hidden" name="start_date" value="">
+                        <input type="hidden" name="end_date" value="">
+                    </form>
+                {% endif %}
             <div class="mb-3">
                 <form method="get" id="marshal_form">
                     <label for="marshal">Minor Status:</label>
@@ -152,8 +166,7 @@
                         {% endif %}
                     {% endfor %}
                 </form>
-
-                
+            </div>      
                 <p></p>
                 <p><button type="submit" form="clear_search_form" name="clear_search" value="1" class="btn btn-secondary">Clear Search</button>
                 <form method="get" id="clear_search_form" style="display: inline;">
@@ -287,6 +300,20 @@
                                 ↓
                             {% endif %}
                         </a>
+                        {% if request.GET.start_date or request.GET.end_date %}
+                        <form method="get" id="clear_dates_form" style="display: inline-block;">
+                            <button type="submit" class="btn btn-danger btn-sm">
+                                X
+                            </button>
+                            {% for key, value in request.GET.items %}
+                                {% if key != 'start_date' and key != 'end_date' %}
+                                <input type="hidden" name="{{ key }}" value="{{ value }}">
+                                {% endif %}
+                            {% endfor %}
+                            <input type="hidden" name="start_date" value="">
+                            <input type="hidden" name="end_date" value="">
+                        </form>
+                        {% endif %}
                     <form method="get" id="date_filter_form">
                         <label for="start_date">Start:</label>
                         <input
