@@ -1,0 +1,128 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Home
+{% endblock %}
+
+{% block body %}
+    <p>Welcome to the Authorization portal for An Tir.
+    <br>Below you will find a selection of actions that you can perform.</p>
+    <p>The actions you will be able to perform will depend on whether you are logged in and your marshal role.</p>
+
+    {% if messages %}
+        <div id="messages-container">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}" role="alert">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+    <p><a href="{% url 'search' %}?goal=search" class="btn btn-primary">Search Fighters</a></p>
+    {% if senior_marshal %}
+        <p><a href="{% url 'add_fighter' %}" class="btn btn-primary">Add a New Fighter to the Database</a></p>
+    {% endif %}
+    <p><a href="{% url 'branch_marshals' %}" class="btn btn-primary">View Branch Marshals</a></p>
+    {% if auth_officer or kingdom_earl_marshal %}
+        <p><a href="{% url 'manage_sanctions' %}" class="btn btn-primary">Manage Sanctions</a></p>
+    {% endif %}
+    <div class="col-md-3">
+        <p>
+            <form method="get" id="sca_name_form">
+                <label for="sca_name"><strong>Go to fighter card for:</strong></label>
+                <select id="sca_name" name="sca_name" class="choices-dropdown">
+                    <option value="">-- Select a fighter --</option>
+                    {% for person in all_people %}
+                        <option value="{{ person }}"{% if request.GET.sca_name == person %} selected{% endif %}>
+                            {{ person }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </form>
+        </p>
+    </div>
+    {% if pending_authorizations %}
+        <h3>Marshal Authorizations Needing Approval</h3>
+         <table>
+                <tr>
+                    <th>SCA Name</th>
+                    <th>Region</th>
+                    <th>Branch</th>
+                    <th>Discipline</th>
+                    <th>Weapon Style</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+                {% for authorization in pending_authorizations %}
+                    <tr>
+                        <td>{{ authorization.person.sca_name }}</td>
+                        <td>{{ authorization.person.branch.region.name }}</td>
+                        <td>{{ authorization.person.branch.name }}</td>
+                        <td>{{ authorization.style.discipline.name }}</td>
+                        <td>{{ authorization.style.name }}</td>
+                        <td>{{ authorization.status.name }}</td>
+                        <td><form method="post" action="">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="approve_authorization">
+                            <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
+                            <button type="submit" class="btn btn-success">Approve</button>
+                        </form>
+                        {% if regional_marshal %}
+                            <form method="post" action="">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="reject_authorization">
+                            <input type="hidden" name="bad_authorization_id" value="{{ authorization.id }}">
+                            <button type="submit" class="btn btn-danger">Reject</button>
+                        </form></td>
+                    {% endif %}
+                    </tr>
+                {% endfor %}
+            </table>
+    {% endif %}
+
+{% endblock %}
+
+{% block script %}
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Apply Choices.js to all dropdowns with a shared class
+            const dropdowns = document.querySelectorAll('.choices-dropdown');
+            dropdowns.forEach(function (dropdown) {
+                new Choices(dropdown, {
+                    removeItemButton: true,
+                    shouldSort: false,
+                    searchEnabled: true,
+                    searchResultLimit: 1000,
+                    fuseOptions: {
+                        threshold: 0.3,
+                    },
+                    itemSelectText: '',
+                });
+
+                // Add form submission on change for each dropdown
+                dropdown.addEventListener('change', function () {
+                    const form = dropdown.closest('form');
+                    addQueryParamsToForm(form); // Retain current query parameters
+                    form.submit();
+                });
+            });
+
+            // Function to append current query parameters to the form
+            function addQueryParamsToForm(form) {
+                const urlParams = new URLSearchParams(window.location.search);
+
+                // Add all current query parameters as hidden inputs, except the current form's inputs
+                urlParams.forEach(function (value, key) {
+                    if (!form.querySelector(`[name="${key}"]`)) {
+                        const hiddenInput = document.createElement('input');
+                        hiddenInput.type = 'hidden';
+                        hiddenInput.name = key;
+                        hiddenInput.value = value;
+                        form.appendChild(hiddenInput);
+                    }
+                });
+            }
+        });
+    </script>
+{% endblock %}
