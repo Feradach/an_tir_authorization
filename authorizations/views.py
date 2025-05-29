@@ -3,6 +3,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 import random
 import string
+from datetime import date
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError, PermissionDenied
@@ -861,12 +862,25 @@ def add_authorization(request, person_id):
 
                         if int(style_id) in current_styles:
                             update_auth = Authorization.objects.get(person=person, style_id=style_id)
-                            update_auth.expiration = date.today() + relativedelta(years=4)
                             update_auth.marshal = Person.objects.get(user=request.user)
-                            update_auth.status = AuthorizationStatus.objects.get(name='Active')
+                            
+                            # Check if this is a marshal authorization and if it has been expired for more than a year
+                            if update_auth.style.name in ['Senior Marshal', 'Junior Marshal']:
+                                days_expired = (date.today() - update_auth.expiration).days
+                                print(f"Days expired: {days_expired}")  # Debug print
+                                if days_expired > 365:  # More than one year expired
+                                    update_auth.status = AuthorizationStatus.objects.get(name='Pending')
+                                    messages.success(request, f'Authorization for {update_auth.style.name} pending confirmation.')
+                                else:
+                                    update_auth.status = AuthorizationStatus.objects.get(name='Active')
+                                    messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                            else:
+                                update_auth.status = AuthorizationStatus.objects.get(name='Active')
+                                messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                            
+                            update_auth.expiration = date.today() + relativedelta(years=4)
                             update_auth.save()
                             selected_styles.remove(style_id)
-                            messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
 
                         else:
                             style = WeaponStyle.objects.get(id=style_id)

@@ -219,10 +219,9 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
                 return False, 'A fighter must be authorized with single sword as their first youth rapier authorization.'
     
     # Rule 4a: A Cut & Thrust fighter cannot have spear as their first authorization.
-    if style.discipline.name == 'Cut & Thrust':
-        if not all_authorizations.filter(style__name='Spear', style__discipline__name='Cut & Thrust', status__name='Active').exists():
+    if style.discipline.name == 'Cut & Thrust' and style.name == 'Spear':
+        if not all_authorizations.filter(style__discipline__name='Cut & Thrust', status__name='Active').exists():
             return False, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.'
-    
 
     # Rule 5: Rapier fighters must be at lest 14 years old
     if style.discipline.name == 'Rapier':
