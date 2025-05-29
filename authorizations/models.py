@@ -163,6 +163,7 @@ class Person(models.Model):
     title = models.ForeignKey(Title, on_delete=models.SET_NULL, null=True, blank=True)
     is_minor = models.BooleanField(default=False)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
+    comment = models.TextField(null=True, blank=True)
 
     def id(self):
         return self.user_id

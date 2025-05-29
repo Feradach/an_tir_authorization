@@ -153,34 +153,7 @@
                     {% endfor %}
                 </form>
 
-                {% if page_obj.has_previous %}
-                    <a href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                        Previous
-                    </a>
-                {% endif %}
-                Page
-                <form method="get" id="page_form" style="display: inline;">
-                    <label for="page-select"></label>
-                    <select name="page" id="page-select" onchange="this.form.submit()">
-                        {% for i in page_obj.paginator.page_range %}
-                        <option value="{{ i }}" {% if i == page_obj.number %}selected{% endif %}>
-                            {{ i }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                    {% for key, value in request.GET.items %}
-                        {% if key != 'page' %} <!-- Only exclude the page parameter -->
-                        <input type="hidden" name="{{ key }}" value="{{ value }}">
-                        {% endif %}
-                    {% endfor %}
-                </form>
-                of {{ page_obj.paginator.num_pages }}
-
-                {% if page_obj.has_next %}
-                    <a href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                        Next
-                    </a>
-                {% endif %}
+                
                 <p></p>
                 <p><button type="submit" form="clear_search_form" name="clear_search" value="1" class="btn btn-secondary">Clear Search</button>
                 <form method="get" id="clear_search_form" style="display: inline;">
@@ -407,6 +380,34 @@
                 {% endfor %}
             </div>
         </div>
+        {% if page_obj.has_previous %}
+            <a href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                Previous
+            </a>
+        {% endif %}
+        Page
+        <form method="get" id="page_form" style="display: inline;">
+            <label for="page-select"></label>
+            <select name="page" id="page-select" onchange="this.form.submit()">
+                {% for i in page_obj.paginator.page_range %}
+                <option value="{{ i }}" {% if i == page_obj.number %}selected{% endif %}>
+                    {{ i }}
+                </option>
+                {% endfor %}
+            </select>
+            {% for key, value in request.GET.items %}
+                {% if key != 'page' %} <!-- Only exclude the page parameter -->
+                <input type="hidden" name="{{ key }}" value="{{ value }}">
+                {% endif %}
+            {% endfor %}
+        </form>
+        of {{ page_obj.paginator.num_pages }}
+
+        {% if page_obj.has_next %}
+            <a href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
+                Next
+            </a>
+        {% endif %}
     </div>
     {% endif %}
 {% endblock %}

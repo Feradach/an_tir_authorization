@@ -358,7 +358,7 @@ def search(request):
 
     # Create table drop down options based on dynamic filters
     sca_name_options = authorization_list.order_by('person__sca_name').values_list('person__sca_name', flat=True).distinct()
-    region_options = Branch.objects.regions().order_by('name').values_list('name', flat=True).distinct()
+    region_options = authorization_list.order_by('person__branch__region__name').values_list('person__branch__region__name', flat=True).distinct()
     branch_options = authorization_list.order_by('person__branch__name').values_list('person__branch__name', flat=True).distinct()
     discipline_options = authorization_list.order_by('style__discipline__name').values_list('style__discipline__name', flat=True).distinct()
     style_options = authorization_list.order_by('style__name').values_list('style__name', flat=True).distinct()
