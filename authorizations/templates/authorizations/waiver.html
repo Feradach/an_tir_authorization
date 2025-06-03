@@ -1,0 +1,22 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Consent to Participate and Release of Liability
+{% endblock %}
+{% block body %}
+    <h2>CONSENT TO PARTICIPATE AND RELEASE OF LIABILITY</h2>
+    <p>I, the undersigned, do hereby state that I wish to participate in activities sponsored by the international organization known as the Society for Creative Anachronism, Inc., a California not-for-profit corporation(hereafter “SCA”).</p>
+    <p>The SCA has rules which govern and may restrict the activities in which I can participate. These rules include, but are not limited to: Corpora, the By-laws, the various kingdom laws and the Rules for combat related activities.</p>
+    <p>The SCA makes no representations or claims as to the condition or safety of the land, structures or surroundings, whether or not owned, leased, operated or maintained by the SCA.</p>
+    <p>I understand that all activities are VOLUNTARY and that I do not have to participate unless I choose to do so. I understand that these activities are potentially dangerous or harmful to my person or property, and that by participating I voluntary accept and assume the risk of injury to myself or damage to my property.</p>
+    <p>I understand that the SCA does NOT provide any insurance coverage for my person person or my property. I acknowledge that I am responsible for my safety and my own health care needs, and for the protection of my property.</p>
+    <p>In exchange for allowing me to participate in these SCA activities and events, I agree to release from liability, agree to indemnify, and hold harmless the SCA, and any SCA agent, officer, or SCA employee acting within the scope of their duties, for any injury to my person or damage to my property.</p>
+    <p>This Release shall be binding upon myself, successors in interest, and/or any person(s) suing on my behalf.</p>
+    <p>I have read the the statments in this document. I agree with its terms and have voluntary signed it. I understand that this document is complete unto itself and that any oral promises or representations made to me concerning this document and/or its terms are not binding upon the SCA, its officers, agents and/or employees.</p>
+    <p>I UNDERSTAND THAT THIS IS A LEGAL DOCUMENT. I HAVE READ AND UNDERSTOOD THIS RELEASE AND I UNDERSTAND ALL ITS TERMS. I EXECUTE IT VOLUNTARILY AND WITH FULL KNOWLEDGE OF ITS MEANING AND SIGNIFICANCE.</p>
+    <form method="post">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-success">I Agree</button>
+    </form>
+{% endblock %}

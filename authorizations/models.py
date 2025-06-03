@@ -52,6 +52,8 @@ class User(AbstractUser):
     phone_number = models.CharField(max_length=20,null=True, blank=True)
     birthday = models.DateField(null=True, blank=True)
     has_logged_in = models.BooleanField(default=False)
+    waiver_expiration = models.DateField(null=True, blank=True)
+    background_check_expiration = models.DateField(null=True, blank=True)
     pass
 
     def save(self, *args, **kwargs):

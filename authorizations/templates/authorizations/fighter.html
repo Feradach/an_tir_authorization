@@ -182,6 +182,18 @@
             {% csrf_token %}
             <input type="hidden" name="action" value="add_authorization">
             <h3>Add New Authorization</h3>
+            {% if auth_officer %}
+                <div class="mb-3">
+                    <label for="authorizing_marshal">Authorizing Marshal:</label>
+                    <select id="authorizing_marshal" name="authorizing_marshal" class="form-control choices-dropdown">
+                        <option value="">-- Select an authorizing marshal --</option>
+                        {% for person in all_people %}
+                            <option value="{{ person }}" data-user-id="{{ person.user.id }}">{{ person }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" id="marshal_id" name="marshal_id" value="">
+                </div>
+            {% endif %}
             <label for="discipline-select">Discipline:</label>
             <select id="discipline-select" name="discipline" class="form-control">
                 <option value="">Select Discipline</option>
@@ -239,10 +251,39 @@
 {% block script %}
 <script>
     document.addEventListener('DOMContentLoaded', function () {
+        // Initialize Choices.js for the authorizing marshal dropdown if it exists
+        let choicesInstance = null;
+        const authorizingMarshalSelect = document.getElementById('authorizing_marshal');
+        const marshalIdInput = document.getElementById('marshal_id');
         const disciplineSelect = document.getElementById('discipline-select');
         const stylesSelect = document.getElementById('weapon-styles-select');
         const cartContainer = document.getElementById('cart-container');
         const form = document.querySelector('form');
+
+        // Initialize Choices.js if the dropdown exists
+        if (authorizingMarshalSelect) {
+            choicesInstance = new Choices(authorizingMarshalSelect, {
+                removeItemButton: true,
+                shouldSort: false,
+                searchEnabled: true,
+                searchResultLimit: 10,
+                fuseOptions: {
+                    threshold: 0.3,
+                },
+                itemSelectText: '',
+            });
+
+            // Update marshal_id when selection changes
+            authorizingMarshalSelect.addEventListener('change', function () {
+                const selectedOption = authorizingMarshalSelect.options[authorizingMarshalSelect.selectedIndex];
+                if (selectedOption) {
+                    const userId = selectedOption.dataset.userId;
+                    marshalIdInput.value = userId;
+                    console.log('DEBUG: Selected marshal:', selectedOption.textContent);
+                    console.log('DEBUG: Setting marshal_id to:', userId);
+                }
+            });
+        }
 
         console.log('Initial Discipline Dropdown Content:', disciplineSelect.innerHTML);
         console.log('Initial Weapon Styles Dropdown Content:', stylesSelect.innerHTML);
@@ -303,9 +344,26 @@
             cartContainer.appendChild(cartItem);
         });
 
-        // Ensure all cart items are included in form submission
-        // Only validate weapon styles for add authorization action
+        // Combined form submission handler
         form.addEventListener('submit', function (event) {
+            console.log('DEBUG: Form submitting...');
+            console.log('DEBUG: Current marshal_id value:', document.getElementById('marshal_id').value);
+
+            // Handle marshal selection if Choices.js is initialized
+            if (choicesInstance) {
+                const selectedValue = choicesInstance.getValue(true)[0];
+                console.log('DEBUG: Choices.js selected value:', selectedValue);
+                if (selectedValue) {
+                    const selectedOption = authorizingMarshalSelect.querySelector(`option[value="${selectedValue}"]`);
+                    if (selectedOption) {
+                        const userId = selectedOption.dataset.userId;
+                        document.getElementById('marshal_id').value = userId;
+                        console.log('DEBUG: Setting marshal_id in form submit:', userId);
+                    }
+                }
+            }
+
+            // Validate weapon styles
             const action = form.querySelector('input[name="action"]').value;
             if (action === 'add_authorization') {
                 const cartItems = cartContainer.querySelectorAll('.cart-item input[name="weapon_styles"]');

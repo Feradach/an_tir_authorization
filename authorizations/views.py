@@ -8,7 +8,7 @@ from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.http import JsonResponse
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 from django.db.models import Q
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
@@ -18,7 +18,7 @@ from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 from django.contrib.staticfiles import finders
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed
 from itertools import groupby
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName
@@ -553,7 +553,7 @@ def fighter(request, person_id):
                 'fighter': fighter,
                 'is_marshal': False,
                 'branch_officer': branch_officer,
-                'sanctions': sanctions
+                'sanctions': sanctions,
             },
         )
 
@@ -581,7 +581,8 @@ def fighter(request, person_id):
             'branch_choices': branch_choices,
             'discipline_choices': discipline_choices,
             'sanctions': sanctions,
-            'regional_marshal': regional_marshal
+            'regional_marshal': regional_marshal,
+            'all_people': Person.objects.all().order_by('sca_name'),
         },
     )
 
@@ -729,12 +730,8 @@ def add_fighter(request):
 
     if request.method == 'POST':
         person_form = CreatePersonForm(request.POST)
-        auth_form = CreateAuthorizationForm(request.POST, user=request.user)
 
-        if person_form.is_valid() and auth_form.is_valid():
-
-            sent_styles = request.POST.getlist('weapon_styles')
-            selected_styles = sorted(set(sent_styles))
+        if person_form.is_valid():
 
             # Generate a random password
             random_password = generate_random_password()
@@ -771,37 +768,12 @@ def add_fighter(request):
                         parent=person_form.cleaned_data.get('parent', None),
                     )
 
-                    # Create Authorizations
-                    for style_id in selected_styles:
-                        is_valid, mssg = authorization_follows_rules(marshal=request.user, existing_fighter=person,
-                                                                     style_id=style_id)
-                        if not is_valid:
-                            raise ValueError(mssg)
-                        style = WeaponStyle.objects.get(id=style_id)
-                        if style.name in ['Senior Marshal', 'Junior Marshal']:
-                            Authorization.objects.create(
-                                person=person,
-                                style=style,
-                                expiration=date.today() + relativedelta(years=4),
-                                marshal=Person.objects.get(user=request.user),
-                                status=AuthorizationStatus.objects.get(name='Pending'),
-                            )
-                            messages.success(request, f'Authorization for {style.name} pending confirmation.')
-                        else:
-                            Authorization.objects.create(
-                                person=person,
-                                style=style,
-                                expiration=date.today() + relativedelta(years=4),
-                                marshal=Person.objects.get(user=request.user),
-                                status=AuthorizationStatus.objects.get(name='Active'),
-                            )
-                            messages.success(request, f'Authorization for {style.name} created successfully!')
             except Exception as e:
                 messages.error(request, f'Error during creation: {e}')
-                return render(request, 'authorizations/new_authorization.html', {
-                    'person_form': person_form,
-                    'auth_form': auth_form,
+                return render(request, 'authorizations/new_fighter.html', {
+                    'person_form': person_form
                 })
+            
             login_path = reverse('login')
             login_url = f"{settings.SITE_URL}{login_path}"
             send_mail(
@@ -817,31 +789,41 @@ def add_fighter(request):
 
             person_form = CreatePersonForm()
             auth_form = CreateAuthorizationForm()
-            return render(request, 'authorizations/new_authorization.html',
-                          {'person_form': person_form, 'auth_form': auth_form})
+            return render(request, 'authorizations/new_fighter.html',
+                          {'person_form': person_form})
 
         else:
             messages.error(request, 'Please fix the errors below.')
-            return render(request, 'authorizations/new_authorization.html', {
+            return render(request, 'authorizations/new_fighter.html', {
                 'person_form': person_form,
-                'auth_form': auth_form,
             })
     else:
         person_form = CreatePersonForm()
-        auth_form = CreateAuthorizationForm(user=request.user)
 
-    return render(request, 'authorizations/new_authorization.html', {'person_form': person_form, 'auth_form': auth_form})
+    return render(request, 'authorizations/new_fighter.html', {'person_form': person_form})
 
 
 @login_required
 def add_authorization(request, person_id):
     """This will add a new authorization to a fighter or update an existing authorization."""
-    if not is_senior_marshal(request.user):
-        raise PermissionDenied
+
+    marshal_id = request.POST.get('marshal_id')
+    if marshal_id:
+        authorizing_marshal = User.objects.get(id=marshal_id)
+    else:
+        authorizing_marshal = request.user
+    
+    # Get the selected discipline from the form
+    discipline_id = request.POST.get('discipline')
+    if discipline_id:
+        discipline = Discipline.objects.get(id=discipline_id)
+        if not is_senior_marshal(authorizing_marshal, discipline.name):
+            messages.error(request, f"Error: {authorizing_marshal.person.sca_name} is not a senior marshal in {discipline.name} and cannot authorize authorizations.")
+            return redirect('fighter', person_id=person_id)
 
     if request.method == 'POST':
         person = Person.objects.get(user_id=person_id)
-        auth_form = CreateAuthorizationForm(request.POST, user=request.user)
+        auth_form = CreateAuthorizationForm(request.POST, user=authorizing_marshal)
 
         if auth_form.is_valid():
             sent_styles = request.POST.getlist('weapon_styles')
@@ -849,73 +831,90 @@ def add_authorization(request, person_id):
 
             try:
                 with transaction.atomic():
+                    print(f"Debug: Starting authorization process for person {person_id}")
+                    print(f"Debug: Selected styles: {selected_styles}")
+                    print(f"Debug: Authorizing marshal: {authorizing_marshal.person.sca_name}")
 
                     # Create or update authorizations
                     existing_authorizations = Authorization.objects.filter(person=person)
                     current_styles = [int(auth.style_id) for auth in existing_authorizations]
+                    print(f"Debug: Current authorizations: {current_styles}")
+                    
                     for style_id in selected_styles:
-                        is_valid, mssg = authorization_follows_rules(marshal=request.user, existing_fighter=person,
-                                                                     style_id=style_id)
-                        if not is_valid:
+                        print(f"\nDebug: Processing style {style_id}")
+                        try:
+                            is_valid, mssg = authorization_follows_rules(marshal=authorizing_marshal, existing_fighter=person,
+                                                                         style_id=style_id)
+                            if not is_valid:
+                                messages.error(request, mssg)
+                                return redirect('fighter', person_id=person_id)
 
-                            raise ValueError(mssg)
+                            print(f"Debug: Authorization rules passed for style {style_id}")
 
-                        if int(style_id) in current_styles:
-                            update_auth = Authorization.objects.get(person=person, style_id=style_id)
-                            update_auth.marshal = Person.objects.get(user=request.user)
-                            
-                            # Check if this is a marshal authorization and if it has been expired for more than a year
-                            if update_auth.style.name in ['Senior Marshal', 'Junior Marshal']:
-                                days_expired = (date.today() - update_auth.expiration).days
-                                print(f"Days expired: {days_expired}")  # Debug print
-                                if days_expired > 365:  # More than one year expired
-                                    update_auth.status = AuthorizationStatus.objects.get(name='Pending')
-                                    messages.success(request, f'Authorization for {update_auth.style.name} pending confirmation.')
+                            if int(style_id) in current_styles:
+                                update_auth = Authorization.objects.get(person=person, style_id=style_id)
+                                update_auth.marshal = Person.objects.get(user=authorizing_marshal)
+                                
+                                # Check if this is a marshal authorization and if it has been expired for more than a year
+                                if update_auth.style.name in ['Senior Marshal', 'Junior Marshal']:
+                                    days_expired = (date.today() - update_auth.expiration).days
+                                    if days_expired > 365:  # More than one year expired
+                                        update_auth.status = AuthorizationStatus.objects.get(name='Pending')
+                                        messages.success(request, f'Authorization for {update_auth.style.name} pending confirmation.')
+                                    else:
+                                        update_auth.status = AuthorizationStatus.objects.get(name='Active')
+                                        messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
                                 else:
                                     update_auth.status = AuthorizationStatus.objects.get(name='Active')
                                     messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
-                            else:
-                                update_auth.status = AuthorizationStatus.objects.get(name='Active')
-                                messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
-                            
-                            update_auth.expiration = date.today() + relativedelta(years=4)
-                            update_auth.save()
-                            selected_styles.remove(style_id)
+                                
+                                update_auth.expiration = date.today() + relativedelta(years=4)
+                                update_auth.save()
+                                selected_styles.remove(style_id)
 
-                        else:
-                            style = WeaponStyle.objects.get(id=style_id)
-                            if style.name in ['Senior Marshal', 'Junior Marshal']:
-                                Authorization.objects.create(
-                                    person=person,
-                                    style=style,
-                                    expiration=date.today() + relativedelta(years=4),
-                                    marshal=Person.objects.get(user=request.user),
-                                    status=AuthorizationStatus.objects.get(name='Pending'),
-                                )
-                                messages.success(request,f'Authorization for {style.name} pending confirmation.')
                             else:
-                                Authorization.objects.create(
-                                    person=person,
-                                    style=style,
-                                    expiration=date.today() + relativedelta(years=4),
-                                    marshal=Person.objects.get(user=request.user),
-                                    status=AuthorizationStatus.objects.get(name='Active'),
-                                )
-                                messages.success(request,f'Authorization for {style.name} created successfully!')
+                                style = WeaponStyle.objects.get(id=style_id)
+                                if style.name in ['Senior Marshal', 'Junior Marshal']:
+                                    new_auth = Authorization.objects.create(
+                                        person=person,
+                                        style=style,
+                                        expiration=date.today() + relativedelta(years=4),
+                                        marshal=Person.objects.get(user=authorizing_marshal),
+                                        status=AuthorizationStatus.objects.get(name='Pending'),
+                                    )
+                                    messages.success(request, f'Authorization for {style.name} pending confirmation.')
+                                else:
+                                    new_auth = Authorization.objects.create(
+                                        person=person,
+                                        style=style,
+                                        expiration=date.today() + relativedelta(years=4),
+                                        marshal=Person.objects.get(user=authorizing_marshal),
+                                        status=AuthorizationStatus.objects.get(name='Active'),
+                                    )
+                                    messages.success(request, f'Authorization for {style.name} created successfully!')
+                                    # Update the waiver expiration date if it is greater than today to the authorization expiration date
+                                    if person.user.waiver_expiration and person.user.waiver_expiration < new_auth.expiration:
+                                        person.user.waiver_expiration = new_auth.expiration
+                                        person.user.save()
 
-                return True
+                        except Exception as e:
+                            print(f"Error processing style {style_id}: {e}")
+                            messages.error(request, f'Error processing style {style_id}: {str(e)}')
+                            transaction.set_rollback(True)
+                            return redirect('fighter', person_id=person_id)
+
+                return redirect('fighter', person_id=person_id)
 
             except Exception as e:
-                messages.error(request, f'Error during creation: {e}')
-                return False
+                print(f"Transaction error: {e}")
+                messages.error(request, f'Error during authorization process: {str(e)}')
+                return redirect('fighter', person_id=person_id)
         else:
             messages.error(request, 'Please fix the errors below.')
-            return False
+            return redirect('fighter', person_id=person_id)
     else:
         messages.error(request, f'Incorrect method passed.')
-        return False
-
-
+        return redirect('fighter', person_id=person_id)
 @login_required
 def user_account(request, user_id):
     """Allows the user, their parent, or the Kingdom Authorization officer to view and edit the user's account."""
@@ -999,14 +998,42 @@ def user_account(request, user_id):
     else:
         form = CreatePersonForm(initial=initial_data, user_instance=user)
 
-    return render(request, 'authorizations/user_account.html', {
-        'user': user,
+    # Calculate the maximum expiration date
+    waiver_signed = False
+    max_expiration = None
+    if user.waiver_expiration and user.waiver_expiration > date.today():
+        waiver_signed = True
+    elif user.membership_expiration and user.membership_expiration > date.today():
+        waiver_signed = True
+    if waiver_signed:
+        if user.waiver_expiration and user.membership_expiration:
+            max_expiration = max(user.waiver_expiration, user.membership_expiration)
+        elif user.waiver_expiration:
+            max_expiration = user.waiver_expiration
+        elif user.membership_expiration:
+            max_expiration = user.membership_expiration
+
+    context = {
         'person': person,
+        'user': user,
         'form': form,
         'children': children,
         'branch_officer': branch_officer,
-    })
+        'waiver_signed': waiver_signed,
+        'max_expiration': max_expiration,
+    }
 
+    return render(request, 'authorizations/user_account.html', context)
+
+@login_required
+def sign_waiver(request, user_id):
+    if request.method == 'POST':
+        user = User.objects.get(id=user_id)
+        user.waiver_expiration = date.today() + relativedelta(years=1)
+        user.save()
+        return redirect('user_account', user_id=user.id)
+    else:
+        return render(request, 'authorizations/waiver.html')
 
 def reject_authorization(request, authorization):
     auth_discipline = authorization.style.discipline.name

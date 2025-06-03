@@ -175,6 +175,19 @@ def is_kingdom_earl_marshal(user):
     return query.exists()
 
 
+def waiver_signed(user):
+    """Checks if the user has signed a waiver."""
+    print("checking waiver inside the function")
+    waiver_signed = False
+    print("user: ", user)
+    print("user waiver expiration: ", user.waiver_expiration)
+    print("user membership expiration: ", user.membership_expiration)
+    if user.waiver_expiration and user.waiver_expiration > date.today():
+        waiver_signed = True
+    elif user.membership_expiration and user.membership_expiration > date.today():
+        waiver_signed = True
+    return waiver_signed
+
 def authorization_follows_rules(marshal, existing_fighter, style_id):
     """Will need marshal, fighter, style.
     marshal needs to come in as a User. Existing_fighter comes in as a Person. Style_id comes in as a number.
@@ -188,7 +201,13 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
         age = calculate_age(birthday)
     else:
         age = 30
-
+    
+    # Rule 0: A current waiver or membership is required to be authorized
+    print("checking for signed waiver")
+    waiver = waiver_signed(existing_fighter.user)
+    print("waiver signed: ", waiver)
+    if not waiver:
+        return False, 'Fighter must have a current waiver or membership to be authorized.'
 
     # Rule 1: A senior marshal in a discipline can authorize any person in a weapon style for that discipline
     if not is_senior_marshal(marshal, style.discipline.name):

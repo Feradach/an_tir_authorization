@@ -1,0 +1,26 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Register a New Fighter
+{% endblock %}
+
+{% block body %}
+    {% if messages %}
+        <div id="messages-container">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}" role="alert">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+    <form method="post" id="new_fighter_form">
+        {% csrf_token %}
+        <h3>Fighter Information</h3>
+        {{ person_form.as_p }}
+
+        <button type="submit" class="btn btn-primary mt-3">Submit</button>
+    </form>
+
+{% endblock %}

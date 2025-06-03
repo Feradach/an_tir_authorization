@@ -575,7 +575,7 @@ class AddFighterViewTest(TestCase):
         self.client.login(username='kristinadavis@gmail.com', password='eGqNMC2D')
         response = self.client.get(reverse('add_fighter'))
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/new_authorization.html')
+        self.assertTemplateUsed(response, 'authorizations/new_fighter.html')
 
         # POST data
         post_data = {
