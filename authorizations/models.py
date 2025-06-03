@@ -54,6 +54,14 @@ class User(AbstractUser):
     has_logged_in = models.BooleanField(default=False)
     waiver_expiration = models.DateField(null=True, blank=True)
     background_check_expiration = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey('self', null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='users_created')
+    updated_by = models.ForeignKey('self', null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='users_updated')
     pass
 
     def save(self, *args, **kwargs):
@@ -86,6 +94,15 @@ class Branch(models.Model):
     name = models.CharField(max_length=150)
     region = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name='sub_branches')
     type = models.CharField(max_length=50, choices=BRANCH_TYPE_CHOICES, default='Other')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='branches_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='branches_updated')
+    
 
     def __str__(self):
         return self.name
@@ -119,6 +136,14 @@ class Branch(models.Model):
 class Discipline(models.Model):
     """These are the combat disciplines. Include marshal authorization officer and earl marshal."""
     name = models.CharField(max_length=150)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='disciplines_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='disciplines_updated')
 
     def __str__(self):
         return self.name
@@ -128,6 +153,14 @@ class WeaponStyle(models.Model):
     """These are the weapon styles inside a discipline. Include marshal authorization officer and earl marshal."""
     name = models.CharField(max_length=150)
     discipline = models.ForeignKey(Discipline, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='weapon_styles_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='weapon_styles_updated')
 
     def __str__(self):
         return self.name
@@ -140,6 +173,14 @@ class WeaponStyle(models.Model):
 class AuthorizationStatus(models.Model):
     """Will track the status of their authorization."""
     name = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='authorization_statuses_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='authorization_statuses_updated')
 
     def __str__(self):
         return self.name
@@ -153,6 +194,14 @@ class Title(models.Model):
     """Titles that people can have. Each title has a rank in the SCA."""
     name = models.CharField(max_length=50)
     rank = models.CharField(max_length=50, choices=TITLE_RANK_CHOICES, default='Non-Armigerous')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='titles_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='titles_updated')
 
     def __str__(self):
         return self.name
@@ -166,6 +215,14 @@ class Person(models.Model):
     is_minor = models.BooleanField(default=False)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
     comment = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='people_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='people_updated')
 
     def id(self):
         return self.user_id
@@ -208,6 +265,14 @@ class Authorization(models.Model):
     status = models.ForeignKey(AuthorizationStatus, on_delete=models.SET_NULL, null=True, default=1)
     marshal = models.ForeignKey(Person, on_delete=models.SET_NULL, null=True, related_name='marshal')
     expiration = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='authorizations_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='authorizations_updated')
 
     def __str__(self):
         return self.person.sca_name + ': ' + self.style.discipline.name + ' ' + self.style.name + ' authorization'
@@ -225,6 +290,14 @@ class BranchMarshal(models.Model):
     discipline = models.ForeignKey(Discipline, on_delete=models.SET_NULL, null=True)
     start_date = models.DateField()
     end_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='branch_marshals_created')
+    updated_by = models.ForeignKey(User, null=True, blank=True,
+                                   on_delete=models.SET_NULL,
+                                   related_name='branch_marshals_updated')
 
     def __str__(self):
         return self.person.sca_name + ': ' + self.branch.name + ' ' + self.discipline.name + ' marshal officer'
