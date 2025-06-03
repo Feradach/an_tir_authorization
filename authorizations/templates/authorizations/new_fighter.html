@@ -18,8 +18,22 @@
     <form method="post" id="new_fighter_form">
         {% csrf_token %}
         <h3>Fighter Information</h3>
-        {{ person_form.as_p }}
-
+        {% for field in person_form %}
+            {% if field.name != 'background_check_expiration' %}
+                <div class="form-group">
+                    {{ field.label_tag }}
+                    {{ field }}
+                    {% if field.help_text %}
+                        <small class="form-text text-muted">{{ field.help_text }}</small>
+                    {% endif %}
+                    {% if field.errors %}
+                        <div class="invalid-feedback d-block">
+                            {{ field.errors.0 }}
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+        {% endfor %}
         <button type="submit" class="btn btn-primary mt-3">Submit</button>
     </form>
 

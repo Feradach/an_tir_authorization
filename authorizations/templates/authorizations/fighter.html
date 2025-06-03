@@ -307,14 +307,39 @@
             }
         });
 
+        // Mobile-specific handling
+        let isHandlingChange = false;
+        let lastSelectedValue = null;
+
         // Add selected style to the cart
-        stylesSelect.addEventListener('change', function () {
+        stylesSelect.addEventListener('change', function (event) {
+            // Get the current value
+            const currentValue = this.value;
+            
+            // Check if this is a duplicate change event
+            if (currentValue === lastSelectedValue) {
+                return;
+            }
+            
+            // Update last selected value
+            lastSelectedValue = currentValue;
+
+            // Skip if we're already handling a change
+            if (isHandlingChange) {
+                return;
+            }
+
+            isHandlingChange = true;
             const selectedStyle = stylesSelect.options[stylesSelect.selectedIndex];
-            if (!selectedStyle) return;
+            if (!selectedStyle) {
+                isHandlingChange = false;
+                return;
+            }
 
             // Check if the style is already in the cart
             if ([...cartContainer.querySelectorAll('.cart-item')].some(item => item.dataset.styleId === selectedStyle.value)) {
                 alert('This style is already in the cart!');
+                isHandlingChange = false;
                 return;
             }
 
@@ -342,7 +367,19 @@
 
             cartItem.appendChild(removeButton);
             cartContainer.appendChild(cartItem);
+            isHandlingChange = false;
         });
+
+        // Add touchend event handler for mobile devices
+        if ('ontouchstart' in window) {
+            // Prevent form submission when clicking elsewhere
+            stylesSelect.addEventListener('touchend', function(e) {
+                // Only blur if we're not currently selecting
+                if (!this.contains(document.activeElement)) {
+                    this.blur();
+                }
+            });
+        }
 
         // Combined form submission handler
         form.addEventListener('submit', function (event) {
