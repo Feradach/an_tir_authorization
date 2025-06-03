@@ -58,7 +58,7 @@
             </div>
     </div>
 </div>
-{% if children %}
+    {% if children %}
     <div class="card">
         <div class="col-md-4">
                 <div class="mb-3">
@@ -96,7 +96,20 @@
 
                 <form method="post">
                     {% csrf_token %}
-                    {{ form.as_p }}
+                    {% for field in form %}
+                        {% if field.name != 'background_check_expiration' %}
+                            <div class="form-group">
+                                <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                                {{ field }}
+                            </div>
+                        {% endif %}
+                    {% endfor %}
+                    {% if is_authorization_officer %}
+                        <div class="form-group">
+                            <label for="id_background_check_expiration">Background Check Expiration</label>
+                            <input type="date" class="form-control" id="id_background_check_expiration" name="background_check_expiration" value="{{ user.background_check_expiration|date:'Y-m-d' }}">
+                        </div>
+                    {% endif %}
                     <button type="submit" class="btn btn-primary">Save Changes</button>
                 </form>
             </div>

@@ -868,7 +868,15 @@ def add_authorization(request, person_id):
                                     update_auth.status = AuthorizationStatus.objects.get(name='Active')
                                     messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
                                 
-                                update_auth.expiration = date.today() + relativedelta(years=4)
+                                # Set expiration based on youth marshal rules
+                                if update_auth.style.discipline.name in ['Youth Armored', 'Youth Rapier'] and update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
+                                    two_years = date.today() + relativedelta(years=2)
+                                    if person.user.background_check_expiration:
+                                        update_auth.expiration = min(two_years, person.user.background_check_expiration)
+                                    else:
+                                        update_auth.expiration = two_years
+                                else:
+                                    update_auth.expiration = date.today() + relativedelta(years=4)
                                 update_auth.save()
                                 selected_styles.remove(style_id)
 
@@ -884,18 +892,38 @@ def add_authorization(request, person_id):
                                     )
                                     messages.success(request, f'Authorization for {style.name} pending confirmation.')
                                 else:
-                                    new_auth = Authorization.objects.create(
-                                        person=person,
-                                        style=style,
-                                        expiration=date.today() + relativedelta(years=4),
-                                        marshal=Person.objects.get(user=authorizing_marshal),
-                                        status=AuthorizationStatus.objects.get(name='Active'),
-                                    )
-                                    messages.success(request, f'Authorization for {style.name} created successfully!')
-                                    # Update the waiver expiration date if it is greater than today to the authorization expiration date
-                                    if person.user.waiver_expiration and person.user.waiver_expiration < new_auth.expiration:
-                                        person.user.waiver_expiration = new_auth.expiration
-                                        person.user.save()
+                                    # Set expiration based on youth marshal rules
+                                    if style.discipline.name in ['Youth Armored', 'Youth Rapier'] and style.name in ['Junior Marshal', 'Senior Marshal']:
+                                        two_years = date.today() + relativedelta(years=2)
+                                        if person.user.background_check_expiration:
+                                            expiration = min(two_years, person.user.background_check_expiration)
+                                        else:
+                                            expiration = two_years
+                                        new_auth = Authorization.objects.create(
+                                            person=person,
+                                            style=style,
+                                            expiration=expiration,
+                                            marshal=Person.objects.get(user=authorizing_marshal),
+                                            status=AuthorizationStatus.objects.get(name='Active'),
+                                        )
+                                        messages.success(request, f'Authorization for {style.name} created successfully!')
+                                        # Update the waiver expiration date if it is greater than today to the authorization expiration date
+                                        if person.user.waiver_expiration and person.user.waiver_expiration < expiration:
+                                            person.user.waiver_expiration = expiration
+                                            person.user.save()
+                                    else:
+                                        new_auth = Authorization.objects.create(
+                                            person=person,
+                                            style=style,
+                                            expiration=date.today() + relativedelta(years=4),
+                                            marshal=Person.objects.get(user=authorizing_marshal),
+                                            status=AuthorizationStatus.objects.get(name='Active'),
+                                        )
+                                        messages.success(request, f'Authorization for {style.name} created successfully!')
+                                        # Update the waiver expiration date if it is greater than today to the authorization expiration date
+                                        if person.user.waiver_expiration and person.user.waiver_expiration < new_auth.expiration:
+                                            person.user.waiver_expiration = new_auth.expiration
+                                            person.user.save()
 
                         except Exception as e:
                             print(f"Error processing style {style_id}: {e}")
@@ -949,6 +977,7 @@ def user_account(request, user_id):
         'country': user.country,
         'phone_number': user.phone_number,
         'birthday': user.birthday,
+        'background_check_expiration': user.background_check_expiration,
 
         # Person fields
         'sca_name': person.sca_name,
@@ -964,7 +993,7 @@ def user_account(request, user_id):
         if requestor != user and (not hasattr(user, 'person') or user.person.parent_id != requestor.id):
             if not is_kingdom_authorization_officer(requestor):
                 raise PermissionDenied
-        form = CreatePersonForm(request.POST, user_instance=user)
+        form = CreatePersonForm(request.POST, user_instance=user, request=request)
         if form.is_valid():
             # Update User fields
             user.email = form.cleaned_data['email']
@@ -981,6 +1010,11 @@ def user_account(request, user_id):
             user.country = form.cleaned_data['country']
             user.phone_number = form.cleaned_data.get('phone_number')
             user.birthday = form.cleaned_data.get('birthday')
+            
+            # Only allow authorization officers to modify background_check_expiration
+            if is_kingdom_authorization_officer(request.user):
+                user.background_check_expiration = form.cleaned_data.get('background_check_expiration')
+            
             user.save()
 
             # Update Person fields
@@ -996,7 +1030,7 @@ def user_account(request, user_id):
         else:
             messages.error(request, 'Please correct the errors with the form.')
     else:
-        form = CreatePersonForm(initial=initial_data, user_instance=user)
+        form = CreatePersonForm(initial=initial_data, user_instance=user, request=request)
 
     # Calculate the maximum expiration date
     waiver_signed = False
@@ -1021,6 +1055,7 @@ def user_account(request, user_id):
         'branch_officer': branch_officer,
         'waiver_signed': waiver_signed,
         'max_expiration': max_expiration,
+        'is_authorization_officer': is_kingdom_authorization_officer(request.user),
     }
 
     return render(request, 'authorizations/user_account.html', context)
@@ -1254,7 +1289,6 @@ class TitleModelChoiceField(forms.ModelChoiceField):
 
 class CreatePersonForm(forms.Form):
     """Creates the initial person and user."""
-    # only these titles ever show up in the dropdown:
     ALLOWED_TITLES = [
         "Duke", "Duchess",
         "Count", "Countess",
@@ -1266,8 +1300,6 @@ class CreatePersonForm(forms.Form):
         "Honorable Lord", "Honorable Lady", "The Honorable",
         "Lord", "Lady", "Gentle",
     ]
-
-    # User fields
     email = forms.EmailField(label='Email', required=True)
     username = forms.CharField(label='Username', required=True)
     first_name = forms.CharField(label='First Name', required=True)
@@ -1283,24 +1315,19 @@ class CreatePersonForm(forms.Form):
     country = forms.ChoiceField(label='Country', choices=[('Canada', 'Canada'), ('United States', 'United States')], required=True)
     phone_number = forms.CharField(label='Phone Number', required=True, help_text='Enter a 10 digit phone number')
     birthday = forms.DateField(label='Birthday', required=False, widget=forms.DateInput(attrs={'type': 'date'}))
-
-    # Person fields
     discipline_names = Discipline.objects.values_list('name', flat=True)
     sca_name = forms.CharField(label='SCA Name', required=False)
-    # 1) existing titles
     title = TitleModelChoiceField(
         label='Title',
         queryset=Title.objects.none(),
         required=False,
         empty_label='— choose one —'
     )
-    # 2) new title fields
     new_title = forms.CharField(
         label='Or enter a new title',
         required=False,
         help_text='Type a custom title'
     )
-    # collect the set of existing rank values for the dropdown
     new_title_rank = forms.ChoiceField(
         label='Rank for new title',
         choices=[('', '— select a rank —')] + list(TITLE_RANK_CHOICES),
@@ -1309,10 +1336,16 @@ class CreatePersonForm(forms.Form):
     branch = forms.ModelChoiceField(label='Branch', queryset=Branch.objects.non_regions(), required=True)
     is_minor = forms.BooleanField(label='Is Minor', required=False)
     parent_id = forms.ModelChoiceField(label='Parent ID', queryset=Person.objects.all().exclude(sca_name='admin'),required=False)
-
+    background_check_expiration = forms.DateField(
+        label='Background Check Expiration',
+        required=False,
+        widget=forms.DateInput(attrs={'type': 'date'})
+    )
+    
     def __init__(self, *args, **kwargs):
         """Allow passing a user instance when updating."""
         self.user_instance = kwargs.pop('user_instance', None)
+        self.request = kwargs.pop('request', None)
         super().__init__(*args, **kwargs)
         qs = Title.objects.filter(name__in=self.ALLOWED_TITLES)
         qs = qs.order_by('pk')

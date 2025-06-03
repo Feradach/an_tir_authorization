@@ -266,6 +266,11 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             if not existing_fighter.is_minor:
                 return False, f'Must be a minor to become authorized in {style.discipline.name} combat.'
 
+    # Rule 8a: Youth marshals must have a valid background check
+    if style.name in ['Junior Marshal', 'Senior Marshal'] and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+        if not existing_fighter.user.background_check_expiration or existing_fighter.user.background_check_expiration < date.today():
+            return False, f'Must have a valid background check to become authorized as a youth marshal in {style.discipline.name} combat.'
+
     # Rule 9: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew.
     if style.name in ['General Riding', 'Mounted Gaming', 'Mounted Archery', 'Junior Ground Crew']:
         if age < 5:
@@ -365,9 +370,13 @@ def approve_authorization(request):
     # Rule 1: Kingdom authorization officer can approve any marshal by themselves.
     if is_kingdom_authorization_officer(marshal):
         authorization.status = active_status
-        # Rule 1a: If Youth Armored or Youth Rapier, set expiration to 2 years.
+        # Rule 1a: If Youth Armored or Youth Rapier, set expiration the lesser of 2 years or when their background check expires.
         if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-            authorization.expiration = date.today() + relativedelta(years=2)
+            two_years = date.today() + relativedelta(years=2)
+            if authorization.person.user.background_check_expiration:
+                authorization.expiration = min(two_years, authorization.person.user.background_check_expiration)
+            else:
+                authorization.expiration = two_years
         # Rule 1b: If not Youth Armored or Youth Rapier, set expiration to 4 years.
         else:
             authorization.expiration = date.today() + relativedelta(years=4)
@@ -392,15 +401,9 @@ def approve_authorization(request):
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for regional approval!'
         # Rule 4a: If a junior marshal is approved it becomes active.
         if authorization.style.name == 'Junior Marshal':
-            # Rule 4b: If a junior marshal for Youth combat is approved it goes to the Kingdom authorization officer for confirmation.
-            if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-                authorization.status = kingdom_status
-                authorization.save()
-                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom to confirm background check!'
-            else:
-                authorization.status = active_status
-                authorization.save()
-                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+            authorization.status = active_status
+            authorization.save()
+            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored can approve Missile).
     elif authorization.status.name == 'Needs Regional Approval':
@@ -412,24 +415,13 @@ def approve_authorization(request):
         else:
             if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
-        # Rule 5a: If the region approves a Youth Combat Senior marshal, it goes to the Kingdom authorization officer for confirmation.
-        if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-            authorization.status = kingdom_status
-            authorization.save()
-            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom to confirm background check!'
-        # Rule 5b: If the regional marshal approves a non-youth senior marshal, it becomes active.
-        else:
-            authorization.status = active_status
-            authorization.expiration = date.today() + relativedelta(years=4)
-            authorization.save()
-            # Rule 5c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-            remove_junior_marshal(authorization)
-            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
-
-    # Rule 6: If the authorization is out for kingdom approval, you need to be a kingdom authorization officer to approve it.
-    elif authorization.status.name == 'Needs Kingdom Approval':
-        if not is_kingdom_authorization_officer(marshal):
-            return False, 'You must be the kingdom authorization officer to approve this authorization.'
+        # Rule 5: If the regional marshal approves a senior marshal, it becomes active.
+        authorization.status = active_status
+        authorization.expiration = date.today() + relativedelta(years=4)
+        authorization.save()
+        # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
+        remove_junior_marshal(authorization)
+        return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     else:
         return False, 'Authorization status not valid for confirmation.'
