@@ -25,7 +25,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -54,7 +56,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -83,7 +87,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -112,7 +118,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -141,7 +149,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -170,7 +180,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -199,7 +211,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -228,7 +242,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -257,7 +273,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -286,7 +304,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -315,7 +335,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -344,7 +366,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -373,7 +397,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -402,7 +428,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -431,7 +459,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -460,7 +490,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -489,7 +521,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -518,7 +552,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -547,7 +583,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -576,7 +614,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -605,7 +645,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -634,7 +676,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -663,7 +707,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -692,7 +738,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -721,7 +769,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -750,7 +800,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -779,7 +831,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -808,7 +862,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -837,7 +893,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -866,7 +924,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -895,7 +955,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -924,7 +986,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -953,7 +1017,9 @@
     "has_logged_in": true,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -982,7 +1048,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -1011,7 +1079,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
@@ -1040,7 +1110,9 @@
     "has_logged_in": false,
     "groups": [],
     "user_permissions": [],
-    "phone_number": []
+    "phone_number": [],
+    "waiver_expiration": null,
+    "background_check_expiration": null
   }
 },
 {
