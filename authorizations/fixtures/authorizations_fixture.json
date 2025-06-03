@@ -2429,7 +2429,11 @@
   "pk": 1,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 3
+    "discipline": 3,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2437,7 +2441,11 @@
   "pk": 2,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 4
+    "discipline": 4,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2445,7 +2453,11 @@
   "pk": 3,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 5
+    "discipline": 5,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2453,7 +2465,11 @@
   "pk": 4,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 6
+    "discipline": 6,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2461,7 +2477,11 @@
   "pk": 5,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 7
+    "discipline": 7,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2469,7 +2489,11 @@
   "pk": 6,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 8
+    "discipline": 8,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2477,7 +2501,11 @@
   "pk": 7,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 9
+    "discipline": 9,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2485,7 +2513,11 @@
   "pk": 8,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2493,7 +2525,11 @@
   "pk": 9,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 11
+    "discipline": 11,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2501,7 +2537,11 @@
   "pk": 10,
   "fields": {
     "name": "Senior Marshal",
-    "discipline": 12
+    "discipline": 12,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2509,7 +2549,11 @@
   "pk": 11,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 3
+    "discipline": 3,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2517,7 +2561,11 @@
   "pk": 12,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 4
+    "discipline": 4,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2525,7 +2573,11 @@
   "pk": 13,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 5
+    "discipline": 5,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2533,7 +2585,11 @@
   "pk": 14,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 6
+    "discipline": 6,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2541,7 +2597,11 @@
   "pk": 15,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 7
+    "discipline": 7,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2549,7 +2609,11 @@
   "pk": 16,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 8
+    "discipline": 8,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2557,7 +2621,11 @@
   "pk": 17,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 9
+    "discipline": 9,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2565,7 +2633,11 @@
   "pk": 18,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2573,7 +2645,11 @@
   "pk": 19,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 11
+    "discipline": 11,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2581,7 +2657,11 @@
   "pk": 20,
   "fields": {
     "name": "Junior Marshal",
-    "discipline": 12
+    "discipline": 12,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2589,7 +2669,11 @@
   "pk": 21,
   "fields": {
     "name": "Single Sword",
-    "discipline": 4
+    "discipline": 4,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2597,7 +2681,11 @@
   "pk": 22,
   "fields": {
     "name": "Sword & Offensive Secondary",
-    "discipline": 4
+    "discipline": 4,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2605,7 +2693,11 @@
   "pk": 23,
   "fields": {
     "name": "Sword & Defensive Secondary",
-    "discipline": 4
+    "discipline": 4,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2613,7 +2705,11 @@
   "pk": 24,
   "fields": {
     "name": "Two-Handed Sword",
-    "discipline": 4
+    "discipline": 4,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2621,7 +2717,11 @@
   "pk": 25,
   "fields": {
     "name": "Spear",
-    "discipline": 4
+    "discipline": 4,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2629,7 +2729,11 @@
   "pk": 26,
   "fields": {
     "name": "Siege Crew",
-    "discipline": 6
+    "discipline": 6,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2637,7 +2741,11 @@
   "pk": 27,
   "fields": {
     "name": "Bow & Arrow",
-    "discipline": 7
+    "discipline": 7,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2645,7 +2753,11 @@
   "pk": 28,
   "fields": {
     "name": "Crossbow",
-    "discipline": 7
+    "discipline": 7,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2653,7 +2765,11 @@
   "pk": 29,
   "fields": {
     "name": "Hand Thrown Weapons",
-    "discipline": 7
+    "discipline": 7,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2661,7 +2777,11 @@
   "pk": 30,
   "fields": {
     "name": "Single Sword",
-    "discipline": 8
+    "discipline": 8,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2669,7 +2789,11 @@
   "pk": 31,
   "fields": {
     "name": "Sword & Offensive Secondary",
-    "discipline": 8
+    "discipline": 8,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2677,7 +2801,11 @@
   "pk": 32,
   "fields": {
     "name": "Sword & Defensive Secondary",
-    "discipline": 8
+    "discipline": 8,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2685,7 +2813,11 @@
   "pk": 33,
   "fields": {
     "name": "Two-Handed Sword",
-    "discipline": 8
+    "discipline": 8,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2693,7 +2825,11 @@
   "pk": 34,
   "fields": {
     "name": "Spear",
-    "discipline": 8
+    "discipline": 8,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2701,7 +2837,11 @@
   "pk": 35,
   "fields": {
     "name": "Weapon & Shield",
-    "discipline": 9
+    "discipline": 9,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2709,7 +2849,11 @@
   "pk": 36,
   "fields": {
     "name": "Two-Handed",
-    "discipline": 9
+    "discipline": 9,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2717,7 +2861,11 @@
   "pk": 37,
   "fields": {
     "name": "Spear",
-    "discipline": 9
+    "discipline": 9,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2725,7 +2873,11 @@
   "pk": 38,
   "fields": {
     "name": "Junior Ground Crew",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2733,7 +2885,11 @@
   "pk": 39,
   "fields": {
     "name": "Senior Ground Crew",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2741,7 +2897,11 @@
   "pk": 40,
   "fields": {
     "name": "General Riding",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2749,7 +2909,11 @@
   "pk": 41,
   "fields": {
     "name": "Mounted Gaming",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2757,7 +2921,11 @@
   "pk": 42,
   "fields": {
     "name": "Mounted Archery",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2765,7 +2933,11 @@
   "pk": 43,
   "fields": {
     "name": "Crest Combat",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2773,7 +2945,11 @@
   "pk": 44,
   "fields": {
     "name": "Foam-Tipped Jousting",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2781,7 +2957,11 @@
   "pk": 45,
   "fields": {
     "name": "Mounted Heavy Combat",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2789,7 +2969,11 @@
   "pk": 46,
   "fields": {
     "name": "Driving",
-    "discipline": 10
+    "discipline": 10,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2797,7 +2981,11 @@
   "pk": 47,
   "fields": {
     "name": "Weapon & Shield",
-    "discipline": 11
+    "discipline": 11,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2805,7 +2993,11 @@
   "pk": 48,
   "fields": {
     "name": "Two-Handed",
-    "discipline": 11
+    "discipline": 11,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2813,7 +3005,11 @@
   "pk": 49,
   "fields": {
     "name": "Single Sword",
-    "discipline": 12
+    "discipline": 12,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
@@ -2821,7 +3017,11 @@
   "pk": 50,
   "fields": {
     "name": "Sword & Defensive Secondary",
-    "discipline": 12
+    "discipline": 12,
+    "created_at": "2025-02-10T11:48:56.831Z",
+    "updated_at": "2025-02-10T11:48:56.831Z",
+    "created_by": null,
+    "updated_by": null
   }
 },
 {
