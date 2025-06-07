@@ -9,7 +9,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.http import JsonResponse
 from datetime import date, timedelta
-from django.db.models import Q
+from django.db.models import Q, Prefetch
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.core.paginator import Paginator
@@ -260,48 +260,69 @@ def password_reset(request, user_id):
 
 def recover_account(request):
     if request.method == 'POST':
-        email = request.POST['email']
-        if not email:
-            messages.error(request, 'Please enter an email.')
-            return render(request, 'authorizations/recover_account.html')
         action = request.POST.get('action')
-        new_password = generate_random_password()
         login_path = reverse('login')
         login_url = f"{settings.SITE_URL}{login_path}"
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            messages.error(request, 'No account with that email was found.')
-            return render(request, 'authorizations/recover_account.html')
-        username = user.username
+        
         if action == 'reset_password':
-            user.set_password(new_password)
-            user.has_logged_in = False
-            user.save()
-            # Send the password via email
-            send_mail(
-                'An Tir Authorization: Password Reset',
-                f'Your password has been reset. Your credentials are:\nTemporary Password: {new_password}\n'
-                f'Please reset your password after logging in.',
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                fail_silently=False,
-            )
-            messages.success(request,
-                             'Temporary Password sent')
-            return redirect('login')
+            username = request.POST.get('username', '').strip()
+            if not username:
+                messages.error(request, 'Please enter a username.')
+                return render(request, 'authorizations/recover_account.html')
+                
+            try:
+                user = User.objects.get(username=username)
+                new_password = generate_random_password()
+                user.set_password(new_password)
+                user.has_logged_in = False
+                user.save()
+                
+                # Send the password via email
+                send_mail(
+                    'An Tir Authorization: Password Reset',
+                    f'Your password has been reset.\n\n'
+                    f'Username: {user.username}\n'
+                    f'Temporary Password: {new_password}\n\n'
+                    f'Please log in and change your password.\n'
+                    f'Login URL: {login_url}',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                    fail_silently=False,
+                )
+                messages.success(request, 'A temporary password has been sent to the email on file for this username.')
+                return redirect('login')
+                
+            except User.DoesNotExist:
+                messages.error(request, 'No account with that username was found.')
+                return render(request, 'authorizations/recover_account.html')
+                
         elif action == 'get_username':
+            email = request.POST.get('email', '').strip()
+            if not email:
+                messages.error(request, 'Please enter an email address.')
+                return render(request, 'authorizations/recover_account.html')
+                
+            users = User.objects.filter(email=email)
+            if not users.exists():
+                messages.error(request, 'No accounts were found with that email address.')
+                return render(request, 'authorizations/recover_account.html')
+                
+            usernames = [user.username for user in users]
+            username_list = '\n'.join([f'- {username}' for username in usernames])
+            
             send_mail(
-                'An Tir Authorization: Username Request',
-                f'Your username is: {username}\n'
-                f'You can click this link to log in: {login_url}',
+                'An Tir Authorization: Username Recovery',
+                f'We found the following usernames associated with this email address:\n\n'
+                f'{username_list}\n\n'
+                f'You can use any of these usernames to log in. If you need to reset your password, please use the "Forgot Password" option.\n\n'
+                f'Login URL: {login_url}',
                 settings.DEFAULT_FROM_EMAIL,
-                [user.email],
+                [email],
                 fail_silently=False,
             )
-            messages.success(request,
-                             'Username sent')
+            messages.success(request, f'A list of usernames has been sent to {email}.')
             return redirect('login')
+            
         else:
             messages.error(request, 'Invalid action.')
             return render(request, 'authorizations/recover_account.html')
@@ -316,86 +337,129 @@ def generate_random_password(length=12):
 
 
 def search(request):
-    """Returns a table of all the authorizations in the database."""
+    """
+    Handles both the search form display and the search results display.
+    """
 
-    # Retrieve Get parameters, create dynamic filter, and filter the returns
-    dynamic_filter = Q(status__name='Active')
-    sca_name = request.GET.get('sca_name')
-    if sca_name:
-        dynamic_filter &= Q(person__sca_name=sca_name)
-    region = request.GET.get('region')
-    if region:
-        dynamic_filter &= Q(person__branch__region__name=region)
-    branch = request.GET.get('branch')
-    if branch:
-        dynamic_filter &= Q(person__branch__name=branch)
-    discipline = request.GET.get('discipline')
-    if discipline:
-        dynamic_filter &= Q(style__discipline__name=discipline)
-    style = request.GET.get('style')
-    if style:
-        dynamic_filter &= Q(style__name=style)
-    marshal = request.GET.get('marshal')
-    if marshal:
-        dynamic_filter &= Q(marshal__sca_name=marshal)
-    start_date = request.GET.get('start_date')
-    if start_date:
-        dynamic_filter &= Q(expiration__gte=start_date)
-    end_date = request.GET.get('end_date')
-    if end_date:
-        dynamic_filter &= Q(expiration__lte=end_date)
-    is_minor = request.GET.get('is_minor')
-    if is_minor:
-        is_minor = True if is_minor == 'True' else False
-        dynamic_filter &= Q(person__is_minor=is_minor)
+    # === Step 1: Get dropdown options (we need these for the search form too) ===
+    sca_name_options = Person.objects.order_by('sca_name').values_list('sca_name', flat=True).distinct()
+    region_options = Branch.objects.regions().order_by('name').values_list('name', flat=True)
+    branch_options = Branch.objects.non_regions().order_by('name').values_list('name', flat=True)
+    discipline_options = Discipline.objects.order_by('name').values_list('name', flat=True)
+    style_options = WeaponStyle.objects.order_by('name').values_list('name', flat=True).distinct()
+    marshal_options = Person.objects.filter(marshal__isnull=False).order_by('sca_name').values_list('sca_name', flat=True).distinct()
 
-    # Get all authorizations
-    sort = request.GET.get('sort', 'person__sca_name')  # Default to SCA Name
-
-    authorization_list = Authorization.objects.select_related(
-        'person__branch__region',
-        'style__discipline',
-    ).filter(dynamic_filter).order_by(sort)
-
-    # Create table drop down options based on dynamic filters
-    sca_name_options = authorization_list.order_by('person__sca_name').values_list('person__sca_name', flat=True).distinct()
-    region_options = authorization_list.order_by('person__branch__region__name').values_list('person__branch__region__name', flat=True).distinct()
-    branch_options = authorization_list.order_by('person__branch__name').values_list('person__branch__name', flat=True).distinct()
-    discipline_options = authorization_list.order_by('style__discipline__name').values_list('style__discipline__name', flat=True).distinct()
-    style_options = authorization_list.order_by('style__name').values_list('style__name', flat=True).distinct()
-    marshal_options = authorization_list.order_by('marshal__sca_name').values_list('marshal__sca_name', flat=True).distinct()
-
-    # Pagination
-    items_per_page = int(request.GET.get('items_per_page', 10))
-    current_page = request.GET.get('page', 1)
-    paginator = Paginator(authorization_list, items_per_page)
-    page_obj = paginator.get_page(current_page)
-
-    # Group by person for card view - ensure the list is sorted by person first
-    sorted_authorizations = sorted(authorization_list, key=attrgetter('person_id'))
-    grouped_authorizations = [
-        (person, list(authorizations))
-        for person, authorizations in groupby(sorted_authorizations, key=attrgetter('person'))
-    ]
-
-    # Control whether they go to search or results
-    goal = request.GET.get('goal', None)
-
-    return render(
-        request,
-        'authorizations/search.html',
-        {
-            'page_obj': page_obj,
-            'items_per_page': items_per_page,
+    # === Step 2: Check if the user is requesting the search form page ===
+    if request.GET.get('goal') == 'search':
+        # The user wants to see the search form.
+        context = {
             'sca_name_options': sca_name_options,
             'region_options': region_options,
             'branch_options': branch_options,
             'discipline_options': discipline_options,
             'style_options': style_options,
             'marshal_options': marshal_options,
+        }
+        return render(request, 'authorizations/search_form.html', context)
+
+    # === Step 3: If not goal=search, proceed with showing results (this is our existing logic) ===
+
+    try:
+        active_status_id = AuthorizationStatus.objects.get(name='Active').id
+        dynamic_filter = Q(status_id=active_status_id)
+    except AuthorizationStatus.DoesNotExist:
+        dynamic_filter = Q(pk__in=[])
+
+    # ... (all the `if sca_name:`, `if region:`, etc. blocks remain the same) ...
+    sca_name = request.GET.get('sca_name')
+    if sca_name: dynamic_filter &= Q(person__sca_name=sca_name)
+    region = request.GET.get('region')
+    if region: dynamic_filter &= Q(person__branch__region__name=region)
+    branch = request.GET.get('branch')
+    if branch: dynamic_filter &= Q(person__branch__name=branch)
+    discipline = request.GET.get('discipline')
+    if discipline: dynamic_filter &= Q(style__discipline__name=discipline)
+    style = request.GET.get('style')
+    if style: dynamic_filter &= Q(style__name=style)
+    marshal = request.GET.get('marshal')
+    if marshal: dynamic_filter &= Q(marshal__sca_name=marshal)
+    start_date = request.GET.get('start_date')
+    if start_date: dynamic_filter &= Q(expiration__gte=start_date)
+    end_date = request.GET.get('end_date')
+    if end_date: dynamic_filter &= Q(expiration__lte=end_date)
+    is_minor = request.GET.get('is_minor')
+    if is_minor: dynamic_filter &= Q(person__is_minor=(is_minor == 'True'))
+    
+    
+    # === STEP 4: LOGIC FOR DIFFERENT VIEW MODES ===
+    
+    view_mode = request.GET.get('view', 'table') # Default to 'table' view
+    page_obj = None # Initialize page_obj
+
+    # First, get all authorizations that match the filter.
+    # We use this as a base for both views.
+    matching_authorizations = Authorization.objects.filter(dynamic_filter).exclude(person__user_id=11968)
+
+    if view_mode == 'card':
+        # --- CARD VIEW LOGIC (Corrected) ---
+
+        # 1. Get the unique IDs of people who have matching authorizations. (No change)
+        person_ids = matching_authorizations.values_list('person_id', flat=True).distinct()
+
+        # 2. Create the Prefetch object. This defines the data we want to "attach"
+        #    to each person. (No change in the Prefetch object itself)
+        authorizations_prefetch = Prefetch(
+            'authorization_set',  # Default related_name from Person to Authorization
+            queryset=matching_authorizations.select_related('style__discipline', 'marshal').order_by('style__discipline__name', 'style__name'),
+            to_attr='filtered_authorizations'  # Store results in this new attribute
+        )
+
+        # 3. Build the main people queryset.
+        #    THE KEY CHANGE IS HERE: We chain .prefetch_related() to the QuerySet *before* pagination.
+        people_list = Person.objects.filter(user_id__in=person_ids).select_related(
+            'branch__region'
+        ).prefetch_related(authorizations_prefetch).order_by('sca_name')
+
+        # 4. NOW, we paginate the fully prepared queryset. The paginator will handle
+        #    it efficiently.
+        items_per_page = int(request.GET.get('items_per_page', 10))
+        paginator = Paginator(people_list, items_per_page)
+        page_obj = paginator.get_page(request.GET.get('page', 1))
+    
+    else: # 'table' view is the default
+        # --- TABLE VIEW LOGIC ---
+        # This is the same logic as before, but simplified.
+        user_sort = request.GET.get('sort', 'person__sca_name')
+        
+        authorization_list = matching_authorizations.select_related(
+            'person__branch__region',
+            'person__title',
+            'style__discipline',
+            'status',
+            'marshal'
+        ).order_by(user_sort)
+
+        items_per_page = int(request.GET.get('items_per_page', 25))
+        paginator = Paginator(authorization_list, items_per_page)
+        page_obj = paginator.get_page(request.GET.get('page', 1))
+
+    # === STEP 4: RENDER THE TEMPLATE ===
+    return render(
+        request,
+        'authorizations/search.html',
+        {
+            'page_obj': page_obj,
+            'items_per_page': items_per_page,
+            'view_mode': view_mode,
             'today': date.today(),
-            'goal': goal,
-            'grouped_authorizations': grouped_authorizations
+            
+            # Add these back in for the table header filters
+            'sca_name_options': sca_name_options,
+            'region_options': region_options,
+            'branch_options': branch_options,
+            'discipline_options': discipline_options,
+            'style_options': style_options,
+            'marshal_options': marshal_options,
         },
     )
 
@@ -410,6 +474,7 @@ def fighter(request, person_id):
 
     # Get the person who's card is being requested
     person = Person.objects.get(user_id=person_id)
+    user = person.user
 
     # If there is a post, confirm that they are authenticated.
     if request.method == 'POST':
@@ -420,6 +485,15 @@ def fighter(request, person_id):
         action = request.POST.get('action')
         if action == 'add_authorization':
             add_authorization(request, person_id)
+        elif action == 'update_comments':
+            # Only allow auth officers to update comments
+            if not is_kingdom_authorization_officer(request.user):
+                messages.error(request, 'You do not have permission to update comments.')
+            else:
+                user.comment = request.POST.get('comments', '')
+                user.save()
+                messages.success(request, 'Comments updated successfully.')
+                return redirect('fighter', person_id=person_id)
         elif action == 'approve_authorization':
             is_valid, mssg = approve_authorization(request)
             if not is_valid:
@@ -944,6 +1018,7 @@ def add_authorization(request, person_id):
     else:
         messages.error(request, f'Incorrect method passed.')
         return redirect('fighter', person_id=person_id)
+
 @login_required
 def user_account(request, user_id):
     """Allows the user, their parent, or the Kingdom Authorization officer to view and edit the user's account."""
@@ -1081,57 +1156,95 @@ def reject_authorization(request, authorization):
 
 @login_required
 def manage_sanctions(request):
-    """Shows all of the current revoked authorizations."""
-    # Ensure that the user is the authorization officer
-
-    # Allow the user to filter the current branch marshals table
-    dynamic_filter = Q(status__name='Revoked')
-    sca_name = request.GET.get('sca_name')
-    if sca_name:
-        dynamic_filter &= Q(person__sca_name=sca_name)
-    discipline = request.GET.get('discipline')
-    if discipline:
-        dynamic_filter &= Q(style__discipline__name=discipline)
-    style = request.GET.get('style')
-    if style:
-        dynamic_filter &= Q(style__name=style)
-
-    # Get a list of current branch marshals
-    sanctions = Authorization.objects.select_related(
-        'style__discipline',
-    ).filter(dynamic_filter).order_by('person__sca_name')
-
-    # Create table drop down options based on dynamic filters
-    sca_name_options = sanctions.order_by('person__sca_name').values_list('person__sca_name', flat=True).distinct()
-    discipline_options = sanctions.order_by('style__discipline__name').values_list('style__discipline__name',
-                                                                                            flat=True).distinct()
-    style_options = sanctions.order_by('style__name').values_list('style__name', flat=True).distinct()
-
-    # Pagination
-    items_per_page = int(request.GET.get('items_per_page', 10))
-    current_page = request.GET.get('page', 1)
-    paginator = Paginator(sanctions, items_per_page)
-    page_obj = paginator.get_page(current_page)
-
-
+    """
+    Handles displaying the sanctions search form, and showing the results
+    in either a table or a card view grouped by person.
+    """
+    # Handle POST requests first to lift sanctions.
     if request.method == 'POST':
         if not is_kingdom_authorization_officer(request.user) and not is_kingdom_marshal(request.user, 'Earl Marshal'):
             raise PermissionDenied
+        
+        # We'll use the 'action' to make sure we're lifting a sanction.
+        if request.POST.get('action') == 'lift_sanction':
+            authorization_id = request.POST.get('authorization_id')
+            try:
+                authorization = Authorization.objects.get(id=authorization_id, status__name='Revoked')
+                # Instead of deleting, it's often better to change the status.
+                # If you truly want to delete, you can keep authorization.delete().
+                # For this example, let's assume lifting a sanction means making it 'Active' again.
+                active_status = AuthorizationStatus.objects.get(name='Active')
+                authorization.status = active_status
+                authorization.save()
+                messages.success(request, f"Sanction for {authorization.person.sca_name} has been lifted.")
+            except Authorization.DoesNotExist:
+                messages.error(request, "Could not find the specified sanction to lift.")
+        
+        # Redirect after POST to prevent re-submission on refresh
+        return redirect('manage_sanctions')
 
-        authorization_id = request.POST.get('authorization_id')
-        authorization = Authorization.objects.get(id=authorization_id)
-        authorization.delete()
-        messages.success(request, 'Authorization suspension has been lifted.')
+    # --- Display Logic (for GET requests) ---
 
+    # Get dropdown options for the search form
+    revoked_auths = Authorization.objects.filter(status__name='Revoked')
+    sca_name_options = Person.objects.filter(authorization__in=revoked_auths).distinct().order_by('sca_name').values_list('sca_name', flat=True)
+    discipline_options = Discipline.objects.filter(weaponstyle__authorization__in=revoked_auths).distinct().order_by('name').values_list('name', flat=True)
+    style_options = WeaponStyle.objects.filter(authorization__in=revoked_auths).distinct().order_by('name').values_list('name', flat=True)
 
-    return render(request, 'authorizations/manage_sanctions.html', {
+    # Check if the user is requesting the search form page
+    if request.GET.get('goal') == 'search':
+        context = {
+            'sca_name_options': sca_name_options,
+            'discipline_options': discipline_options,
+            'style_options': style_options,
+        }
+        return render(request, 'authorizations/sanctions_search_form.html', context)
+
+    # --- If not the search goal, proceed with showing results ---
+    
+    # Build the dynamic filter
+    try:
+        revoked_status = AuthorizationStatus.objects.get(name='Revoked')
+        dynamic_filter = Q(status=revoked_status)
+    except AuthorizationStatus.DoesNotExist:
+        return render(request, 'authorizations/error.html', {'message': 'System error: "Revoked" status not found.'})
+
+    if sca_name := request.GET.get('sca_name'):
+        dynamic_filter &= Q(person__sca_name=sca_name)
+    if discipline := request.GET.get('discipline'):
+        dynamic_filter &= Q(style__discipline__name=discipline)
+    if style := request.GET.get('style'):
+        dynamic_filter &= Q(style__name=style)
+
+    matching_authorizations = Authorization.objects.filter(dynamic_filter).exclude(person__user_id=11968)
+    view_mode = request.GET.get('view', 'table')
+    page_obj = None
+
+    if view_mode == 'card':
+        # CARD VIEW: Paginate by Person
+        person_ids = matching_authorizations.values_list('person_id', flat=True).distinct()
+        authorizations_prefetch = Prefetch(
+            'authorization_set',
+            queryset=matching_authorizations.select_related('style__discipline').order_by('style__discipline__name'),
+            to_attr='revoked_authorizations'
+        )
+        people_list = Person.objects.filter(user_id__in=person_ids).prefetch_related(authorizations_prefetch).order_by('sca_name')
+        
+        paginator = Paginator(people_list, 10) # Fewer items per page for cards
+        page_obj = paginator.get_page(request.GET.get('page', 1))
+
+    else: # 'table' view is the default
+        # TABLE VIEW: Paginate by Sanction
+        sanctions_list = matching_authorizations.select_related('person', 'style__discipline').order_by('person__sca_name')
+        
+        paginator = Paginator(sanctions_list, 25)
+        page_obj = paginator.get_page(request.GET.get('page', 1))
+
+    context = {
         'page_obj': page_obj,
-        'items_per_page': items_per_page,
-        'sanctions': sanctions,
-        'sca_name_options': sca_name_options,
-        'style_options': style_options,
-        'discipline_options': discipline_options,
-    })
+        'view_mode': view_mode,
+    }
+    return render(request, 'authorizations/manage_sanctions.html', context)
 
 @login_required()
 def issue_sanctions(request, person_id):
@@ -1216,70 +1329,99 @@ def create_sanction(request, person):
 
 
 def branch_marshals(request):
-    """Shows all of the branch marshals."""
-    # Ensure that the user is the authorization officer
-
-    # Allow the user to filter the current branch marshals table
-    dynamic_filter = Q(end_date__gte=date.today())
-    sca_name = request.GET.get('sca_name')
-    if sca_name:
-        dynamic_filter &= Q(person__sca_name=sca_name)
-    branch = request.GET.get('branch')
-    if branch:
-        dynamic_filter &= Q(branch__name=branch)
-    discipline = request.GET.get('discipline')
-    if discipline:
-        dynamic_filter &= Q(discipline__name=discipline)
-
-    # Get a list of current branch marshals
-    current_branch_marshals = BranchMarshal.objects.filter(dynamic_filter).order_by('end_date')
-
-    # Create table drop down options based on dynamic filters
-    sca_name_options = current_branch_marshals.order_by('person__sca_name').values_list('person__sca_name',
-                                                                                   flat=True).distinct()
-    branch_options = current_branch_marshals.order_by('branch__name').values_list('branch__name',
-                                                                                     flat=True).distinct()
-    discipline_options = current_branch_marshals.order_by('discipline__name').values_list('discipline__name',
-                                                                                            flat=True).distinct()
-
-    # Pagination
-    items_per_page = int(request.GET.get('items_per_page', 10))
-    current_page = request.GET.get('page', 1)
-    paginator = Paginator(current_branch_marshals, items_per_page)
-    page_obj = paginator.get_page(current_page)
-
-    try:
+    """
+    Handles displaying the branch marshal search form, and showing the results
+    in either a table or a card view grouped by person.
+    """
+    # --- POST Logic: Handle appointment changes first ---
+    if request.user.is_authenticated:
         auth_officer = is_kingdom_authorization_officer(request.user)
-    except:
+    else:
         auth_officer = False
-
     if request.method == 'POST':
-        if not request.user.is_authenticated:
-            raise PermissionDenied
-
         if not auth_officer:
             raise PermissionDenied
 
         action = request.POST.get('action')
         branch_officer_id = request.POST.get('branch_officer_id')
-        branch_officer = BranchMarshal.objects.get(id=branch_officer_id)
-        if action == 'extend_appointment':
-            branch_officer.end_date = branch_officer.end_date + relativedelta(years=1)
-            messages.success(request, f'{branch_officer.discipline.name} {branch_officer.branch.name} marshal appointment for {branch_officer.person.sca_name} has been extended one year.')
-        elif action == 'end_appointment':
-            branch_officer.end_date = date.today() - timedelta(days=1)
-            messages.success(request, f'{branch_officer.discipline.name} {branch_officer.branch.name} marshal appointment for {branch_officer.person.sca_name} has been ended.')
-        branch_officer.save()
+        try:
+            branch_officer = BranchMarshal.objects.get(id=branch_officer_id)
+            if action == 'extend_appointment':
+                branch_officer.end_date += relativedelta(years=1)
+                messages.success(request, f'Appointment for {branch_officer.person.sca_name} has been extended one year.')
+            elif action == 'end_appointment':
+                branch_officer.end_date = date.today() - timedelta(days=1)
+                messages.success(request, f'Appointment for {branch_officer.person.sca_name} has been ended.')
+            branch_officer.save()
+        except BranchMarshal.DoesNotExist:
+            messages.error(request, "The specified branch marshal appointment could not be found.")
+        
+        return redirect('branch_marshals')
 
-    return render(request, 'authorizations/branch_marshals.html', {
+    # --- GET Logic: Display pages ---
+
+    # Get dropdown options for the search form
+    current_marshal_offices = BranchMarshal.objects.filter(end_date__gte=date.today())
+    sca_name_options = Person.objects.filter(branchmarshal__in=current_marshal_offices).distinct().order_by('sca_name').values_list('sca_name', flat=True)
+    branch_options = Branch.objects.filter(branchmarshal__in=current_marshal_offices).distinct().order_by('name').values_list('name', flat=True)
+    discipline_options = Discipline.objects.filter(branchmarshal__in=current_marshal_offices).distinct().order_by('name').values_list('name', flat=True)
+    region_options = Branch.objects.regions().order_by('name').values_list('name', flat=True)
+
+    # Handle request for the dedicated search form
+    if request.GET.get('goal') == 'search':
+        context = {
+            'sca_name_options': sca_name_options,
+            'branch_options': branch_options,
+            'discipline_options': discipline_options,
+            'region_options': region_options,
+        }
+        return render(request, 'authorizations/marshals_search_form.html', context)
+
+    # --- If not the search goal, proceed with showing results ---
+    
+    # Build the dynamic filter
+    dynamic_filter = Q(end_date__gte=date.today())
+    if sca_name := request.GET.get('sca_name'):
+        dynamic_filter &= Q(person__sca_name=sca_name)
+    if branch := request.GET.get('branch'):
+        dynamic_filter &= Q(branch__name=branch)
+    if discipline := request.GET.get('discipline'):
+        dynamic_filter &= Q(discipline__name=discipline)
+    if region := request.GET.get('region'):
+        dynamic_filter &= Q(region__name=region)
+    
+    matching_appointments = BranchMarshal.objects.filter(dynamic_filter).exclude(person__user_id=11968)
+    view_mode = request.GET.get('view', 'table')
+    page_obj = None
+
+    if view_mode == 'card':
+        # CARD VIEW: Paginate by Person
+        person_ids = matching_appointments.values_list('person_id', flat=True).distinct()
+        appointments_prefetch = Prefetch(
+            'branchmarshal_set',
+            # UPDATED: Added 'branch__region' to efficiently fetch the region name
+            queryset=matching_appointments.select_related('branch__region', 'discipline').order_by('branch__name'),
+            to_attr='current_appointments'
+        )
+        people_list = Person.objects.filter(user_id__in=person_ids).prefetch_related(appointments_prefetch).order_by('sca_name')
+        
+        paginator = Paginator(people_list, 10)
+        page_obj = paginator.get_page(request.GET.get('page', 1))
+
+    else: # 'table' view is the default
+       # UPDATED: Added 'branch__region' to efficiently fetch the region name
+        marshals_list = matching_appointments.select_related(
+            'person', 'branch__region', 'discipline'
+        ).order_by('person__sca_name', 'branch__name')
+        paginator = Paginator(marshals_list, 25)
+        page_obj = paginator.get_page(request.GET.get('page', 1))
+
+    context = {
         'page_obj': page_obj,
-        'items_per_page': items_per_page,
-        'current_branch_marshals': current_branch_marshals,
-        'sca_name_options': sca_name_options,
-        'branch_options': branch_options,
-        'discipline_options': discipline_options,
-        'auth_officer': auth_officer
-    })
+        'view_mode': view_mode,
+        'auth_officer': auth_officer,
+    }
+    return render(request, 'authorizations/branch_marshals.html', context)
 
 # This is where the Forms are kept
 
@@ -1303,7 +1445,8 @@ class CreatePersonForm(forms.Form):
     ]
     email = forms.EmailField(label='Email', required=True)
     username = forms.CharField(label='Username', required=True)
-    legal_name = forms.CharField(label='Legal Name', required=True)
+    first_name = forms.CharField(label='First Name', required=True)
+    last_name = forms.CharField(label='Last Name', required=True)
     membership = forms.IntegerField(label='Membership Number', required=False)
     membership_expiration = forms.DateField(label='Membership Expiration', required=False,
                                             widget=forms.DateInput(attrs={'type': 'date'}))

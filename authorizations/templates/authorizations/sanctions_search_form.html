@@ -1,0 +1,64 @@
+{% extends "authorizations/inner_layout.html" %}
+
+{% block title %}Search Sanctions{% endblock %}
+
+{% block body %}
+<div class="col-md-8 offset-md-2">
+    <h2 class="mb-4">Search Sanctions</h2>
+    <form method="get" action="{% url 'manage_sanctions' %}">
+        {# This hidden input preserves the view mode (card/table) #}
+        <input type="hidden" name="view" id="view-mode-input" value="{{ request.GET.view|default:'table' }}">
+
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <label for="sca_name" class="form-label">SCA Name:</label>
+                <select id="sca_name" name="sca_name" class="choices-dropdown form-control">
+                    <option value=""></option>
+                    {% for option in sca_name_options %}
+                        <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 mb-3">
+                <label for="discipline" class="form-label">Discipline:</label>
+                <select id="discipline" name="discipline" class="choices-dropdown form-control">
+                    <option value=""></option>
+                    {% for option in discipline_options %}
+                        <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 mb-3">
+                <label for="style" class="form-label">Weapon Style:</label>
+                <select id="style" name="style" class="choices-dropdown form-control">
+                    <option value=""></option>
+                    {% for option in style_options %}
+                        <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <hr class="my-4">
+        <button class="w-100 btn btn-warning btn-lg" type="submit">Search Sanctions</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block script %}
+{# Add the scripts for this page #}
+<script>
+    // Proactively sets the view to 'card' on mobile devices
+    (function() {
+        const viewInput = document.getElementById('view-mode-input');
+        if (viewInput.value === 'table' && window.innerWidth < 768) {
+            viewInput.value = 'card';
+        }
+    })();
+
+    // Initializes the searchable dropdowns
+    document.addEventListener('DOMContentLoaded', function () {
+        const dropdowns = document.querySelectorAll('.choices-dropdown');
+        dropdowns.forEach(function (dropdown) { new Choices(dropdown, { searchEnabled: true, removeItemButton: true }); });
+    });
+</script>
+{% endblock %}
