@@ -371,10 +371,11 @@ def search(request):
     paginator = Paginator(authorization_list, items_per_page)
     page_obj = paginator.get_page(current_page)
 
-    # Group by person for card view
+    # Group by person for card view - ensure the list is sorted by person first
+    sorted_authorizations = sorted(authorization_list, key=attrgetter('person_id'))
     grouped_authorizations = [
         (person, list(authorizations))
-        for person, authorizations in groupby(authorization_list, key=attrgetter('person'))
+        for person, authorizations in groupby(sorted_authorizations, key=attrgetter('person'))
     ]
 
     # Control whether they go to search or results
@@ -1302,8 +1303,7 @@ class CreatePersonForm(forms.Form):
     ]
     email = forms.EmailField(label='Email', required=True)
     username = forms.CharField(label='Username', required=True)
-    first_name = forms.CharField(label='First Name', required=True)
-    last_name = forms.CharField(label='Last Name', required=True)
+    legal_name = forms.CharField(label='Legal Name', required=True)
     membership = forms.IntegerField(label='Membership Number', required=False)
     membership_expiration = forms.DateField(label='Membership Expiration', required=False,
                                             widget=forms.DateInput(attrs={'type': 'date'}))

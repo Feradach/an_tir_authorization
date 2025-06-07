@@ -33,6 +33,8 @@ TITLE_RANK_CHOICES = [
 # Create your models here.
 class User(AbstractUser):
     """User model. It is extended to include the membership information and their address."""
+
+    # Used none@invalid.com for blank or invalid emails. Need to code this in.
     membership = models.IntegerField(null=True, blank=True, unique=True)
     membership_expiration = models.DateField(null=True, blank=True)
     address = models.CharField(max_length=255,null=True, blank=True)
@@ -54,6 +56,7 @@ class User(AbstractUser):
     has_logged_in = models.BooleanField(default=False)
     waiver_expiration = models.DateField(null=True, blank=True)
     background_check_expiration = models.DateField(null=True, blank=True)
+    comment = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey('self', null=True, blank=True,
@@ -208,13 +211,12 @@ class Title(models.Model):
 
 class Person(models.Model):
     """This is the public information about a person. It is attached to the user and the authorization."""
-    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True)
-    sca_name = models.CharField(max_length=255, null=True, blank=True)
-    branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True, db_index=True)
+    sca_name = models.CharField(max_length=255, null=True, blank=True, db_index=True)
+    branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, db_index=True)
     title = models.ForeignKey(Title, on_delete=models.SET_NULL, null=True, blank=True)
     is_minor = models.BooleanField(default=False)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
-    comment = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, null=True, blank=True,
@@ -260,11 +262,11 @@ class Person(models.Model):
 
 class Authorization(models.Model):
     """These are the authorizations. They are the primary entity that the system manages."""
-    person = models.ForeignKey(Person, on_delete=models.CASCADE)
-    style = models.ForeignKey(WeaponStyle, on_delete=models.SET_NULL, null=True)
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, db_index=True)
+    style = models.ForeignKey(WeaponStyle, on_delete=models.SET_NULL, null=True, db_index=True)
     status = models.ForeignKey(AuthorizationStatus, on_delete=models.SET_NULL, null=True, default=1)
-    marshal = models.ForeignKey(Person, on_delete=models.SET_NULL, null=True, related_name='marshal')
-    expiration = models.DateField()
+    marshal = models.ForeignKey(Person, on_delete=models.SET_NULL, null=True, related_name='marshal', db_index=True)
+    expiration = models.DateField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, null=True, blank=True,
