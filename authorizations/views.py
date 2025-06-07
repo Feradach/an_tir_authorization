@@ -389,6 +389,12 @@ def search(request):
     if end_date: dynamic_filter &= Q(expiration__lte=end_date)
     is_minor = request.GET.get('is_minor')
     if is_minor: dynamic_filter &= Q(person__is_minor=(is_minor == 'True'))
+    if membership_num := request.GET.get('membership'):
+        # The path is Authorization -> person -> user -> membership
+        dynamic_filter &= Q(person__user__membership=membership_num)
+    if email_addr := request.GET.get('email'):
+        # Using 'iexact' makes the email search case-insensitive
+        dynamic_filter &= Q(person__user__email__iexact=email_addr)
     
     
     # === STEP 4: LOGIC FOR DIFFERENT VIEW MODES ===
@@ -862,15 +868,18 @@ def add_fighter(request):
             messages.success(request,
                              'User and person created successfully! Login credentials have been sent to the user.')
 
-            person_form = CreatePersonForm()
-            auth_form = CreateAuthorizationForm()
-            return render(request, 'authorizations/new_fighter.html',
-                          {'person_form': person_form})
+            return redirect('fighter', person_id=user.id)
 
         else:
-            messages.error(request, 'Please fix the errors below.')
+            for field, errors in person_form.errors.items():
+                for error in errors:
+                    if field == '__all__':
+                        messages.error(request, error)
+                    else:
+                        field_label = person_form.fields[field].label if field in person_form.fields else field
+                        messages.error(request, f"{field_label}: {error}")
             return render(request, 'authorizations/new_fighter.html', {
-                'person_form': person_form,
+                'person_form': person_form
             })
     else:
         person_form = CreatePersonForm()
