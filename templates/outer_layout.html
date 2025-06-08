@@ -2,10 +2,12 @@
 {% load static %}
 
 {% block navbar %}
-        <a href="{% url 'homepage' %}" class="nav-link">Home</a>
-        <a href="{% url 'contact' %}" class="nav-link">Contact</a>
-        <a href="{% url 'forms' %}" class="nav-link">Forms</a>
-        <a href="{% url 'index' %}" class="nav-link">Authorizations</a>
+    <a href="{% url 'homepage' %}" class="nav-link">Home</a>
+    <a href="{% url 'contact' %}" class="nav-link">Contact</a>
+    <a href="{% url 'forms' %}" class="nav-link">Forms</a>
+    <a href="{% url 'index' %}" class="nav-link">Authorizations</a>
+    <a href="{% url 'roadmap' %}" class="nav-link">Roadmap</a>
+    <a href="{% url 'faq' %}" class="nav-link">FAQ</a>
 {% endblock %}
 
 {% block hamburger %}
@@ -13,4 +15,6 @@
     <li><a href="{% url 'contact' %}" class="hamburger-link">Contact</a></li>
     <li><a href="{% url 'forms' %}" class="hamburger-link">Forms</a></li>
     <li><a href="{% url 'index' %}" class="hamburger-link">Authorizations</a></li>
+    <li><a href="{% url 'roadmap' %}" class="hamburger-link">Roadmap</a></li>
+    <li><a href="{% url 'faq' %}" class="hamburger-link">FAQ</a></li>
 {% endblock %}

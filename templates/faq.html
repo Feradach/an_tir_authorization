@@ -1,0 +1,185 @@
+{% extends "outer_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Frequently Asked Questions
+{% endblock %}
+
+{% block body %}
+
+<h1>An Tir Authorizations System: Frequently Asked Questions</h1>
+<p>Welcome to the new digital home for An Tir's martial authorizations! This guide is designed to help you navigate the system, whether you're a fighter, a marshal, or an officer.</p>
+
+<p>Click a question below to jump to the answer:</p>
+
+<h3><a href="#getting-started">Getting Started & Basic Navigation</a></h3>
+<ul>
+    <li><a href="#new-features">What are the new features of this system?</a></li>
+    <li><a href="#login-recovery">How do I log in or recover my account?</a></li>
+    <li><a href="#finding-people">How do I find a specific person?</a></li>
+    <li><a href="#table-vs-card">What is the difference between "Table View" and "Card View"?</a></li>
+</ul>
+
+<h3><a href="#fighters">For Fighters</a></h3>
+<ul>
+    <li><a href="#view-fighter-info">How can I view a fighter's authorizations and officer roles?</a></li>
+    <li><a href="#pdf-card">How can I get a printable PDF of an authorization card?</a></li>
+    <li><a href="#sign-waiver">Why do I need to sign a waiver and how do I do it?</a></li>
+    <li><a href="#update-account">How do I change my password or update my personal information?</a></li>
+</ul>
+
+<h3><a href="#marshals">For Marshals</a></h3>
+<ul>
+    <li><a href="#marshal-home">What can I do from the home page when I log in?</a></li>
+    <li><a href="#add-fighter">How do I add a new fighter to the database?</a></li>
+    <li><a href="#add-authorization">How do I add a new authorization for an existing fighter?</a></li>
+    <li><a href="#approval-process">How does the approval process for new Junior and Senior Marshals work?</a></li>
+</ul>
+
+<h3><a href="#officers">For Officers</a></h3>
+<ul>
+    <li><a href="#regional-approval">How do Regional Marshals know when to approve an authorization?</a></li>
+    <li><a href="#appoint-marshal">How do I appoint a Branch Marshal?</a></li>
+    <li><a href="#manage-appointments">How do I manage Branch Marshal appointments?</a></li>
+    <li><a href="#issue-sanction">How do I issue a sanction against a fighter?</a></li>
+    <li><a href="#manage-sanctions">How do I view or lift existing sanctions?</a></li>
+    <li><a href="#officer-comments">How do I update the "Officer Comments" on a user's profile?</a></li>
+</ul>
+
+<hr>
+
+<h2 id="getting-started">Getting Started & Basic Navigation</h2>
+
+<h3 id="new-features">What are the new features of this system?</h3>
+<p>The primary difference in this new system is that it allows you to manage your own account directly. If you are a marshal, you can now manage authorizations for fighters in real-time rather than submitting paperwork to the Kingdom Authorization Officer. Future features will be added over time.</p>
+
+<h3 id="login-recovery">How do I log in or recover my account?</h3>
+<p>When your account is first created, you will receive an email with a username and a temporary password. The first time you log in, you will be prompted to choose a new, permanent password.</p>
+<p>If you don't know your password or username, use the "Forgot your password or need to recover your account?" link on the login page.</p>
+<ul>
+    <li><strong>To find your username</strong>: Enter your email address. The system will send you a list of all associated usernames.</li>
+    <li><strong>To reset your password</strong>: Enter your username. The system will email a temporary password to the address on file.</li>
+</ul>
+<p>If you no longer have access to the email address on file, please contact the Kingdom Authorization Officer for assistance.</p>
+
+<h3 id="finding-people">How do I find a specific person?</h3>
+<p>There are two primary ways to find people:</p>
+<ol>
+    <li><strong>Quick Search</strong>: On the home page, there is a dropdown list labeled "Go to fighter card for:". Select a person's name to go directly to their fighter page.</li>
+    <li><strong>Advanced Search</strong>: Click the "Search Fighters" button to go to a dedicated search page where you can filter by SCA Name, Branch, Discipline, Weapon Style, and more.</li>
+</ol>
+
+<h3 id="table-vs-card">What is the difference between "Table View" and "Card View"?</h3>
+<p>The system provides two ways to display search results:</p>
+<ul>
+    <li><strong>Table View (Default on Desktop)</strong>: This view shows each authorization as a separate row in a detailed, sortable table. You can also change your search filters directly from the column headers.</li>
+    <li><strong>Card View (Default on Mobile)</strong>: This view groups all results by person, showing each individual as a "card" with their authorizations listed within. This is often easier to read on smaller screens.</li>
+</ul>
+<p>You can switch between views using the "Switch to..." button at the top of any search results page.</p>
+
+<hr>
+
+<h2 id="fighters">For Fighters</h2>
+
+<h3 id="view-fighter-info">How can I view a fighter's authorizations and officer roles?</h3>
+<p>After finding a person using search, click on their name to go to their fighter page. This page displays their name, branch, any marshal officer roles they hold, and all current authorizations. If you are viewing your own page, a link will be available to manage your user account.</p>
+
+<h3 id="pdf-card">How can I get a printable PDF of an authorization card?</h3>
+<p>Navigate to any fighter's profile page. At the bottom, you will find "Download Fighter Card" buttons. The system generates separate PDF cards for different categories of authorizations:</p>
+<ul>
+    <li><strong>Fighter Card</strong>: For standard combat authorizations.</li>
+    <li><strong>Youth Fighter Card</strong>: For Youth Armored and Youth Rapier authorizations.</li>
+    <li><strong>Equestrian Card</strong>: For all equestrian authorizations.</li>
+</ul>
+<p><strong>Important</strong>: You must use the "Print" function from your browser's PDF viewer. Downloading the file directly may result in a blank document.</p>
+
+<h3 id="sign-waiver">Why do I need to sign a waiver and how do I do it?</h3>
+<p>SCA rules require all combatants to have a waiver on file. A current, paid membership card fulfills this requirement. If you are not a current member, you must sign a digital waiver to be authorized.</p>
+<p>To do this, log in, navigate to your account page, and click the "Sign Waiver" button. Once signed, your waiver is valid for one year. When you receive a new authorization, the system checks if the new expiration date is further out than your current waiver, and if so, extends the waiver to match.</p>
+
+<h3 id="update-account">How do I change my password or update my personal information?</h3>
+<p>Once logged in, go to your account page from the main menu. On this page, you can:</p>
+<ul>
+    <li>Edit your contact information, SCA name, title, and branch.</li>
+    <li>Change your password.</li>
+    <li>View any linked children's accounts.</li>
+    <li>Sign a digital waiver.</li>
+</ul>
+<p>A legal guardian (for minors) or the Kingdom Authorization Officer can also edit this information.</p>
+
+<hr>
+
+<h2 id="marshals">For Marshals</h2>
+
+<h3 id="marshal-home">What can I do from the home page when I log in?</h3>
+<p>As a marshal, the home page becomes your dashboard. If there are any pending marshal authorizations that you have the authority to approve, they will be listed in a table for your review. You can approve or reject them directly from this page. You will also see links to common actions like adding new fighters or viewing branch marshals.</p>
+
+<h3 id="add-fighter">How do I add a new fighter to the database?</h3>
+<p>If you have "Senior Marshal" status in any discipline, a button labeled "Add a New Fighter to the Database" will appear on the home page. This takes you to a form where you must enter the new person's information. The system will automatically create their user account and send an email with a username and temporary password.</p>
+
+<h3 id="add-authorization">How do I add a new authorization for an existing fighter?</h3>
+<p>First, navigate to the fighter's profile page. At the bottom, you will find the "Add New Authorization" form.</p>
+<ol>
+    <li><strong>Select Discipline</strong>: Choose the combat discipline. The dropdown will only show disciplines in which you hold a "Senior Marshal" authorization.</li>
+    <li><strong>Select Weapon Styles</strong>: After selecting a discipline, the associated weapon styles will appear. You can add multiple styles to the "cart."</li>
+    <li><strong>Submit</strong>: Click submit to add all styles in the cart as new authorizations for that person.</li>
+</ol>
+<p>The system will validate the request against the rules for that discipline (age, prerequisites, etc.) and will prevent invalid authorizations. If you are the Authorization Officer, you will also see a field to select which Senior Marshal is granting the authorization.</p>
+
+<h3 id="approval-process">How does the approval process for new Junior and Senior Marshals work?</h3>
+<p>Authorizing a marshal requires a multi-step approval process to ensure oversight:</p>
+<ol>
+    <li><strong>Proposal</strong>: A Senior Marshal adds a "Junior Marshal" or "Senior Marshal" authorization for a fighter. The status is set to `Pending`.</li>
+    <li><strong>Concurrence</strong>: A <em>different</em> Senior Marshal of the same discipline must approve the pending authorization.
+        <ul>
+            <li>If it's a <strong>Junior Marshal</strong>, the authorization becomes `Active`.</li>
+            <li>If it's a <strong>Senior Marshal</strong>, the status changes to `Needs Regional Approval`.</li>
+        </ul>
+    </li>
+    <li><strong>Regional Approval</strong>: The appropriate Regional Marshal for that person's region must approve it. The authorization then becomes `Active`.</li>
+</ol>
+<p>The Kingdom Authorization Officer can bypass all steps and approve any marshal authorization directly. Any fighter with a pending marshal authorization will have it displayed on their fighter page, where eligible marshals can approve it.</p>
+
+<hr>
+
+<h2 id="officers">For Officers</h2>
+
+<h3 id="regional-approval">How do Regional Marshals know when to approve an authorization?</h3>
+<p>When a marshal logs in, their home page will display any pending authorizations they have permission to approve. Baronial marshals see pending items for their branch, while Regional and Kingdom marshals see pending items for all branches within their domain that require their level of approval.</p>
+
+<h3 id="appoint-marshal">How do I appoint a Branch Marshal?</h3>
+<p>This action is restricted to the <strong>Kingdom Authorization Officer</strong>. To appoint a marshal:</p>
+<ol>
+    <li>Navigate to the fighter's profile page.</li>
+    <li>If they are not currently a branch officer, a form titled "Appoint to an officer position" will be visible.</li>
+    <li>Select the Branch and Discipline for the appointment.</li>
+    <li>Set a Start Date. The end date is automatically set for two years later.</li>
+    <li>Click "Appoint Branch Marshal."</li>
+</ol>
+
+<h3 id="manage-appointments">How do I manage Branch Marshal appointments?</h3>
+<p>This action is restricted to the <strong>Kingdom Authorization Officer</strong>. Navigate to the "View Branch Marshals" page from the main menu. On the results page, you will see "Extend" and "End Now" buttons for each appointment:</p>
+<ul>
+    <li><strong>Extend</strong>: Adds one year to the appointment's end date.</li>
+    <li><strong>End Now</strong>: Immediately sets the end date to the previous day, ending the term.</li>
+</ul>
+
+<h3 id="issue-sanction">How do I issue a sanction against a fighter?</h3>
+<p>The <strong>Kingdom Authorization Officer</strong> or <strong>Earl Marshal</strong> can issue sanctions.</p>
+<ol>
+    <li>Go to the fighter's profile page.</li>
+    <li>Click the "Issue Sanctions" button, which leads to a dedicated page.</li>
+    <li>You can issue a sanction for an entire <strong>Discipline</strong> or for a specific weapon <strong>Style</strong>.</li>
+    <li>Select the appropriate option and click the corresponding "Sanction" button. This creates a `Revoked` authorization record.</li>
+</ol>
+
+<h3 id="manage-sanctions">How do I view or lift existing sanctions?</h3>
+<p>From the home page, click "Manage Sanctions" to search for all `Revoked` authorizations. From the search results, the Kingdom Authorization Officer or Earl Marshal can lift the sanction, which changes its status back to `Active`.</p>
+
+<h3 id="officer-comments">How do I update the "Officer Comments" on a user's profile?</h3>
+<p>On every fighter's profile page, the <strong>Kingdom Authorization Officer</strong> will see a text box under "Officer Comments." You can add, edit, or remove text and click "Update Comments" to save. This section is only visible to the Authorization Officer.</p>
+
+{% endblock %}
+
+{% block script %}
+{% endblock %}

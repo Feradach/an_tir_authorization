@@ -177,7 +177,7 @@ def index(request):
         'kingdom_earl_marshal': kingdom_earl_marshal,
         'auth_officer': auth_officer,
         'pending_authorizations': pending_authorizations,
-        'all_people': all_people
+        'all_people': all_people,
     })
 
 
