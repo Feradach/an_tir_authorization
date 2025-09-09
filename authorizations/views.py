@@ -18,7 +18,7 @@ from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 from django.contrib.staticfiles import finders
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF
 from itertools import groupby
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName
@@ -114,7 +114,7 @@ def index(request):
         return render(request, 'authorizations/index.html' , {'all_people': all_people})
 
     pending_authorizations = []
-    person = Person.objects.get(user_id=request.user.id) # Who is the person accessing the page
+    person = Person.objects.get(user_id=request.user.id)
     senior_marshal = is_senior_marshal(request.user)
     branch_marshal = is_branch_marshal(request.user)
     regional_marshal = is_regional_marshal(request.user)
@@ -983,27 +983,47 @@ def add_authorization(request, person_id):
                                             expiration = min(two_years, person.user.background_check_expiration)
                                         else:
                                             expiration = two_years
-                                        new_auth = Authorization.objects.create(
-                                            person=person,
-                                            style=style,
-                                            expiration=expiration,
-                                            marshal=Person.objects.get(user=authorizing_marshal),
-                                            status=AuthorizationStatus.objects.get(name='Active'),
-                                        )
-                                        messages.success(request, f'Authorization for {style.name} created successfully!')
+                                        if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=expiration,
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=AuthorizationStatus.objects.get(name='Needs Kingdom Approval'),
+                                            )
+                                            messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
+                                        else:
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=expiration,
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=AuthorizationStatus.objects.get(name='Active'),
+                                            )
+                                            messages.success(request, f'Authorization for {style.name} created successfully!')
                                         # Update the waiver expiration date if it is greater than today to the authorization expiration date
                                         if person.user.waiver_expiration and person.user.waiver_expiration < expiration:
                                             person.user.waiver_expiration = expiration
                                             person.user.save()
                                     else:
-                                        new_auth = Authorization.objects.create(
-                                            person=person,
-                                            style=style,
-                                            expiration=date.today() + relativedelta(years=4),
-                                            marshal=Person.objects.get(user=authorizing_marshal),
-                                            status=AuthorizationStatus.objects.get(name='Active'),
-                                        )
-                                        messages.success(request, f'Authorization for {style.name} created successfully!')
+                                        if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=date.today() + relativedelta(years=4),
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=AuthorizationStatus.objects.get(name='Needs Kingdom Approval'),
+                                            )
+                                            messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
+                                        else:
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=date.today() + relativedelta(years=4),
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=AuthorizationStatus.objects.get(name='Active'),
+                                            )
+                                            messages.success(request, f'Authorization for {style.name} created successfully!')
                                         # Update the waiver expiration date if it is greater than today to the authorization expiration date
                                         if person.user.waiver_expiration and person.user.waiver_expiration < new_auth.expiration:
                                             person.user.waiver_expiration = new_auth.expiration

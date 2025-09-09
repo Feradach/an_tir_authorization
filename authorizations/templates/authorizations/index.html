@@ -43,7 +43,7 @@
         </p>
     </div>
     {% if pending_authorizations %}
-        <h3>Marshal Authorizations Needing Approval</h3>
+        <h3>Authorizations Needing Approval</h3>
          <table>
                 <tr>
                     <th>SCA Name</th>
@@ -56,7 +56,7 @@
                 </tr>
                 {% for authorization in pending_authorizations %}
                     <tr>
-                        <td>{{ authorization.person.sca_name }}</td>
+                        <td><a href="{% url 'fighter' authorization.person.id %}">{{ authorization.person.sca_name }}</a></td>
                         <td>{{ authorization.person.branch.region.name }}</td>
                         <td>{{ authorization.person.branch.name }}</td>
                         <td>{{ authorization.style.discipline.name }}</td>
@@ -68,12 +68,12 @@
                             <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
-                        {% if regional_marshal %}
-                            <form method="post" action="">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="reject_authorization">
-                            <input type="hidden" name="bad_authorization_id" value="{{ authorization.id }}">
-                            <button type="submit" class="btn btn-danger">Reject</button>
+                    {% if regional_marshal %}
+                        <form method="post" action="">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="reject_authorization">
+                        <input type="hidden" name="bad_authorization_id" value="{{ authorization.id }}">
+                        <button type="submit" class="btn btn-danger">Reject</button>
                         </form></td>
                     {% endif %}
                     </tr>

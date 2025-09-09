@@ -95,6 +95,10 @@
                 <div class="col-md-3">
                     {% if data.status == "Pending" %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #ffefae">
+                    {% elif data.status == "Needs Regional Approval" %}
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #89bed8">
+                    {% elif data.status == "Needs Kingdom Approval" %}
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #b39dc9">
                     {% else %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #a2b5f5">
                     {% endif %}
@@ -132,7 +136,7 @@
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
-                        {% if regional_marshal %}
+                        {% if regional_marshal and data.status == "Pending" or data.status == "Needs Regional Approval" %}
                             <form method="post" action="">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="reject_authorization">
