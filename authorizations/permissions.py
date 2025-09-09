@@ -6,6 +6,8 @@ from django.db.models import Q
 from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
     Person, Discipline
 
+# Variable to determine whether we need to have the Authorization officer sign off on all authorizations. Uses status "Needs Kingdom Approval.
+AUTHORIZATION_OFFICER_SIGN_OFF = False
 
 def membership_is_current(user):
     if not user.membership:

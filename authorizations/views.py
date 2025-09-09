@@ -1512,6 +1512,27 @@ class CreatePersonForm(forms.Form):
         # format as (###) ###-####
         formatted = f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"
         return formatted
+        
+    def clean_postal_code(self):
+        postal_code = self.cleaned_data.get('postal_code', '').strip().upper()
+        if not postal_code:
+            raise forms.ValidationError('Postal code is required.')
+            
+        # Check if the postal code matches any of the valid patterns
+        valid = (
+            postal_code.startswith('V') or  # Starts with V
+            postal_code.startswith('97') or  # Starts with 97
+            postal_code.startswith('98') or  # Starts with 98
+            any(postal_code.startswith(prefix) for prefix in ['991', '992', '993', '994']) or  # Starts with 991-994
+            any(postal_code.startswith(prefix) for prefix in ['838', '835'])  # Starts with 838 or 835
+        )
+        
+        if not valid:
+            raise forms.ValidationError(
+                'Postal code must be within An Tir.'
+            )
+            
+        return postal_code
 
     def clean(self):
         cleaned_data = super().clean()
