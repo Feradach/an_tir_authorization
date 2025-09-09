@@ -6,6 +6,8 @@ from django.db.models import Q
 from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
     Person, Discipline
 
+# Variable to determine whether we need to have the Authorization officer sign off on all authorizations. Uses status "Needs Kingdom Approval.
+AUTHORIZATION_OFFICER_SIGN_OFF = False
 
 def membership_is_current(user):
     if not user.membership:
@@ -401,9 +403,14 @@ def approve_authorization(request):
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for regional approval!'
         # Rule 4a: If a junior marshal is approved it becomes active.
         if authorization.style.name == 'Junior Marshal':
-            authorization.status = active_status
-            authorization.save()
-            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+            if AUTHORIZATION_OFFICER_SIGN_OFF:
+                authorization.status = kingdom_status
+                authorization.save()
+                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
+            else:
+                authorization.status = active_status
+                authorization.save()
+                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored can approve Missile).
     elif authorization.status.name == 'Needs Regional Approval':
@@ -416,12 +423,17 @@ def approve_authorization(request):
             if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
         # Rule 5: If the regional marshal approves a senior marshal, it becomes active.
-        authorization.status = active_status
-        authorization.expiration = date.today() + relativedelta(years=4)
-        authorization.save()
-        # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-        remove_junior_marshal(authorization)
-        return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+        if AUTHORIZATION_OFFICER_SIGN_OFF:
+            authorization.status = kingdom_status
+            authorization.save()
+            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
+        else:
+            authorization.status = active_status
+            authorization.expiration = date.today() + relativedelta(years=4)
+            authorization.save()
+            # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
+            remove_junior_marshal(authorization)
+            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     else:
         return False, 'Authorization status not valid for confirmation.'

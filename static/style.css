@@ -53,6 +53,7 @@ table {
     font-size: 1rem;
     font-family: Arial, sans-serif;
     text-align: left;
+    /* colors the table background */
     background-color: #f9f9f9;
 }
 
@@ -61,13 +62,16 @@ th, td {
     padding: 8px;
 }
 
-th {
-    background-color: #ffcc00;
+thead th {
+    background-color: #ffc32a !important; /* Your deep "Goldenrod" color */
     color: #000;
     font-weight: bold;
+    /* Adding a transition makes the hover effect smooth */
+    transition: background-color 0.2s ease-in-out;
 }
 
 tr:nth-child(even) {
+    /* colors the even rows */
     background-color: #f2f2f2;
 }
 
@@ -76,6 +80,7 @@ tr:hover {
 }
 
 td {
+    /* colors the text of the odd rows */
     color: #333;
 }
 
@@ -167,11 +172,13 @@ td {
 }
 
 .future-expiration {
-    color: green;
+    color: green !important;
+    font-weight: bold;
 }
 
 .past-expiration {
-    color: red;
+    color: red !important;
+    font-weight: bold;
 }
 
 .choices__inner {
@@ -232,20 +239,7 @@ td {
     z-index: 10;
 }
 
-/* Default: Show Table, Hide Cards */
-#table-view {
-    display: table;
-}
-#card-view {
-    display: none;
-}
-
-/* On Mobile (less than 768px), Show Cards, Hide Table */
-@media (max-width: 768px) {
-    #table-view {
-        display: none;
-    }
-    #card-view {
-        display: block;
-    }
+/* Add this class to hide content initially to prevent flashing */
+.content-loading {
+    visibility: hidden !important;
 }

@@ -19,6 +19,8 @@ venv.bak/
 *.log
 local_settings.py
 db.sqlite3
+sql_details.env
+import_csv
 
 # If your Django app stores media or static files that are generated
 # (if they're user-uploaded or created by Django), you might consider

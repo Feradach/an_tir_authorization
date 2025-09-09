@@ -12,6 +12,7 @@
     {% else %}
         <a href="{% url 'login' %}" class="nav-link">Login</a>
     {% endif %}
+    <a href="{% url 'faq' %}" class="nav-link">FAQ</a>
 {% endblock %}
 
 {% block hamburger %}
@@ -25,4 +26,5 @@
     {% else %}
         <li><a href="{% url 'login' %}" class="hamburger-link">Login</a></li>
     {% endif %}
+    <li><a href="{% url 'faq' %}" class="hamburger-link">FAQ</a></li>
 {% endblock %}

@@ -15,6 +15,21 @@
     <p><strong>Region:</strong> {{ person.branch.region.name }}</p>
     <p><strong>Branch:</strong> {{ person.branch.name }}</p>
     <p><strong>Minor Status:</strong> {{ person.minor_status }}</p>
+    
+    {% if auth_officer %}
+    <div class="card mt-3 mb-3">
+        <h4>Officer Comments</h4>
+        <form method="post" action="">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_comments">
+            <div class="form-group">
+                <textarea name="comments" class="form-control" rows="3">{{ person.user.comment|default:"" }}</textarea>
+            </div>
+            <button type="submit" class="btn btn-primary mt-2">Update Comments</button>
+        </form>
+    </div>
+    {% endif %}
+    
 {% if branch_officer %}
     <h4>Officer Position</h4>
     <p><strong>Position:</strong> {{ branch_officer.branch.name }} {{ branch_officer.discipline.name }}</p>
@@ -80,6 +95,10 @@
                 <div class="col-md-3">
                     {% if data.status == "Pending" %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #ffefae">
+                    {% elif data.status == "Needs Regional Approval" %}
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #89bed8">
+                    {% elif data.status == "Needs Kingdom Approval" %}
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #b39dc9">
                     {% else %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #a2b5f5">
                     {% endif %}
@@ -117,7 +136,7 @@
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
-                        {% if regional_marshal %}
+                        {% if regional_marshal and data.status == "Pending" or data.status == "Needs Regional Approval" %}
                             <form method="post" action="">
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="reject_authorization">

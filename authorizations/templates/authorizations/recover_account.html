@@ -17,23 +17,51 @@
             {% endfor %}
         </div>
     {% endif %}
-<div class="col-md-4">
-    <label>Email Address</label>
-    <form method="post" action="" id="recoverForm">
-        <input autofocus class="form-control" name="email" placeholder="Email Address" required>
-        {% csrf_token %}
-        <input type="hidden" name="action" id="actionInput">
-        <button type="button" class="btn btn-success btn-pad" onclick="setAction('reset_password')">Forgot Password</button>
-        <button type="button" class="btn btn-success btn-pad" onclick="setAction('get_username')">Forgot Username</button>
-    </form>
-<p>If you do not have access to the email you set up your account with,
-    please contact the <a href="mailto:marshal.authorizations@antir.org">Martial Authorization Officer</a> to update your email.</p>
+<div class="col-md-6">
+    <div class="card mb-4">
+        <div class="card-header">
+            <h3>Forgot Your Password?</h3>
+        </div>
+        <div class="card-body">
+            <p>Enter your username to receive a temporary password via email.</p>
+            <form method="post" id="passwordResetForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="reset_password">
+                <div class="form-group mb-3">
+                    <label for="username">Username</label>
+                    <input type="text" class="form-control" id="username" name="username" placeholder="Enter your username" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Reset Password</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3>Forgot Your Username?</h3>
+        </div>
+        <div class="card-body">
+            <p>Enter your email address to receive a list of all usernames associated with that email.</p>
+            <form method="post" id="usernameRecoveryForm">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="get_username">
+                <div class="form-group mb-3">
+                    <label for="email">Email Address</label>
+                    <input type="email" class="form-control" id="email" name="email" placeholder="Enter your email address" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Recover Username</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="mt-4">
+        <div class="alert alert-info">
+            <h5>Need Additional Help?</h5>
+            <p class="mb-1">If you no longer have access to the email associated with your account or need further assistance,</p>
+            <p class="mb-0">please contact the <a href="mailto:marshal.authorizations@antir.org">Martial Authorization Officer</a>.</p>
+        </div>
+    </div>
 </div>
 
-<script>
-function setAction(action) {
-    document.getElementById('actionInput').value = action;
-    document.getElementById('recoverForm').submit();
-}
 </script>
 {% endblock %}

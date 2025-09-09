@@ -1,0 +1,140 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Search Authorizations
+{% endblock %}
+
+{% block body %}
+    <div class="col-md-8 offset-md-2">
+        <h2 class="mb-4">Search Authorizations</h2>
+        
+        <form method="get" action="{% url 'search' %}">
+            <input type="hidden" name="view" id="view-mode-input" value="{{ request.GET.view|default:'table' }}">
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="sca_name" class="form-label">SCA Name:</label>
+                    <select id="sca_name" name="sca_name" class="choices-dropdown form-control">
+                        <option value=""></option>
+                        {% for option in sca_name_options %}
+                            <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="membership" class="form-label">Membership #:</label>
+                    <input type="text" class="form-control" id="membership" name="membership" value="{{ request.GET.membership|default:'' }}" placeholder="Enter membership number...">
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="email" class="form-label">Email Address:</label>
+                    <input type="email" class="form-control" id="email" name="email" value="{{ request.GET.email|default:'' }}" placeholder="Enter email address...">
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="region" class="form-label">Region:</label>
+                    <select id="region" name="region" class="choices-dropdown form-control">
+                        <option value=""></option>
+                        {% for option in region_options %}
+                            <option value="{{ option }}" {% if request.GET.region == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="branch" class="form-label">Branch:</label>
+                    <select id="branch" name="branch" class="choices-dropdown form-control">
+                        <option value=""></option>
+                        {% for option in branch_options %}
+                            <option value="{{ option }}" {% if request.GET.branch == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="discipline" class="form-label">Discipline:</label>
+                    <select id="discipline" name="discipline" class="choices-dropdown form-control">
+                        <option value=""></option>
+                        {% for option in discipline_options %}
+                            <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="style" class="form-label">Weapon Style:</label>
+                    <select id="style" name="style" class="choices-dropdown form-control">
+                        <option value=""></option>
+                        {% for option in style_options %}
+                            <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="marshal" class="form-label">Marshal:</label>
+                    <select id="marshal" name="marshal" class="choices-dropdown form-control">
+                        <option value=""></option>
+                        {% for option in marshal_options %}
+                            <option value="{{ option }}" {% if request.GET.marshal == option %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="start_date" class="form-label">Expiration After:</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" value="{{ request.GET.start_date|default:'' }}">
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="end_date" class="form-label">Expiration Before:</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" value="{{ request.GET.end_date|default:'' }}">
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="is_minor" class="form-label">Minor Status:</label>
+                    <select id="is_minor" name="is_minor" class="choices-dropdown form-control">
+                        <option value="" {% if request.GET.is_minor == "" %}selected{% endif %}>Any</option>
+                        <option value="True" {% if request.GET.is_minor == "True" %}selected{% endif %}>Yes</option>
+                        <option value="False" {% if request.GET.is_minor == "False" %}selected{% endif %}>No</option>
+                    </select>
+                </div>
+            </div>
+
+            <hr class="my-4">
+            <button class="w-100 btn btn-warning btn-lg" type="submit">Search</button>
+        </form>
+    </div>
+{% endblock %}
+
+{% block script %}
+    {# This script makes the dropdowns on THIS page searchable #}
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // This script proactively sets the view mode for mobile users.
+            const viewInput = document.getElementById('view-mode-input');
+            
+            // Only run this if a view hasn't already been chosen by the user
+            // (e.g., by clicking "Modify Search" from the table view).
+            if (viewInput.value === 'table') {
+                // Check if the screen width is typical for a mobile device.
+                if (window.innerWidth < 768) {
+                    // If so, change the value of the hidden input to 'card'.
+                    viewInput.value = 'card';
+                }
+            }
+        });
+        
+        document.addEventListener('DOMContentLoaded', function () {
+            const dropdowns = document.querySelectorAll('.choices-dropdown');
+            dropdowns.forEach(function (dropdown) {
+                new Choices(dropdown, {
+                    removeItemButton: true,
+                    shouldSort: false,
+                    searchEnabled: true,
+                    itemSelectText: '',
+                });
+            });
+        });
+    </script>
+{% endblock %}

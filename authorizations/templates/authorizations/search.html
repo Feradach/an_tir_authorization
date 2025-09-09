@@ -2,479 +2,252 @@
 {% load static %}
 
 {% block title %}
-    {% if goal == "search" %}
-        Search Authorizations
-    {% else %}
-        Browse Authorizations
-    {% endif %}
+    Search Authorizations
 {% endblock %}
 
 {% block body %}
-    {% if goal == 'search' %}
-        <div class="col-md-4">
-            <div class="mb-3">
-                <form method="get" id="sca_name_form">
-                    <label for="sca_name">SCA Name:</label>
-                    <select id="sca_name" name="sca_name" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in sca_name_options %}
-                        <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </form>
-            </div>
-            <div class="mb-3">
-                <form method="get" id="region_form">
-                    <label for="region">Region:</label>
-                    <select id="region" name="region" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in region_options %}
-                        <option value="{{ option }}" {% if request.GET.region == option %}selected{% endif %}>
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </form>
-            </div>
-            <div class="mb-3">
-                <form method="get" id="branch_form">
-                    <label for="branch">Branch:</label>
-                    <select id="branch" name="branch" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in branch_options %}
-                        <option value="{{ option }}" {% if request.GET.branch == option %}selected{% endif %}>
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </form>
-            </div>
-            <div class="mb-3">
-                <form method="get" id="discipline_form">
-                    <label for="discipline">Discipline:</label>
-                    <select id="discipline" name="discipline" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in discipline_options %}
-                        <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </form>
-            </div>
-            <div class="mb-3">
-                <form method="get" id="style_form">
-                    <label for="style">Weapon Style:</label>
-                    <select id="style" name="style" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in style_options %}
-                        <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </form>
-            </div>
-            <div class="mb-3">
-                <form method="get" id="marshal_form">
-                    <label for="marshal">Authorizing Marshal:</label>
-                    <select id="marshal" name="marshal" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in marshal_options %}
-                        <option value="{{ option }}" {% if request.GET.marshal == option %}selected{% endif %}>
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </form>
-            </div>
-            <div class="mb-3">
-                <form method="get" id="date_filter_form">
-                    <label for="start_date">Expiration After:</label>
-                    <input
-                        type="date"
-                        id="start_date"
-                        name="start_date"
-                        value="{{ request.GET.start_date|default:'' }}"
-                    >
-                    </div>
-                    <div class="mb-3">
-                    <label for="end_date">Expiration Before:</label>
-                    <input
-                        type="date"
-                        id="end_date"
-                        name="end_date"
-                        value="{{ request.GET.end_date|default:'' }}"
-                    >
-                    </div>
-                </form>
-                {% if request.GET.start_date or request.GET.end_date %}
-                    <form method="get" id="clear_dates_form" style="display: inline-block;">
-                        <button type="submit" class="btn btn-danger btn-sm">
-                            X
-                        </button>
-                        {% for key, value in request.GET.items %}
-                            {% if key != 'start_date' and key != 'end_date' %}
-                            <input type="hidden" name="{{ key }}" value="{{ value }}">
-                            {% endif %}
-                        {% endfor %}
-                        <input type="hidden" name="start_date" value="">
-                        <input type="hidden" name="end_date" value="">
-                    </form>
-                {% endif %}
-            <div class="mb-3">
-                <form method="get" id="marshal_form">
-                    <label for="marshal">Minor Status:</label>
-                    <select id="is_minor" name="is_minor" class="choices-dropdown">
-                        <option value="" {% if request.GET.is_minor == "" %}selected{% endif %}></option>
-                        <option value="True" {% if request.GET.is_minor == "True" %}selected{% endif %}>Yes</option>
-                        <option value="False" {% if request.GET.is_minor == "False" %}selected{% endif %}>No</option>
-                    </select>
-                </form>
-            </div>
-            <div class="mb-3">
-                <a href="?{% for key, value in request.GET.items %}{% if key != 'goal' %}{{ key|urlencode }}={{ value|urlencode }}&{% endif %}{% endfor %}">
-                    <button type="button" class="btn btn-success">Search Authorizations</button>
+    {# The side search panel is now gone, filters are in the table headers #}
+    {# and the card view has its own search button. This simplifies the layout. #}
+
+    <div class="col-md-12 content-loading" id="main-content">
+        {# Responsive View-Switcher Links #}
+        <div class="mb-3">
+
+            {% if view_mode == 'table' %}
+                {# If we are currently in TABLE view, the link should offer to switch to CARD view. #}
+                <a class="btn btn-outline-primary btn-sm" href="?view=card{% for key, value in request.GET.items %}{% if key != 'view' %}&amp;{{ key }}={{ value|urlencode }}{% endif %}{% endfor %}">
+                    Switch to Card View
                 </a>
-            </div>
-            <div class="mb-3">
-                <button type="submit" form="clear_search_form" name="clear_search" value="1" class="btn btn-secondary">Clear Search</button>
-                <form method="get" id="clear_search_form" style="display: inline;">
-                    <input type="hidden" name="goal" value="search">
-                    <input type="hidden" name="page" value="1">
-                    <input type="hidden" name="items_per_page" value="10">
-                </form>
-            </div>
+            {% else %}
+                {# Otherwise, we are in CARD view, so the link should offer to switch to TABLE view. #}
+                <a class="btn btn-outline-primary btn-sm" href="?view=table{% for key, value in request.GET.items %}{% if key != 'view' %}&amp;{{ key }}={{ value|urlencode }}{% endif %}{% endfor %}">
+                    Switch to Table View
+                </a>
+            {% endif %}
+        
         </div>
-    {% else %}
-        <div id="table-view" class="col-md-12">
-            <div>
-                <form method="get" id="items_per_page_form">
-                    <label for="items_per_page">Items per page:</label>
-                    <select name="items_per_page" id="items_per_page" onchange="this.form.submit()">
-                        <option value="5" {% if items_per_page == 5 %}selected{% endif %}>5</option>
-                        <option value="10" {% if items_per_page == 10 %}selected{% endif %}>10</option>
-                        <option value="25" {% if items_per_page == 25 %}selected{% endif %}>25</option>
-                        <option value="50" {% if items_per_page == 50 %}selected{% endif %}>50</option>
-                        <option value="100" {% if items_per_page == 100 %}selected{% endif %}>100</option>
-                    </select>
-                    {% for key, value in request.GET.items %}
-                        {% if key != 'items_per_page' %}
-                        <input type="hidden" name="{{ key }}" value="{{ value }}">
-                        {% endif %}
+
+
+        {% if view_mode == 'card' %}
+            {# --- CARD VIEW HTML --- #}
+            <div id="card-view">
+                <a href="{% url 'search' %}?goal=search&{{ request.GET.urlencode }}" class="btn btn-secondary mb-3">New/Modify Search</a>
+                
+                <div class="cards mt-3">
+                    {% for person in page_obj %}
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <h5 class="card-title"><a href="{% url 'fighter' person_id=person.id %}">{{ person.sca_name }}</a></h5>
+                            <h6 class="card-subtitle mb-2 text-muted">{{ person.branch.name }}, {{ person.branch.region.name }}</h6>
+                            <p class="card-text"><strong>Minor Status:</strong> {{ person.minor_status }}</p>
+                            
+                            <h6>Authorizations:</h6>
+                            <ul class="list-group list-group-flush">
+                                {# The Prefetch stored the results in 'filtered_authorizations' #}
+                                {% for auth in person.filtered_authorizations %}
+                                    <li class="list-group-item">
+                                        <strong>{{ auth.style.name }}</strong> ({{ auth.style.discipline.name }})
+                                        <br>
+                                        <small>Expires: <span class="{% if auth.expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.expiration }}</span></small>
+                                        <br>
+                                        <small>Marshal: {{ auth.marshal.sca_name|default:"N/A" }}</small>
+                                    </li>
+                                {% empty %}
+                                    <li class="list-group-item">No active authorizations match the filter.</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                    {% empty %}
+                        <p>No people found matching your criteria.</p>
                     {% endfor %}
-                </form>
-            </div>      
-                <p></p>
-                <p><button type="submit" form="clear_search_form" name="clear_search" value="1" class="btn btn-secondary">Clear Search</button>
-                <form method="get" id="clear_search_form" style="display: inline;">
-                    <input type="hidden" name="page" value="1">
-                    <input type="hidden" name="items_per_page" value="{{ request.GET.items_per_page|default:10 }}">
-            </form></p>
-            </div>
-
-            <table>
-                <tr>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'person__sca_name' %}-person__sca_name{% else %}person__sca_name{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            SCA Name
-                            {% if request.GET.sort == 'person__sca_name' %}
-                                ↑
-                            {% elif request.GET.sort == '-person__sca_name' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        <form method="get" id="sca_name_form">
-                        <select id="sca_name" name="sca_name" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in sca_name_options %}
-                            <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form></th>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'person__branch__region__name' %}-person__branch__region__name{% else %}person__branch__region__name{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            Region
-                            {% if request.GET.sort == 'person__branch__region__name' %}
-                                ↑
-                            {% elif request.GET.sort == '-person__branch__region__name' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        <form method="get" id="region_form">
-                        <select id="region" name="region" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in region_options %}
-                            <option value="{{ option }}" {% if request.GET.region == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form></th>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'person__branch__name' %}-person__branch__name{% else %}person__branch__name{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            Branch
-                            {% if request.GET.sort == 'person__branch__name' %}
-                                ↑
-                            {% elif request.GET.sort == '-person__branch__name' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        <form method="get" id="branch_form">
-                        <select id="branch" name="branch" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in branch_options %}
-                            <option value="{{ option }}" {% if request.GET.branch == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form></th>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'style__discipline__name' %}-style__discipline__name{% else %}style__discipline__name{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            Discipline
-                            {% if request.GET.sort == 'style__discipline__name' %}
-                                ↑
-                            {% elif request.GET.sort == '-style__discipline__name' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        <form method="get" id="discipline_form">
-                        <select id="discipline" name="discipline" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in discipline_options %}
-                            <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form></th>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'style__name' %}-style__name{% else %}style__name{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            Weapon Style
-                            {% if request.GET.sort == 'style__name' %}
-                                ↑
-                            {% elif request.GET.sort == '-style__name' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        <form method="get" id="style_form">
-                        <select id="style" name="style" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in style_options %}
-                            <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form></th>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'marshal__sca_name' %}-marshal__sca_name{% else %}marshal__sca_name{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            Authorizing Marshal
-                            {% if request.GET.sort == 'marshal__sca_name' %}
-                                ↑
-                            {% elif request.GET.sort == '-marshal__sca_name' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        <form method="get" id="marshal_form">
-                        <select id="marshal" name="marshal" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in marshal_options %}
-                            <option value="{{ option }}" {% if request.GET.marshal == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form></th>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'expiration' %}-expiration{% else %}expiration{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            Expiration
-                            {% if request.GET.sort == 'expiration' %}
-                                ↑
-                            {% elif request.GET.sort == '-expiration' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        {% if request.GET.start_date or request.GET.end_date %}
-                        <form method="get" id="clear_dates_form" style="display: inline-block;">
-                            <button type="submit" class="btn btn-danger btn-sm">
-                                X
-                            </button>
-                            {% for key, value in request.GET.items %}
-                                {% if key != 'start_date' and key != 'end_date' %}
-                                <input type="hidden" name="{{ key }}" value="{{ value }}">
-                                {% endif %}
-                            {% endfor %}
-                            <input type="hidden" name="start_date" value="">
-                            <input type="hidden" name="end_date" value="">
-                        </form>
-                        {% endif %}
-                    <form method="get" id="date_filter_form">
-                        <label for="start_date">Start:</label>
-                        <input
-                            type="date"
-                            id="start_date"
-                            name="start_date"
-                            value="{{ request.GET.start_date|default:'' }}"
-                        >
-                        <br>
-                        <label for="end_date">End:</label>
-                        <input
-                            type="date"
-                            id="end_date"
-                            name="end_date"
-                            value="{{ request.GET.end_date|default:'' }}"
-                        >
-                    </form>
-                    <th>
-                        <a class="sort" href="?sort={% if request.GET.sort == 'person__is_minor' %}-person__is_minor{% else %}person__is_minor{% endif %}{% for key, value in request.GET.items %}{% if key != 'sort' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                            Minor
-                            {% if request.GET.sort == 'person__is_minor' %}
-                                ↑
-                            {% elif request.GET.sort == '-person__is_minor' %}
-                                ↓
-                            {% endif %}
-                        </a>
-                        <form method="get" id="is_minor_form">
-                        <select id="is_minor" name="is_minor" class="choices-dropdown">
-                            <option value="" {% if request.GET.is_minor == "" %}selected{% endif %}></option>
-                            <option value="True" {% if request.GET.is_minor == "True" %}selected{% endif %}>Yes</option>
-                            <option value="False" {% if request.GET.is_minor == "False" %}selected{% endif %}>No</option>
-                        </select>
-                    </form></th>
-                </tr>
-                {% for auth in page_obj %}
-                <tr>
-                    <td><a href="{% url 'fighter' person_id=auth.person.id %}">{{ auth.person.sca_name }}</a></td>
-                    <td>{{ auth.person.branch.region.name }}</td>
-                    <td>{{ auth.person.branch.name }}</td>
-                    <td>{{ auth.style.discipline.name }}</td>
-                    <td>{{ auth.style.name }}</td>
-                    <td>{{ auth.marshal.sca_name }}</td>
-                    <td class="{% if auth.expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">
-                        {{ auth.expiration }}
-                    </td>
-                    <td>{{ auth.person.minor_status }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-        <div class="col-md-4" id="card-view">
-            <div class="sticky-container mb-3">
-                <div class="row">
-                    <div class="col-md-2">
-                        <a href="?goal=search{% for key, value in request.GET.items %}{% if key != 'goal' and key != 'view' %}&{{ key|urlencode }}={{ value|urlencode }}{% endif %}{% endfor %}">
-                            <button class="btn btn-primary">Search</button>
-                        </a>
-                    </div>
-                    <div class="col-md-3">
-                        <button type="submit" form="clear_search_form" name="clear_search" value="1" class="btn btn-secondary">Clear Search</button>
-                        <form method="get" id="clear_search_form" style="display: inline;">
-                            <input type="hidden" name="page" value="1">
-                            <input type="hidden" name="items_per_page" value="10">
-                        </form>
-                    </div>
                 </div>
             </div>
-            <div class="cards">
-                {% for person, authorizations in grouped_authorizations %}
-                <div class="mb-3">
-                    <div class="card">
-                        <h3><a href="{% url 'fighter' person_id=person.id %}">{{ person.sca_name }}</a></h3>
-                        <p><strong>Region:</strong> {{ person.branch.region.name }}</p>
-                        <p><strong>Branch:</strong> {{ person.branch.name }}</p>
-                        <p><strong>Minor Status:</strong> {{ person.minor_status }}</p>
-                        <h4>Authorizations</h4>
-                        <ul>
-                        {% for auth in authorizations %}
-                            <li>
-                                <strong>{{ auth.style.name }}</strong> ({{ auth.style.discipline.name }})
-                                <br>
-                                <i>Authorizing Marshal:</i> {{ auth.marshal.sca_name }}
-                                <br>
-                                Expiration: <span class="{% if auth.expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">
-                                {{ auth.expiration }}</span>
-                            </li>
+            
+        {% else %}
+            {# --- TABLE VIEW HTML --- #}
+            <div id="table-view" class="table-responsive">
+                {# Items per page form can go here #}
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            {# --- SCA Name Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=person__sca_name&{{ request.GET.urlencode }}">SCA Name</a>
+                                <form method="get" class="mt-1">
+                                    <select name="sca_name" class="choices-dropdown">
+                                        <option value="">All</option>
+                                        {% for option in sca_name_options %}
+                                            <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            </th>
+                    
+                            {# --- Region Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=person__branch__region__name&{{ request.GET.urlencode }}">Region</a>
+                                <form method="get" class="mt-1">
+                                    <select name="region" class="choices-dropdown">
+                                        <option value="">All</option>
+                                        {% for option in region_options %}
+                                            <option value="{{ option }}" {% if request.GET.region == option %}selected{% endif %}>{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            </th>
+                    
+                            {# --- Branch Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=person__branch__name&{{ request.GET.urlencode }}">Branch</a>
+                                <form method="get" class="mt-1">
+                                    <select name="branch" class="choices-dropdown">
+                                        <option value="">All</option>
+                                        {% for option in branch_options %}
+                                            <option value="{{ option }}" {% if request.GET.branch == option %}selected{% endif %}>{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            </th>
+                    
+                            {# --- Discipline Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=style__discipline__name&{{ request.GET.urlencode }}">Discipline</a>
+                                <form method="get" class="mt-1">
+                                    <select name="discipline" class="choices-dropdown">
+                                        <option value="">All</option>
+                                        {% for option in discipline_options %}
+                                            <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            </th>
+                    
+                            {# --- Weapon Style Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=style__name&{{ request.GET.urlencode }}">Weapon Style</a>
+                                <form method="get" class="mt-1">
+                                    <select name="style" class="choices-dropdown">
+                                        <option value="">All</option>
+                                        {% for option in style_options %}
+                                            <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            </th>
+                    
+                            {# --- Authorizing Marshal Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=marshal__sca_name&{{ request.GET.urlencode }}">Marshal</a>
+                                <form method="get" class="mt-1">
+                                    <select name="marshal" class="choices-dropdown">
+                                        <option value="">All</option>
+                                        {% for option in marshal_options %}
+                                            <option value="{{ option }}" {% if request.GET.marshal == option %}selected{% endif %}>{{ option }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </form>
+                            </th>
+                    
+                            {# --- Expiration Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=expiration&{{ request.GET.urlencode }}">Expiration</a>
+                                <form method="get" id="date_filter_form" class="mt-1">
+                                    <label for="start_date" class="form-label small d-block">After:</label>
+                                    <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date|default:'' }}" class="form-control form-control-sm">
+                                    
+                                    <label for="end_date" class="form-label small d-block mt-1">Before:</label>
+                                    <input type="date" name="end_date" id="end_date" value="{{ request.GET.end_date|default:'' }}" class="form-control form-control-sm">
+                                </form>
+                            </th>
+                            
+                            {# --- Minor Status Column --- #}
+                            <th>
+                                <a class="sort" href="?sort=person__is_minor&{{ request.GET.urlencode }}">Minor</a>
+                                <form method="get" class="mt-1">
+                                    <select name="is_minor" class="choices-dropdown">
+                                        <option value="" {% if request.GET.is_minor == "" %}selected{% endif %}>All</option>
+                                        <option value="True" {% if request.GET.is_minor == "True" %}selected{% endif %}>Yes</option>
+                                        <option value="False" {% if request.GET.is_minor == "False" %}selected{% endif %}>No</option>
+                                    </select>
+                                </form>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for auth in page_obj %}
+                        <tr>
+                            <td><a href="{% url 'fighter' person_id=auth.person.id %}">{{ auth.person.sca_name }}</a></td>
+                            <td>{{ auth.person.branch.region.name }}</td>
+                            <td>{{ auth.person.branch.name }}</td>
+                            <td>{{ auth.style.discipline.name }}</td>
+                            <td>{{ auth.style.name }}</td>
+                            <td>{{ auth.marshal.sca_name }}</td>
+                            <td class="{% if auth.expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.expiration }}</td>
+                            <td>{{ auth.person.minor_status }}</td>
+                        </tr>
+                        {% empty %}
+                            <tr>
+                                <td colspan="8">No authorizations found matching your criteria.</td>
+                            </tr>
                         {% endfor %}
-                        </ul>
-                    </div>
-                </div>
-                {% endfor %}
+                    </tbody>
+                </table>
             </div>
-        </div>
-        {% if page_obj.has_previous %}
-            <a href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                Previous
-            </a>
         {% endif %}
-        Page
-        <form method="get" id="page_form" style="display: inline;">
-            <label for="page-select"></label>
-            <select name="page" id="page-select" onchange="this.form.submit()">
-                {% for i in page_obj.paginator.page_range %}
-                <option value="{{ i }}" {% if i == page_obj.number %}selected{% endif %}>
-                    {{ i }}
-                </option>
-                {% endfor %}
-            </select>
-            {% for key, value in request.GET.items %}
-                {% if key != 'page' %} <!-- Only exclude the page parameter -->
-                <input type="hidden" name="{{ key }}" value="{{ value }}">
-                {% endif %}
-            {% endfor %}
-        </form>
-        of {{ page_obj.paginator.num_pages }}
 
-        {% if page_obj.has_next %}
-            <a href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                Next
-            </a>
-        {% endif %}
+        {# --- PAGINATION CONTROLS (works for both views) --- #}
+        <nav aria-label="Page navigation">
+            <ul class="pagination">
+                {% if page_obj.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&{{ request.GET.urlencode }}">Previous</a></li>
+                {% endif %}
+
+                <li class="page-item disabled"><a class="page-link" href="#">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</a></li>
+
+                {% if page_obj.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&{{ request.GET.urlencode }}">Next</a></li>
+                {% endif %}
+            </ul>
+        </nav>
     </div>
-    {% endif %}
 {% endblock %}
 
 {% block script %}
     <script>
+        // This self-invoking function runs immediately, before the page is fully rendered.
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            let needsRedirect = false;
+
+            // Only check for a redirect if the user hasn't already chosen a view mode.
+            if (!urlParams.has('view')) {
+                // Check if the screen width is typical for a mobile device.
+                if (window.innerWidth < 768) {
+                    // If so, set the flag and perform the redirect.
+                    needsRedirect = true;
+                    urlParams.set('view', 'card');
+                    window.location.search = urlParams.toString();
+                }
+            }
+
+            // If we DON'T need to redirect, we can instantly reveal the content.
+            if (!needsRedirect) {
+                const mainContent = document.getElementById('main-content');
+                if (mainContent) {
+                    mainContent.classList.remove('content-loading');
+                }
+            }
+            // If a redirect is happening, the content remains hidden, preventing the flash.
+        })();
+
         document.addEventListener('DOMContentLoaded', function () {
-            // Apply Choices.js to all dropdowns with a shared class
-            const dropdowns = document.querySelectorAll('.choices-dropdown');
-            dropdowns.forEach(function (dropdown) {
-                new Choices(dropdown, {
-                    removeItemButton: true,
-                    shouldSort: false,
-                    searchEnabled: true,
-                    searchResultLimit: 10,
-                    fuseOptions: {
-                        threshold: 0.3,
-                    },
-                    itemSelectText: '',
-                });
-
-                // Add form submission on change for each dropdown
-                dropdown.addEventListener('change', function () {
-                    const form = dropdown.closest('form');
-                    addQueryParamsToForm(form); // Retain current query parameters
-                    form.submit();
-                });
-            });
-
-            // Get the date filter form and inputs
-            const dateFilterForm = document.getElementById('date_filter_form');
-            const startDateInput = document.getElementById('start_date');
-            const endDateInput = document.getElementById('end_date');
-
-            // Function to append current query parameters to the form
+            // Helper function to preserve other filters when one is changed.
+            // THIS IS VERY IMPORTANT - KEEP IT.
             function addQueryParamsToForm(form) {
                 const urlParams = new URLSearchParams(window.location.search);
-
-                // Add all current query parameters as hidden inputs, except the current form's inputs
                 urlParams.forEach(function (value, key) {
+                    // Only add a hidden input if the form doesn't already have an input for this key.
                     if (!form.querySelector(`[name="${key}"]`)) {
                         const hiddenInput = document.createElement('input');
                         hiddenInput.type = 'hidden';
@@ -485,31 +258,40 @@
                 });
             }
 
-            function submitFormIfValid() {
-                addQueryParamsToForm(dateFilterForm); // Retain current query parameters
-                if (startDateInput.value || endDateInput.value) {
+            // 1. Initialize Choices.js on all filter dropdowns
+            const dropdowns = document.querySelectorAll('.choices-dropdown');
+            dropdowns.forEach(function (dropdown) {
+                new Choices(dropdown, {
+                    removeItemButton: true,
+                    shouldSort: false,
+                    searchEnabled: true,
+                    itemSelectText: '',
+                });
+
+                // 2. Add auto-submit functionality to each dropdown
+                dropdown.addEventListener('change', function () {
+                    const form = dropdown.closest('form');
+                    if (form) {
+                        addQueryParamsToForm(form);
+                        form.submit();
+                    }
+                });
+            });
+
+            // 3. Keep the auto-submit logic for your date filters
+            const dateFilterForm = document.getElementById('date_filter_form');
+            if (dateFilterForm) {
+                const startDateInput = document.getElementById('start_date');
+                const endDateInput = document.getElementById('end_date');
+
+                function submitDateFormIfValid() {
+                    addQueryParamsToForm(dateFilterForm);
                     dateFilterForm.submit();
                 }
+
+                startDateInput.addEventListener('blur', submitDateFormIfValid);
+                endDateInput.addEventListener('blur', submitDateFormIfValid);
             }
-
-            // Submit when the user presses Enter
-            startDateInput.addEventListener('keydown', function (event) {
-                if (event.key === 'Enter') {
-                    event.preventDefault(); // Prevent default Enter behavior
-                    submitFormIfValid();
-                }
-            });
-
-            endDateInput.addEventListener('keydown', function (event) {
-                if (event.key === 'Enter') {
-                    event.preventDefault();
-                    submitFormIfValid();
-                }
-            });
-
-            // Submit when the user clicks away (loses focus)
-            startDateInput.addEventListener('blur', submitFormIfValid);
-            endDateInput.addEventListener('blur', submitFormIfValid);
         });
     </script>
 {% endblock %}

@@ -1,256 +1,118 @@
 {% extends "authorizations/inner_layout.html" %}
-{% load static %}
 
-{% block title %}
-    Current Sanctions
-{% endblock %}
+{% block title %}Manage Sanctions{% endblock %}
 
 {% block body %}
-    <h1>Current Sanctions</h1>
-    {% if messages %}
-        <div id="messages-container">
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}" role="alert">
-                    {{ message }}
-                </div>
-            {% endfor %}
+{# Add the 'content-loading' class and an id to the main container #}
+<div class="col-md-12 content-loading" id="main-content">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        {# Link back to the search form, preserving the current filters #}
+        <a href="{% url 'manage_sanctions' %}?goal=search&{{ request.GET.urlencode }}" class="btn btn-secondary">New/Modify Search</a>
+
+        {# Intelligent view-switcher button #}
+        <div>
+            {% if view_mode == 'table' %}
+                <a class="btn btn-outline-primary btn-sm" href="?view=card{% for key, value in request.GET.items %}{% if key != 'view' %}&amp;{{ key }}={{ value|urlencode }}{% endif %}{% endfor %}">Switch to Card View</a>
+            {% else %}
+                <a class="btn btn-outline-primary btn-sm" href="?view=table{% for key, value in request.GET.items %}{% if key != 'view' %}&amp;{{ key }}={{ value|urlencode }}{% endif %}{% endfor %}">Switch to Table View</a>
+            {% endif %}
         </div>
-    {% endif %}
-    <div class="col-md-12" id="table-view">
-        <form method="get" id="items_per_page_form">
-            <label for="items_per_page">Items per page:</label>
-            <select name="items_per_page" id="items_per_page" onchange="this.form.submit()">
-                <option value="5" {% if items_per_page == 5 %}selected{% endif %}>5</option>
-                <option value="10" {% if items_per_page == 10 %}selected{% endif %}>10</option>
-                <option value="25" {% if items_per_page == 25 %}selected{% endif %}>25</option>
-                <option value="50" {% if items_per_page == 50 %}selected{% endif %}>50</option>
-                <option value="100" {% if items_per_page == 100 %}selected{% endif %}>100</option>
-            </select>
-            {% for key, value in request.GET.items %}
-                {% if key != 'items_per_page' %}
-                <input type="hidden" name="{{ key }}" value="{{ value }}">
-                {% endif %}
-            {% endfor %}
-        </form>
-
-        {% if page_obj.has_previous %}
-            <a href="?page={{ page_obj.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                Previous
-            </a>
-        {% endif %}
-        Page
-        <form method="get" id="page_form" style="display: inline;">
-            <label for="page-select"></label>
-            <select name="page" id="page-select" onchange="this.form.submit()">
-                {% for i in page_obj.paginator.page_range %}
-                <option value="{{ i }}" {% if i == page_obj.number %}selected{% endif %}>
-                    {{ i }}
-                </option>
-                {% endfor %}
-            </select>
-            {% for key, value in request.GET.items %}
-                {% if key != 'page' %} <!-- Only exclude the page parameter -->
-                <input type="hidden" name="{{ key }}" value="{{ value }}">
-                {% endif %}
-            {% endfor %}
-        </form>
-        of {{ page_obj.paginator.num_pages }}
-
-        {% if page_obj.has_next %}
-            <a href="?page={{ page_obj.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">
-                Next
-            </a>
-        {% endif %}
-        <table>
-            <tr>
-                <th>SCA Name
-                    <form method="get" id="sca_name_form">
-                        <select id="sca_name" name="sca_name" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in sca_name_options %}
-                            <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form>
-                </th>
-                <th>Discipline
-                    <form method="get" id="discipline_form">
-                        <select id="discipline" name="discipline" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in discipline_options %}
-                            <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form>
-                </th>
-                <th>Weapon Style
-                    <form method="get" id="style_form">
-                        <select id="style" name="style" class="choices-dropdown">
-                            <option value=""></option>
-                            {% for option in style_options %}
-                            <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>
-                                {{ option }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                    </form>
-                </th>
-                <th>Sanction Date</th>
-                <th>Actions</th>
-            </tr>
-            {% for authorization in page_obj %}
-                <tr>
-                    <td><a href="{% url 'fighter' person_id=authorization.person.id %}">{{ authorization.person.sca_name }}</a></td>
-                    <td>{{ authorization.style.discipline.name }}</td>
-                    <td>{{ authorization.style.name }}</td>
-                    <td>{{ authorization.expiration }}</td>
-                    <td>
-                        <form method="post" action="">
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="remove_sanction">
-                            <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
-                            <button type="submit" class="btn btn-success">Lift Sanction</button>
-                        </form>
-                    </td>
-                </tr>
-            {% endfor %}
-        </table>
     </div>
-    <div class="col-md-4" id="card-view">
-        <div class="cards">
-            <div class="mb-3">
-                <div class="card">
-                    <h3>Search Fields</h3>
-                    <p><strong>Search by SCA Name</strong></p>
-                        <form method="get" id="sca_name_form">
-                            <select id="sca_name" name="sca_name" class="choices-dropdown">
-                                <option value=""></option>
-                                {% for option in sca_name_options %}
-                                <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>
-                                    {{ option }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </form><br>
-                    <p><strong>Search by Discipline</strong></p>
-                        <form method="get" id="discipline_form">
-                            <select id="discipline" name="discipline" class="choices-dropdown">
-                                <option value=""></option>
-                                {% for option in discipline_options %}
-                                <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>
-                                    {{ option }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </form><br>
-                    <p><strong>Search by Weapon Style</strong></p>
-                        <form method="get" id="style_form"><form method="get" id="style_form">
-                            <select id="style" name="style" class="choices-dropdown">
-                                <option value=""></option>
-                                {% for option in style_options %}
-                                <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>
-                                    {{ option }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                        </form><br>
+    <hr>
+
+    {% if view_mode == 'card' %}
+        {# --- CARD VIEW --- #}
+        <div class="cards mt-3">
+            {% for person in page_obj %}
+            <div class="card mb-3">
+                <div class="card-body">
+                    <h5 class="card-title"><a href="{% url 'fighter' person_id=person.user_id %}">{{ person.sca_name }}</a></h5>
+                    <h6>Revoked Authorizations:</h6>
+                    <ul class="list-group list-group-flush">
+                        {% for sanction in person.revoked_authorizations %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ sanction.style.name }}</strong> ({{ sanction.style.discipline.name }})
+                                </div>
+                                <form method="post" action="{% url 'manage_sanctions' %}" class="ms-3">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="lift_sanction">
+                                    <input type="hidden" name="authorization_id" value="{{ sanction.id }}">
+                                    <button type="submit" class="btn btn-success btn-sm">Lift Sanction</button>
+                                </form>
+                            </li>
+                        {% endfor %}
+                    </ul>
                 </div>
             </div>
-            {% for authorization in sanctions %}
-                <div class="mb-3">
-                    <div class="card">
-                        <h3><a href="{% url 'fighter' person_id=authorization.person.id %}">{{ authorization.person.sca_name }}</a></h3>
-                        <p><strong>Discipline:</strong> {{ authorization.style.discipline.name }}</p>
-                        <p><strong>Weapon Style:</strong> {{ authorization.style.name }}</p>
-                        <p><strong>Sanction Date:</strong> {{ authorization.expiration }}</p>
-                            <form method="post" action="">
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="remove_sanction">
-                                <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
-                                <button type="submit" class="btn btn-success">Lift Sanction</button>
-                            </form>
-                    </div>
-                </div>
-            {% endfor %}
+            {% empty %}<p>No people with sanctions found matching your criteria.</p>{% endfor %}
         </div>
-    </div>
+
+    {% else %}
+        {# --- TABLE VIEW --- #}
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        <th>SCA Name</th><th>Discipline</th><th>Weapon Style</th><th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for sanction in page_obj %}
+                    <tr>
+                        <td><a href="{% url 'fighter' person_id=sanction.person.user_id %}">{{ sanction.person.sca_name }}</a></td>
+                        <td>{{ sanction.style.discipline.name }}</td>
+                        <td>{{ sanction.style.name }}</td>
+                        <td>
+                            <form method="post" action="{% url 'manage_sanctions' %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="lift_sanction">
+                                <input type="hidden" name="authorization_id" value="{{ sanction.id }}">
+                                <button type="submit" class="btn btn-success btn-sm">Lift Sanction</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="text-center">No sanctions found matching your criteria.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+
+    {# Pagination controls #}
+    {% if page_obj.paginator.num_pages > 1 %}
+    <nav aria-label="Page navigation" class="mt-4 d-flex justify-content-center">
+        <ul class="pagination">
+            {% if page_obj.has_previous %}
+                <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&amp;{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value|urlencode }}&amp;{% endif %}{% endfor %}">Previous</a></li>
+            {% endif %}
+            <li class="page-item disabled"><a class="page-link" href="#">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</a></li>
+            {% if page_obj.has_next %}
+                <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&amp;{% for key, value in request.GET.items %}{% if key != 'page' %}{{ key }}={{ value|urlencode }}&amp;{% endif %}{% endfor %}">Next</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
 {% endblock %}
 
 {% block script %}
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            // Apply Choices.js to all dropdowns with a shared class
-            const dropdowns = document.querySelectorAll('.choices-dropdown');
-            dropdowns.forEach(function (dropdown) {
-                new Choices(dropdown, {
-                    removeItemButton: true,
-                    shouldSort: false,
-                    searchEnabled: true,
-                    searchResultLimit: 10,
-                    fuseOptions: {
-                        threshold: 0.3,
-                    },
-                    itemSelectText: '',
-                });
-
-                // Add form submission on change for each dropdown
-                dropdown.addEventListener('change', function () {
-                    const form = dropdown.closest('form');
-                    addQueryParamsToForm(form); // Retain current query parameters
-                    form.submit();
-                });
-            });
-
-            // Get the date filter form and inputs
-            const dateFilterForm = document.getElementById('date_filter_form');
-            const startDateInput = document.getElementById('start_date');
-            const endDateInput = document.getElementById('end_date');
-
-            // Function to append current query parameters to the form
-            function addQueryParamsToForm(form) {
-                const urlParams = new URLSearchParams(window.location.search);
-
-                // Add all current query parameters as hidden inputs, except the current form's inputs
-                urlParams.forEach(function (value, key) {
-                    if (!form.querySelector(`[name="${key}"]`)) {
-                        const hiddenInput = document.createElement('input');
-                        hiddenInput.type = 'hidden';
-                        hiddenInput.name = key;
-                        hiddenInput.value = value;
-                        form.appendChild(hiddenInput);
-                    }
-                });
+{# Anti-flash script for the results page #}
+<script>
+    (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        let needsRedirect = false;
+        if (!urlParams.has('view')) {
+            if (window.innerWidth < 768) {
+                needsRedirect = true;
+                urlParams.set('view', 'card');
+                window.location.search = urlParams.toString();
             }
-
-            function submitFormIfValid() {
-                addQueryParamsToForm(dateFilterForm); // Retain current query parameters
-                if (startDateInput.value || endDateInput.value) {
-                    dateFilterForm.submit();
-                }
-            }
-
-            // Submit when the user presses Enter
-            startDateInput.addEventListener('keydown', function (event) {
-                if (event.key === 'Enter') {
-                    event.preventDefault(); // Prevent default Enter behavior
-                    submitFormIfValid();
-                }
-            });
-
-            endDateInput.addEventListener('keydown', function (event) {
-                if (event.key === 'Enter') {
-                    event.preventDefault();
-                    submitFormIfValid();
-                }
-            });
-
-            // Submit when the user clicks away (loses focus)
-            startDateInput.addEventListener('blur', submitFormIfValid);
-            endDateInput.addEventListener('blur', submitFormIfValid);
-        });
-    </script>
+        }
+        if (!needsRedirect) {
+            document.getElementById('main-content').classList.remove('content-loading');
+        }
+    })();
+</script>
 {% endblock %}

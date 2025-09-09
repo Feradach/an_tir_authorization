@@ -2,6 +2,9 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+import dotenv, pathlib, os
+
+dotenv.load_dotenv(pathlib.Path(__file__).with_name("sql_details.env"))
 
 
 def main():

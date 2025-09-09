@@ -23,6 +23,8 @@ urlpatterns = [
     path('', TemplateView.as_view(template_name='homepage.html'), name='homepage'),
     path('forms/', TemplateView.as_view(template_name='forms.html'), name='forms'),
     path('contact/', TemplateView.as_view(template_name='contact.html'), name='contact'),
+    path('faq/', TemplateView.as_view(template_name='faq.html'), name='faq'),
+    path('roadmap/', TemplateView.as_view(template_name='roadmap.html'), name='roadmap'),
     # URLs for the inner shell (authorizations app)
     path('authorizations/', include('authorizations.urls')),
 ]
