@@ -1,6 +1,8 @@
 Param(
     [string]$ServiceName = "MySQLDon_Room",
-    [int]$TimeoutSeconds = 15
+    [int]$TimeoutSeconds = 60,
+    [string]$DbHost = "127.0.0.1",
+    [int]$DbPort = 3306
 )
 
 function Test-IsAdmin {
@@ -15,7 +17,9 @@ if (-not (Test-IsAdmin)) {
         "-ExecutionPolicy", "Bypass",
         "-File", "`"$PSCommandPath`"",
         "-ServiceName", "`"$ServiceName`"",
-        "-TimeoutSeconds", $TimeoutSeconds
+        "-TimeoutSeconds", $TimeoutSeconds,
+        "-DbHost", "`"$DbHost`"",
+        "-DbPort", $DbPort
     )
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $argsList -Wait
     exit $LASTEXITCODE
@@ -46,5 +50,27 @@ while ((Get-Service -Name $ServiceName).Status -ne 'Running') {
     Start-Sleep -Milliseconds 250
 }
 
-Write-Output "Service '$ServiceName' is running."
+Write-Output "Service '$ServiceName' is running. Waiting for $($DbHost):$DbPort to accept connections..."
+
+# Wait for the TCP port to be open (service can be Running before socket is ready)
+$deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+while ($true) {
+    try {
+        $client = New-Object System.Net.Sockets.TcpClient
+        $iar = $client.BeginConnect($DbHost, $DbPort, $null, $null)
+        $connected = $iar.AsyncWaitHandle.WaitOne(500)
+        if ($connected -and $client.Connected) {
+            $client.EndConnect($iar)
+            $client.Close()
+            break
+        }
+        $client.Close()
+    } catch { }
+    if (Get-Date -gt $deadline) {
+        Write-Error "Service '$ServiceName' did not open $($DbHost):$DbPort within $TimeoutSeconds seconds."
+        exit 5
+    }
+}
+
+Write-Output "MySQL is accepting connections on $($DbHost):$DbPort."
 exit 0
