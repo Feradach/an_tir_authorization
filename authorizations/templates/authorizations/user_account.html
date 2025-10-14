@@ -114,8 +114,88 @@
             </div>
     </div>
 </div>
+
+<div class="card">
+    <div class="col-md-6">
+        <div class="mb-3">
+            <h3>Add New Authorization</h3>
+            <p class="text-muted">Public testing: submit authorizations for your own account.</p>
+            <form id="user_add_authorization_form" method="post" action="">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="add_authorization_self">
+
+                <label for="ua-discipline-select">Discipline:</label>
+                <select id="ua-discipline-select" name="discipline" class="form-control">
+                    <option value="">Select Discipline</option>
+                    {% for discipline in auth_form.fields.discipline.queryset %}
+                    <option value="{{ discipline.id }}">{{ discipline.name }}</option>
+                    {% endfor %}
+                </select>
+
+                <label for="ua-weapon-styles-select">Weapon Styles:</label>
+                <!-- Name is intentionally not 'weapon_styles' to avoid duplicate submission; hidden inputs carry selections. -->
+                <select id="ua-weapon-styles-select" name="weapon_styles_select" class="form-control" size="5" multiple>
+                    <!-- Dynamically populated by JavaScript -->
+                </select>
+
+                <div id="ua-cart-container" class="mt-2">
+                    <h4>Selected Styles</h4>
+                    <!-- Cart items will be dynamically added here -->
+                </div>
+
+                <button type="submit" class="btn btn-primary mt-3">Submit</button>
+            </form>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block script %}
+<script>
+    (function() {
+        const disciplineSelect = document.getElementById('ua-discipline-select');
+        const stylesSelect = document.getElementById('ua-weapon-styles-select');
+        const cartContainer = document.getElementById('ua-cart-container');
 
+        if (disciplineSelect) {
+            disciplineSelect.addEventListener('change', function () {
+                const id = this.value;
+                stylesSelect.innerHTML = '';
+                if (!id) return;
+                fetch(`/authorizations/api/styles/${id}/`)
+                    .then(r => r.json())
+                    .then(data => {
+                        data.styles.forEach(s => {
+                            const opt = document.createElement('option');
+                            opt.value = s.id;
+                            opt.textContent = s.name;
+                            stylesSelect.appendChild(opt);
+                        });
+                    });
+            });
+        }
+
+        stylesSelect && stylesSelect.addEventListener('change', function() {
+            const selected = stylesSelect.options[stylesSelect.selectedIndex];
+            if (!selected) return;
+            if ([...cartContainer.querySelectorAll('.cart-item')].some(el => el.dataset.styleId === selected.value)) return;
+
+            const item = document.createElement('div');
+            item.className = 'cart-item';
+            item.dataset.styleId = selected.value;
+            item.textContent = selected.textContent + ' ';
+            const hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = 'weapon_styles';
+            hidden.value = selected.value;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.textContent = 'Remove';
+            remove.addEventListener('click', function() { item.remove(); });
+            item.appendChild(hidden);
+            item.appendChild(remove);
+            cartContainer.appendChild(item);
+        });
+    })();
+</script>
 {% endblock %}

@@ -1164,15 +1164,77 @@ def user_account(request, user_id):
     }
 
     if request.method == 'POST':
+        action = request.POST.get('action')
         requestor = request.user
         user = User.objects.get(id=user_id)
         person = user.person
+
+        if action == 'add_authorization_self':
+            discipline_id = request.POST.get('discipline')
+            style_ids = request.POST.getlist('weapon_styles')
+            selected_styles = sorted(set(style_ids))
+            if not discipline_id or not selected_styles:
+                messages.error(request, 'Please select a discipline and at least one style.')
+                return redirect('user_account', user_id=user.id)
+
+            try:
+                admin_user = User.objects.get(username='admin')
+                admin_person = Person.objects.get(user=admin_user)
+            except (User.DoesNotExist, Person.DoesNotExist):
+                messages.error(request, 'Admin user not found; cannot submit authorization.')
+                return redirect('user_account', user_id=user.id)
+
+            created = 0
+            try:
+                for sid in selected_styles:
+                    style = WeaponStyle.objects.get(id=sid)
+
+                    # Skip if an authorization already exists for this person/style
+                    if Authorization.objects.filter(person=person, style=style).exists():
+                        continue
+
+                    if style.name in ['Senior Marshal', 'Junior Marshal']:
+                        expiration = date.today() + relativedelta(years=4)
+                        status = AuthorizationStatus.objects.get(name='Pending')
+                    else:
+                        if style.discipline.name in ['Youth Armored', 'Youth Rapier'] and style.name in ['Junior Marshal', 'Senior Marshal']:
+                            two_years = date.today() + relativedelta(years=2)
+                            if person.user.background_check_expiration:
+                                expiration = min(two_years, person.user.background_check_expiration)
+                            else:
+                                expiration = two_years
+                        else:
+                            expiration = date.today() + relativedelta(years=4)
+
+                        if AUTHORIZATION_OFFICER_SIGN_OFF:
+                            status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
+                        else:
+                            status = AuthorizationStatus.objects.get(name='Active')
+
+                    Authorization.objects.create(
+                        person=person,
+                        style=style,
+                        expiration=expiration,
+                        marshal=admin_person,
+                        status=status,
+                    )
+                    created += 1
+
+                if created:
+                    messages.success(request, f'{created} authorization(s) submitted.')
+                else:
+                    messages.info(request, 'No new authorizations were created (duplicates skipped).')
+                return redirect('user_account', user_id=user.id)
+            except Exception as e:
+                messages.error(request, f'Error creating authorization(s): {e}')
+                return redirect('user_account', user_id=user.id)
+
+        # Default: update account information
         if requestor != user and (not hasattr(user, 'person') or user.person.parent_id != requestor.id):
             if not is_kingdom_authorization_officer(requestor):
                 raise PermissionDenied
         form = CreatePersonForm(request.POST, user_instance=user, request=request)
         if form.is_valid():
-            # Update User fields
             user.email = form.cleaned_data['email']
             user.username = form.cleaned_data['username']
             user.first_name = form.cleaned_data['first_name']
@@ -1187,14 +1249,12 @@ def user_account(request, user_id):
             user.country = form.cleaned_data['country']
             user.phone_number = form.cleaned_data.get('phone_number')
             user.birthday = form.cleaned_data.get('birthday')
-            
-            # Only allow authorization officers to modify background_check_expiration
+
             if is_kingdom_authorization_officer(request.user):
                 user.background_check_expiration = form.cleaned_data.get('background_check_expiration')
-            
+
             user.save()
 
-            # Update Person fields
             person.sca_name = form.cleaned_data['sca_name']
             person.title = form.cleaned_data['title']
             person.branch = form.cleaned_data['branch']
@@ -1233,6 +1293,10 @@ def user_account(request, user_id):
         'waiver_signed': waiver_signed,
         'max_expiration': max_expiration,
         'is_authorization_officer': is_kingdom_authorization_officer(request.user),
+        # Prep authorization UI (initially just show the form; logic wired later)
+        'auth_form': CreateAuthorizationForm(user=request.user, show_all=True),
+        'auth_officer': is_kingdom_authorization_officer(request.user),
+        'all_people': Person.objects.all().order_by('sca_name'),
     }
 
     return render(request, 'authorizations/user_account.html', context)
@@ -1590,6 +1654,7 @@ class CreatePersonForm(forms.Form):
         """Allow passing a user instance when updating."""
         self.user_instance = kwargs.pop('user_instance', None)
         self.request = kwargs.pop('request', None)
+        show_all = kwargs.pop('show_all', False)
         super().__init__(*args, **kwargs)
         qs = Title.objects.filter(name__in=self.ALLOWED_TITLES)
         qs = qs.order_by('pk')
@@ -1678,9 +1743,13 @@ class CreateAuthorizationForm(forms.Form):
     def __init__(self, *args, **kwargs):
         # Expecting 'user' to be passed during form initialization
         user = kwargs.pop('user', None)
+        show_all = kwargs.pop('show_all', False)
         super().__init__(*args, **kwargs)
 
-        if user:
+        if show_all:
+            # Public testing: expose all disciplines (except AO/EM which aren't user auths)
+            self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
+        elif user:
             # Filter disciplines based on the user's senior marshal authorizations
             if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name__in=['Authorization Officer', 'Earl Marshal']).exists():
                 self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
