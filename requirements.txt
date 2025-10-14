@@ -54,3 +54,4 @@ webencodings==0.5.1
 whitenoise==6.8.2
 yarg==0.1.9
 cryptography
+Faker==30.8.2
