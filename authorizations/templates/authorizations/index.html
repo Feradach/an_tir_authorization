@@ -20,6 +20,7 @@
         </div>
     {% endif %}
     <p><a href="{% url 'search' %}?goal=search" class="btn btn-primary">Search Fighters</a></p>
+    <p><a href="{% url 'register' %}" class="btn btn-success">Public Testing: Create Your Account</a></p>
     {% if senior_marshal %}
         <p><a href="{% url 'add_fighter' %}" class="btn btn-primary">Add a New Fighter to the Database</a></p>
     {% endif %}

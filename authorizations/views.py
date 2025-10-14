@@ -212,6 +212,78 @@ def logout_view(request):
     return HttpResponseRedirect(reverse('index'))
 
 
+def register(request):
+    """Public registration: allow testers to create their own account.
+    Mirrors add_fighter flow but without marshal permission requirements."""
+    if request.method == 'POST':
+        person_form = CreatePersonForm(request.POST)
+
+        if person_form.is_valid():
+            random_password = generate_random_password()
+
+            try:
+                with transaction.atomic():
+                    user = User.objects.create_user(
+                        email=person_form.cleaned_data['email'],
+                        username=person_form.cleaned_data['username'],
+                        password=random_password,
+                        first_name=person_form.cleaned_data['first_name'],
+                        last_name=person_form.cleaned_data['last_name'],
+                        membership=person_form.cleaned_data.get('membership', None),
+                        membership_expiration=person_form.cleaned_data.get('membership_expiration', None),
+                        address=person_form.cleaned_data['address'],
+                        address2=person_form.cleaned_data.get('address2', None),
+                        city=person_form.cleaned_data['city'],
+                        state_province=person_form.cleaned_data['state_province'],
+                        postal_code=person_form.cleaned_data['postal_code'],
+                        country=person_form.cleaned_data['country'],
+                        phone_number=person_form.cleaned_data.get('phone_number', None),
+                        birthday=person_form.cleaned_data.get('birthday', None),
+                    )
+
+                    Person.objects.create(
+                        user=user,
+                        sca_name=person_form.cleaned_data.get('sca_name') or f"{person_form.cleaned_data['first_name']} {person_form.cleaned_data['last_name']}",
+                        title=person_form.cleaned_data.get('title'),
+                        branch=person_form.cleaned_data['branch'],
+                        is_minor=person_form.cleaned_data['is_minor'],
+                        parent=person_form.cleaned_data.get('parent', None),
+                    )
+
+            except Exception as e:
+                messages.error(request, f'Error during creation: {e}')
+                return render(request, 'authorizations/register.html', {
+                    'person_form': person_form
+                })
+
+            login_path = reverse('login')
+            login_url = f"{settings.SITE_URL}{login_path}"
+            send_mail(
+                'An Tir Authorization: New Account',
+                f'Your account has been created. Your credentials are:\nURL: {login_url}\nUsername: {person_form.cleaned_data["username"]}\nPassword: {random_password}\n'
+                f'Please reset your password after logging in.',
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=False,
+            )
+            messages.success(request, 'Account created! Login credentials have been emailed to you.')
+            return redirect('fighter', person_id=user.id)
+
+        # invalid form
+        for field, errors in person_form.errors.items():
+            for error in errors:
+                if field == '__all__':
+                    messages.error(request, error)
+                else:
+                    field_label = person_form.fields[field].label if field in person_form.fields else field
+                    messages.error(request, f"{field_label}: {error}")
+        return render(request, 'authorizations/register.html', {'person_form': person_form})
+
+    # GET
+    person_form = CreatePersonForm()
+    return render(request, 'authorizations/register.html', {'person_form': person_form})
+
+
 @login_required
 def password_reset(request, user_id):
     # Make sure it is the right user.
