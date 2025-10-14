@@ -86,6 +86,21 @@ class Command(BaseCommand):
             faker_en.seed_instance(seed)
         faker_by_locale = {}
 
+        # Probe locales and keep only those available in this Faker build
+        available_locales = []
+        skipped_locales = []
+        if Faker and sca_locales:
+            for loc in sca_locales:
+                try:
+                    _ = Faker(loc)
+                    available_locales.append(loc)
+                except Exception:
+                    skipped_locales.append(loc)
+            if skipped_locales:
+                self.stderr.write(self.style.WARNING(
+                    f"Skipping unavailable Faker locales: {', '.join(skipped_locales)}"
+                ))
+
         qs = User.objects.all().order_by("id")
         if limit:
             qs = qs[:limit]
@@ -142,9 +157,9 @@ class Command(BaseCommand):
                     try:
                         person = user.person
                         sca = f"{user.first_name} {user.last_name}"
-                        if sca_locales and Faker:
-                            loc_idx = user.id % len(sca_locales)
-                            locale = sca_locales[loc_idx]
+                        if available_locales and Faker:
+                            loc_idx = user.id % len(available_locales)
+                            locale = available_locales[loc_idx]
                             if locale not in faker_by_locale:
                                 faker_by_locale[locale] = Faker(locale)
                             f_loc = faker_by_locale[locale]
@@ -158,8 +173,8 @@ class Command(BaseCommand):
                                 sca = f"{sca} of {person.branch.name}"
                             except Exception:
                                 pass
-                        person.sca_name = sca
-                        person.save(update_fields=["sca_name"])  # keep relationships intact
+                        # Bypass model clean() to avoid unrelated validation errors (e.g., minor without birthday)
+                        Person.objects.filter(pk=user.id).update(sca_name=sca)
                     except Person.DoesNotExist:
                         pass
 
@@ -207,8 +222,8 @@ class Command(BaseCommand):
                 else:
                     first, last = f"Test{u.id}", "User"
                 sca_name = f"{first} {last}"
-                if sca_locales and Faker:
-                    loc = sca_locales[u.id % len(sca_locales)]
+                if available_locales and Faker:
+                    loc = available_locales[u.id % len(available_locales)]
                     f_loc = Faker(loc); f_loc.seed_instance(seed + u.id)
                     sca_name = f"{f_loc.first_name()} {f_loc.last_name()}"
                 example = {
