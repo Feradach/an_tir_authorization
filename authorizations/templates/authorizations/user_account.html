@@ -115,11 +115,49 @@
     </div>
 </div>
 
-<div class="card">
+{# Moved Add New Authorization into the Regional Marshal card below #}
+<div class="card mt-3">
     <div class="col-md-6">
         <div class="mb-3">
-            <h3>Add New Authorization</h3>
-            <p class="text-muted">Public testing: submit authorizations for your own account.</p>
+            <strong>This section is for testing the system and it will not be present in the full deployment. You can make yourself a regional marshal and add any authorization to yourself here.</strong>
+            <h3>Regional Marshal (Testing)</h3>
+            <p class="text-muted">Set or remove yourself as a regional marshal. Requires an active Senior Marshal in the selected discipline and a current membership. You may only have one active officer position at a time.</p>
+
+            {% if branch_officer %}
+            <div class="alert alert-info">
+                <strong>Current Appointment:</strong>
+                {{ branch_officer.branch.name }} — {{ branch_officer.discipline.name }} (through {{ branch_officer.end_date }})
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="self_remove_regional">
+                <input type="hidden" name="region_id" value="{{ branch_officer.branch.id }}">
+                <input type="hidden" name="discipline_id" value="{{ branch_officer.discipline.id }}">
+                <button type="submit" class="btn btn-danger mt-2">Remove Regional Marshal</button>
+            </form>
+            {% else %}
+            <form method="post" class="mb-2">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="self_set_regional">
+                <label for="rm_region">Region:</label>
+                <select id="rm_region" name="region_id" class="form-control">
+                    {% for b in region_choices %}
+                        <option value="{{ b.id }}">{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+                <label for="rm_discipline" class="mt-2">Discipline:</label>
+                <select id="rm_discipline" name="discipline_id" class="form-control">
+                    {% for d in discipline_choices %}
+                        <option value="{{ d.id }}">{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+                <button type="submit" class="btn btn-primary mt-2">Set as Regional Marshal</button>
+            </form>
+            {% endif %}
+
+            <hr>
+            <h3>Add New Authorization (Testing)</h3>
+            <p class="text-muted">Create authorizations for your own account. If you already have that type of authorization it will be skipped.</p>
             <form id="user_add_authorization_form" method="post" action="">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="add_authorization_self">

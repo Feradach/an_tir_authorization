@@ -36,6 +36,54 @@
 </div>
     <!-- Main Content -->
     <div class="container-fluid my-4">
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-header p-0">
+                <button class="btn btn-light w-100 text-start px-3 py-2"
+                        type="button"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#authPortalNotice"
+                        aria-expanded="false"
+                        aria-controls="authPortalNotice">
+                <strong>Authorization Portal Test Info</strong>
+                </button>
+            </div>
+
+            <div id="authPortalNotice" class="collapse">
+                <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                    <p>
+                        Welcome to the test version of the new Authorization Portal for An Tir. During the development process,
+                        you can send feedback to Feradach at
+                        <a href="mailto:viperzka@gmail.com">viperzka@gmail.com</a>.
+                        Please use "Authorization Portal" in the subject line.
+                    </p>
+                    <p>
+                        If you have encountered a bug, you can use the form below to report it. If you have a screenshot of the bug,
+                        please include it in the form.
+                    </p>
+                    <p>
+                        <a href="https://docs.google.com/forms/d/e/1FAIpQLSd_C8Wus4dJzd4zWlY58HnzPixDzLBom4jS8M2irF3C_o4HaQ/viewform?usp=dialog"
+                        class="btn btn-danger" target="_blank">
+                        Report a Bug
+                        </a>
+                    </p>
+                    <p>
+                        The database for this test is filled with random users and authorizations so that you can test the portal.
+                        During the test, you will be able to create your own account using the button below. After creating an account
+                        you will be able to add authorizations and set yourself as a marshal officer on your account page.
+                        These features will not exist in the final version of the portal.
+                    </p>
+                    <p>
+                        <a href="{% url 'register' %}" class="btn btn-success">Public Testing: Create Your Account</a>
+                    </p>
+                    <p>If you are looking for the old authorization portal, please visit <a href="https://antirlists.org/">https://antirlists.org/</a>.</p>
+                    </div>
+                </div>
+                </div>
+            </div>
+            </div>
         {% block body %}
 
         {% endblock %}

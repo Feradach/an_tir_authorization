@@ -68,6 +68,26 @@ class Command(BaseCommand):
             default=0.3,
             help="Probability to append a light locative (e.g., 'of {Branch}')",
         )
+        parser.add_argument(
+            "--shift-expirations",
+            action="store_true",
+            help="Randomly shift authorization expiration dates per redaction policy",
+        )
+        parser.add_argument(
+            "--fake-memberships",
+            action="store_true",
+            help="Assign fake membership numbers/expirations to users who appear as authorizing marshals",
+        )
+        parser.add_argument(
+            "--randomize-branches",
+            action="store_true",
+            help="Assign each person to a deterministic random branch id in [9,86] (one-time redaction)",
+        )
+        parser.add_argument(
+            "--clear-comments",
+            action="store_true",
+            help="Clear all User.comment values to remove production notes",
+        )
 
     def handle(self, *args, **opts):
         apply = opts["apply"]
@@ -77,6 +97,10 @@ class Command(BaseCommand):
         email_domain = opts["email_domain"].strip()
         sca_locales = [s.strip() for s in opts.get("sca_locales", "").split(",") if s.strip()]
         loc_rate = float(opts.get("sca_locative_rate", 0.3))
+        shift_expirations = bool(opts.get("shift_expirations", False))
+        fake_memberships = bool(opts.get("fake_memberships", False))
+        randomize_branches = bool(opts.get("randomize_branches", False))
+        clear_comments = bool(opts.get("clear_comments", False))
 
         if fake_names and Faker is None:
             self.stderr.write(self.style.WARNING("Faker is not installed. Install 'Faker' to enable name anonymization."))
@@ -106,11 +130,34 @@ class Command(BaseCommand):
             qs = qs[:limit]
 
         updated_users = 0
+        updated_auths = 0
+        updated_memberships = 0
+        updated_branches = 0
+        cleared_comments = 0
         now = timezone.now()
 
         @transaction.atomic
         def _apply():
-            nonlocal updated_users
+            nonlocal updated_users, updated_auths, updated_memberships, updated_branches, cleared_comments
+            # Optionally clear all user comments up-front
+            if clear_comments:
+                from django.db.models import Q
+                cleared_comments = User.objects.exclude(Q(comment__isnull=True) | Q(comment__exact="")).update(comment="")
+            from authorizations.models import Authorization, Person  # local import to avoid circulars
+            # Build marshal user id set (Authorization.marshal points to Person pk == user_id)
+            marshal_user_ids = set()
+            if fake_memberships:
+                marshal_user_ids = set(
+                    Authorization.objects.filter(marshal__isnull=False)
+                    .values_list("marshal_id", flat=True)
+                    .distinct()
+                )
+
+            # Track used membership numbers to avoid collisions
+            used_memberships = set(
+                User.objects.exclude(membership__isnull=True).values_list("membership", flat=True)
+            )
+
             for user in qs:
                 # Deterministic per-user RNG
                 r = random.Random(seed + user.id)
@@ -192,6 +239,8 @@ class Command(BaseCommand):
                 user.membership_expiration = new_membership_exp
                 user.save(
                     update_fields=[
+                        "first_name",
+                        "last_name",
                         "email",
                         "username",
                         "address",
@@ -203,13 +252,70 @@ class Command(BaseCommand):
                         "phone_number",
                         "membership",
                         "membership_expiration",
+                        "comment",
                     ]
                 )
+
+                # Assign fake membership data to users who serve as authorizing marshals
+                if fake_memberships and user.id in marshal_user_ids:
+                    from datetime import date, timedelta
+                    # Deterministic generator for membership fields
+                    r_mem = random.Random(seed + user.id * 123457)
+                    # 8-digit membership number
+                    mem = r_mem.randint(10_000_000, 99_999_999)
+                    # Ensure uniqueness among currently used numbers
+                    while mem in used_memberships:
+                        mem = (mem + 1) % 100_000_000
+                        if mem < 10_000_000:
+                            mem = 10_000_000
+                    used_memberships.add(mem)
+                    # Expiration between 2026-01-01 and 2030-12-31
+                    start = date(2026, 1, 1)
+                    end = date(2030, 12, 31)
+                    delta = (end - start).days
+                    mem_exp = start + timedelta(days=r_mem.randint(0, delta))
+                    User.objects.filter(pk=user.id).update(membership=mem, membership_expiration=mem_exp)
+                    updated_memberships += 1
                 updated_users += 1
+
+            # Optionally shift authorization expiration dates
+            if shift_expirations:
+                from authorizations.models import Authorization  # local import to avoid circulars at import time
+                from datetime import date, timedelta
+                cutoff = date(2025, 11, 1)
+                for auth in Authorization.objects.all().only("id", "expiration"):
+                    if not auth.expiration:
+                        continue
+                    r = random.Random(seed + auth.id * 9973)
+                    delta_days = r.randint(10, 1000)
+                    if auth.expiration >= cutoff:
+                        new_exp = auth.expiration + timedelta(days=delta_days)
+                    else:
+                        new_exp = auth.expiration - timedelta(days=delta_days)
+                    Authorization.objects.filter(pk=auth.id).update(expiration=new_exp)
+                    nonlocal updated_auths
+                    updated_auths += 1
+
+            # Optionally randomize Person.branch_id across [9,86]
+            if randomize_branches:
+                for p in Person.objects.all().only("user_id", "branch_id"):
+                    r = random.Random(seed + p.user_id * 7919)
+                    new_branch = r.randint(9, 86)
+                    Person.objects.filter(pk=p.user_id).update(branch_id=new_branch)
+                    nonlocal updated_branches
+                    updated_branches += 1
 
         if apply:
             _apply()
             self.stdout.write(self.style.SUCCESS(f"Anonymized users: {updated_users}"))
+            if shift_expirations:
+                self.stdout.write(self.style.SUCCESS(f"Shifted authorization expirations: {updated_auths}"))
+            if fake_memberships:
+                self.stdout.write(self.style.SUCCESS(f"Assigned fake memberships (marshals): {updated_memberships}"))
+            if randomize_branches:
+                self.stdout.write(self.style.SUCCESS(f"Randomized person branches: {updated_branches}"))
+            if clear_comments:
+                self.stdout.write(self.style.SUCCESS(f"Cleared user comments: {cleared_comments}"))
         else:
             # Dry run preview
             preview = min(limit or 5, 5)
@@ -236,4 +342,4 @@ class Command(BaseCommand):
                     "postal_code": _an_tir_postal(r),
                 }
                 self.stdout.write(f"Preview user {u.id}: {example}")
-            self.stdout.write(self.style.WARNING("Dry run only. Re-run with --apply to persist. Use --fake-names to generate names."))
+            self.stdout.write(self.style.WARNING("Dry run only. Re-run with --apply to persist. Use --fake-names to generate names. Add --shift-expirations to randomize authorization expiration dates."))

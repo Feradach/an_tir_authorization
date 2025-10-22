@@ -1132,10 +1132,17 @@ def user_account(request, user_id):
 
     children = user.person.children.all()
 
-    try:
-        branch_officer = BranchMarshal.objects.get(person__user=user, end_date__gte=date.today())
-    except BranchMarshal.DoesNotExist:
-        branch_officer = None
+    # Active regional marshal appointment (region-only)
+    branch_officer = (
+        BranchMarshal.objects.filter(
+            person__user=user,
+            end_date__gte=date.today(),
+            branch__type__in=['Kingdom', 'Principality', 'Region'],
+        )
+        .select_related('branch', 'discipline')
+        .order_by('-end_date')
+        .first()
+    )
 
     # Pre-fill the form with the user's and person's information
     initial_data = {
@@ -1177,12 +1184,23 @@ def user_account(request, user_id):
                 messages.error(request, 'Please select a discipline and at least one style.')
                 return redirect('user_account', user_id=user.id)
 
-            try:
-                admin_user = User.objects.get(username='admin')
-                admin_person = Person.objects.get(user=admin_user)
-            except (User.DoesNotExist, Person.DoesNotExist):
+            # Find an administrative user to record as the authorizing marshal for testing.
+            admin_user = User.objects.filter(is_superuser=True).order_by('id').first()
+            if not admin_user:
+                admin_user = User.objects.filter(username__iexact='admin').order_by('id').first()
+            if not admin_user:
                 messages.error(request, 'Admin user not found; cannot submit authorization.')
                 return redirect('user_account', user_id=user.id)
+            try:
+                admin_person = Person.objects.get(user=admin_user)
+            except Person.DoesNotExist:
+                # Create a minimal Person record for the superuser if missing (testing only)
+                admin_person = Person.objects.create(
+                    user=admin_user,
+                    sca_name=admin_user.get_full_name() or admin_user.username or 'Admin',
+                    branch=person.branch,
+                    is_minor=False,
+                )
 
             created = 0
             try:
@@ -1228,6 +1246,104 @@ def user_account(request, user_id):
             except Exception as e:
                 messages.error(request, f'Error creating authorization(s): {e}')
                 return redirect('user_account', user_id=user.id)
+
+        elif action in ('self_set_regional', 'self_remove_regional'):
+            # Only the owner can change their own appointment
+            if request.user.id != user_id:
+                messages.error(request, "You can only change your own marshal appointment.")
+                return redirect('user_account', user_id=user_id)
+
+            region_id = request.POST.get('region_id')
+            discipline_id = request.POST.get('discipline_id')
+            try:
+                region = Branch.objects.get(id=region_id)
+            except Branch.DoesNotExist:
+                messages.error(request, 'Invalid region selected.')
+                return redirect('user_account', user_id=user_id)
+            try:
+                discipline = Discipline.objects.get(id=discipline_id)
+            except Discipline.DoesNotExist:
+                messages.error(request, 'Invalid discipline selected.')
+                return redirect('user_account', user_id=user_id)
+
+            if action == 'self_set_regional':
+                # Validate requirements only for setting (not removing)
+                # Skip Senior Marshal requirement for Authorization Officer discipline
+                if discipline.name != 'Authorization Officer':
+                    has_senior = Authorization.objects.filter(
+                        person=person,
+                        style__name='Senior Marshal',
+                        style__discipline=discipline,
+                        status__name='Active',
+                        expiration__gte=date.today(),
+                    ).exists()
+                    if not has_senior:
+                        messages.error(request, f'You must hold an active Senior Marshal in {discipline.name}.')
+                        return redirect('user_account', user_id=user_id)
+
+                if not user.membership or not user.membership_expiration or user.membership_expiration < date.today():
+                    messages.error(request, 'A current SCA membership (with valid expiration) is required.')
+                    return redirect('user_account', user_id=user_id)
+
+                if not region.is_region():
+                    messages.error(request, 'Please select a region (Kingdom, Principality, or Region).')
+                    return redirect('user_account', user_id=user_id)
+
+                # Authorization Officer may only select the Kingdom (An Tir)
+                if discipline.name == 'Authorization Officer' and region.name != 'An Tir':
+                    messages.error(request, 'Authorization Officers must be appointed at the Kingdom level (An Tir).')
+                    return redirect('user_account', user_id=user_id)
+
+                # Regional match: the user's branch must belong to the selected region (except Kingdom An Tir)
+                if region.name != 'An Tir':
+                    if not person.branch:
+                        messages.error(request, 'Your account must have a branch set to determine your region.')
+                        return redirect('user_account', user_id=user_id)
+                    # Determine the person region id based on their branch
+                    try:
+                        person_region_id = person.branch.id if person.branch.is_region() else (person.branch.region_id or None)
+                    except Exception:
+                        person_region_id = None
+                    if person_region_id != region.id:
+                        messages.error(request, 'Selected region does not match your home region.')
+                        return redirect('user_account', user_id=user_id)
+
+                # Enforce single active officer position at a time
+                has_other_active_office = BranchMarshal.objects.filter(
+                    person=person,
+                    end_date__gte=date.today(),
+                ).exclude(branch=region, discipline=discipline).exists()
+                if has_other_active_office:
+                    messages.error(
+                        request,
+                        'You already hold an active officer position. Please end it before setting a new one.'
+                    )
+                    return redirect('user_account', user_id=user_id)
+                try:
+                    bm = BranchMarshal.objects.get(person=person, branch=region, discipline=discipline, end_date__gte=date.today())
+                    bm.end_date = date.today() + relativedelta(years=1)
+                    bm.save()
+                    messages.success(request, f'Your regional marshal appointment for {discipline.name} in {region.name} has been refreshed.')
+                except BranchMarshal.DoesNotExist:
+                    BranchMarshal.objects.create(
+                        branch=region,
+                        person=person,
+                        discipline=discipline,
+                        start_date=date.today(),
+                        end_date=date.today() + relativedelta(years=1),
+                    )
+                    messages.success(request, f'You are now set as a regional marshal for {discipline.name} in {region.name}.')
+                return redirect('user_account', user_id=user_id)
+
+            if action == 'self_remove_regional':
+                qs = BranchMarshal.objects.filter(person=person, branch=region, discipline=discipline, end_date__gte=date.today())
+                if qs.exists():
+                    # Set end date to yesterday so it no longer counts as active (we check end_date__gte=today)
+                    qs.update(end_date=date.today() - relativedelta(days=1))
+                    messages.success(request, f'Regional marshal appointment for {discipline.name} in {region.name} has been ended.')
+                else:
+                    messages.info(request, 'No active regional marshal appointment found to remove.')
+                return redirect('user_account', user_id=user_id)
 
         # Default: update account information
         if requestor != user and (not hasattr(user, 'person') or user.person.parent_id != requestor.id):
@@ -1297,6 +1413,9 @@ def user_account(request, user_id):
         'auth_form': CreateAuthorizationForm(user=request.user, show_all=True),
         'auth_officer': is_kingdom_authorization_officer(request.user),
         'all_people': Person.objects.all().order_by('sca_name'),
+        # Exclude Avacal from selectable regions per testing requirement
+        'region_choices': Branch.objects.regions().exclude(name='Avacal').order_by('name'),
+        'discipline_choices': Discipline.objects.order_by('name'),
     }
 
     return render(request, 'authorizations/user_account.html', context)
