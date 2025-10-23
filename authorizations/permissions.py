@@ -232,8 +232,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
     # Rule 4: A Rapier or Youth Rapier fighter must have single sword as their first weapon authorization
     # Since these require single sword first, they rely on single sword being before the other combat styles so that they can be added in the same form submission.
     if not style.name in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
-        if style.discipline.name == 'Rapier':
-            if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier', status__name='Active').exists():
+        if style.discipline.name == 'Rapier Combat':
+            if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier Combat', status__name='Active').exists():
                 return False, 'A fighter must be authorized with single sword as their first rapier authorization.'
         if style.discipline.name == 'Youth Rapier':
             if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Youth Rapier', status__name='Active').exists():
@@ -245,7 +245,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             return False, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.'
 
     # Rule 5: Rapier fighters must be at lest 14 years old
-    if style.discipline.name == 'Rapier':
+    if style.discipline.name == 'Rapier Combat':
         if age < 14:
             return False, 'Must be at least 14 years old to become a rapier fighter.'
 
@@ -284,7 +284,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             return False, f'Must be an adult to become authorized in {style.name}.'
 
     # Rule 11: Youth rapier marshals must already be Senior Rapier marshals
-    if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier'):
+    if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
         return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
 
     # Rule 12: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
@@ -338,7 +338,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
         return False, 'Cannot make an authorization for yourself.'
 
     # Rule 21: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored combat, they can only be authorized by a regional marshal.
-    if existing_fighter.is_minor and style.discipline.name in ['Rapier', 'Cut & Thrust', 'Armored']:
+    if existing_fighter.is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored']:
         if not is_regional_marshal(marshal):
             return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored combat unless you are a regional marshal.'
 

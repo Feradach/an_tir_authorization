@@ -200,9 +200,8 @@ def login_view(request):
                 return redirect('password_reset', user_id=user.id)
             return HttpResponseRedirect(reverse('index'))
         else:
-            return render(request, 'authorizations/login.html', {
-                'message': 'Invalid email and/or password.'
-            })
+            messages.error(request, 'Invalid email and/or password.')
+            return render(request, 'authorizations/login.html')
     else:
         return render(request, 'authorizations/login.html')
 
@@ -834,6 +833,8 @@ def generate_fighter_card(request, person_id, template_id):
         for marshal in marshal_list:
             data[marshal['discipline']] = marshal['marshal']
 
+    print(f'PDF data payload for person {person_id}: {data}')
+
 
     # Build the card
     # Find the absolute path to the template using Django's static files finder
@@ -857,8 +858,11 @@ def generate_fighter_card(request, person_id, template_id):
                 if annotation.Subtype == '/Widget' and annotation.T:
                     field_name = annotation.T[1:-1].strip()
                     if field_name in data:
+                        print(f'Writing PDF field "{field_name}" with value "{data[field_name]}"')
                         annotation.V = data[field_name]
                         annotation.AP = None
+                    else:
+                        print(f'No data found for PDF field "{field_name}"')
                     flags = annotation[PdfName.Ff] if PdfName.Ff in annotation else 0
                     annotation[PdfName.Ff] = flags | 1
 
@@ -1809,6 +1813,26 @@ class CreatePersonForm(forms.Form):
             )
             
         return postal_code
+
+    def clean_state_province(self):
+        state_province = self.cleaned_data.get('state_province', '').strip().title()
+        if not state_province:
+            raise forms.ValidationError('State/Province is required.')
+        
+        # Check if the state/province matches any of the valid patterns
+        valid = (
+            state_province == 'Oregon' or
+            state_province == 'Washington' or
+            state_province == 'Idaho' or
+            state_province == 'British Columbia'
+        )
+        
+        if not valid:
+            raise forms.ValidationError(
+                'State/Province must be within An Tir.'
+            )
+        
+        return state_province
 
     def clean(self):
         cleaned_data = super().clean()
