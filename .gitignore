@@ -50,3 +50,6 @@ scripts/dump-anonymized.ps1
 Thumbs.db
 .env
 .env.example
+
+# Static files
+staticfiles/
