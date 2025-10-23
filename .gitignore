@@ -48,3 +48,4 @@ scripts/dump-anonymized.ps1
 
 # Windows thumbnail cache files
 Thumbs.db
+.env
