@@ -25,6 +25,8 @@ from pdfrw import PdfReader, PdfWriter, PdfName
 from django.contrib import messages
 from django import forms
 import re
+import mistune
+import bleach
 
 # Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
@@ -1681,7 +1683,8 @@ def branch_marshals(request):
     if discipline := request.GET.get('discipline'):
         dynamic_filter &= Q(discipline__name=discipline)
     if region := request.GET.get('region'):
-        dynamic_filter &= Q(region__name=region)
+        # Region is a property of the related Branch (self-referential FK)
+        dynamic_filter &= Q(branch__region__name=region)
     
     matching_appointments = BranchMarshal.objects.filter(dynamic_filter).exclude(person__user_id=11968)
     view_mode = request.GET.get('view', 'table')
@@ -1715,6 +1718,36 @@ def branch_marshals(request):
         'auth_officer': auth_officer,
     }
     return render(request, 'authorizations/branch_marshals.html', context)
+
+def changelog_view(request):
+    """Render the local CHANGELOG.md as HTML on the changelog page.
+
+    Reads from settings.BASE_DIR so it uses the project root regardless of module location.
+    """
+    base_dir = settings.BASE_DIR  # Path object
+    candidates = ['CHANGELOG.md', 'Changelog.md', 'changelog.md']
+
+    md = mistune.create_markdown()
+    allowed_tags = [
+        'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'em', 'i', 'li', 'ol',
+        'p', 'pre', 'strong', 'ul', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+    ]
+    allowed_attrs = {'a': ['href', 'title', 'rel', 'target']}
+
+    changelog_html = None
+    for name in candidates:
+        path = base_dir / name
+        if path.exists():
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                html = md(text)
+                changelog_html = bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
+            except Exception:
+                changelog_html = None
+            break
+
+    return render(request, 'changelog.html', {'changelog_html': changelog_html})
 
 # This is where the Forms are kept
 

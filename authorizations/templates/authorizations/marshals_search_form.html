@@ -16,7 +16,7 @@
                 </select>
             </div>
             <div class="col-md-6 mb-3">
-                <label for="region" class="form-label">Region:</label>
+                <label for="region" class="form-label">Within Region:</label>
                 <select id="region" name="region" class="choices-dropdown form-control">
                     <option value=""></option>
                     {% for option in region_options %}<option value="{{ option }}" {% if request.GET.region == option %}selected{% endif %}>{{ option }}</option>{% endfor %}

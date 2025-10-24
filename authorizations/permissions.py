@@ -285,7 +285,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
 
     # Rule 11: Youth rapier marshals must already be Senior Rapier marshals
     if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
-        return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
+        if style.name == 'Junior Marshal' or style.name == 'Senior Marshal':
+            return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
 
     # Rule 12: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':

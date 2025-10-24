@@ -1,0 +1,26 @@
+{% extends "outer_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Changelog
+{% endblock %}
+
+{% block body %}
+    <h1>Changelog</h1>
+    <p>Here you will find a list of changes to the system.</p>
+    <p>Changes are listed in reverse chronological order.</p>
+
+    {% if changelog_html %}
+        <div>{{ changelog_html|safe }}</div>
+    {% else %}
+        <h2>Version 0.0.1</h2>
+        <ul>
+            <li>Initial test deployment</li>
+        </ul>
+    {% endif %}
+
+{% endblock %}
+
+{% block script %}
+
+{% endblock %}
