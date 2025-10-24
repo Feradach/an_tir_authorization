@@ -521,6 +521,10 @@ def search(request):
         page_obj = paginator.get_page(request.GET.get('page', 1))
 
     # === STEP 4: RENDER THE TEMPLATE ===
+    query_params = request.GET.copy()
+    if 'page' in query_params:
+        query_params.pop('page')
+
     return render(
         request,
         'authorizations/search.html',
@@ -529,6 +533,7 @@ def search(request):
             'items_per_page': items_per_page,
             'view_mode': view_mode,
             'today': date.today(),
+            'querystring': query_params.urlencode(),
             
             # Add these back in for the table header filters
             'sca_name_options': sca_name_options,
