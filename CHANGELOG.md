@@ -1,6 +1,10 @@
 ## [Unreleased]
 - 
 
+## [0.0.3] - 2025-10-27
+### Added
+- Added the changelog to the Portal Test Info drop down and the roadmap page.
+
 ## [0.0.2] - 2025-10-23
 ### Fixed
 - Fixed bug where search authorizations page would not go past page 2
