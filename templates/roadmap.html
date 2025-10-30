@@ -8,6 +8,13 @@
 {% block body %}
     <h1>Roadmap</h1>
     <p>This page is a work in progress. Please check back often for updates.</p>
+    <p>If you discover a bug, or need to submit a feature request, please fill out the form below:</p>
+    <p>
+        <a href="https://forms.fillout.com/t/ohahmyrs2tus"
+           class="btn btn-danger" target="_blank" rel="noopener noreferrer">
+            Report a Bug
+        </a>
+    </p>
     <h2>Changelog</h2>
     <p>A log of the changes that have been made can be found <a href="{% url 'changelog' %}">here</a>.</p>
 
@@ -25,7 +32,6 @@
         <li>Offline database access.</li>
         <li>Create and run tournaments.</li>
     </ul>
-    <p>If you have additional features which you believe would be useful, please let Feradach know at viperzka@gmail.com.</p>
 {% endblock %}
 
 {% block script %}

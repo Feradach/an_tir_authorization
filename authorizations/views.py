@@ -24,6 +24,7 @@ from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName
 from django.contrib import messages
 from django import forms
+from django.core.validators import RegexValidator
 import re
 import mistune
 import bleach
@@ -103,18 +104,46 @@ state_province_choices = state_choices + province_choices
 
 # Create your views here.
 def index(request):
-    """This is the page they land on for the """
+    """This is the page they land on for the authorization system."""
 
     all_people = Person.objects.all().order_by('sca_name').values_list('sca_name',                                                                            flat=True).distinct()
     fighter_name = request.GET.get('sca_name')
 
+    # If a fighter name is selected, handle potential duplicates gracefully
     if fighter_name:
-        fighter_id = Person.objects.get(sca_name=fighter_name).user_id
-        return redirect('fighter', person_id=fighter_id)
+        matches = Person.objects.select_related('branch__region').filter(sca_name=fighter_name)
+        match_count = matches.count()
+
+        # Single match: go straight to fighter card
+        if match_count == 1:
+            fighter_id = matches.first().user_id
+            return redirect('fighter', person_id=fighter_id)
+
+        # Multiple matches: render index with a results table under the dropdown
+        if match_count > 1:
+            context = {
+                'all_people': all_people,
+                'name_matches': matches.order_by('user_id'),
+            }
+            # If anonymous, we don't populate marshal-related context
+            if request.user.is_anonymous:
+                return render(request, 'authorizations/index.html', context)
+
+            # Otherwise, fall through to include role-based context below
+            # by storing matches in a temp var we can merge later
+            name_matches = matches.order_by('user_id')
+        else:
+            # No matches found; just continue to render the page normally
+            name_matches = None
 
     if request.user.is_anonymous:
-        return render(request, 'authorizations/index.html' , {'all_people': all_people})
+        # If the fighter name hasn't been chosen and the user is anonymous, load the page.
+        anon_context = {'all_people': all_people}
+        if 'name_matches' in locals() and name_matches:
+            anon_context['name_matches'] = name_matches
+        return render(request, 'authorizations/index.html' , anon_context)
 
+    # If the user is authenticated, load the page with their marshal context
     pending_authorizations = []
     person = Person.objects.get(user_id=request.user.id)
     senior_marshal = is_senior_marshal(request.user)
@@ -171,7 +200,7 @@ def index(request):
                 messages.success(request, mssg)
 
 
-    return render(request, 'authorizations/index.html', {
+    base_context = {
         'senior_marshal': senior_marshal,
         'branch_marshal': branch_marshal,
         'regional_marshal': regional_marshal,
@@ -180,7 +209,13 @@ def index(request):
         'auth_officer': auth_officer,
         'pending_authorizations': pending_authorizations,
         'all_people': all_people,
-    })
+    }
+
+    # Include potential duplicate results for logged-in users
+    if 'name_matches' in locals() and name_matches:
+        base_context['name_matches'] = name_matches
+
+    return render(request, 'authorizations/index.html', base_context)
 
 
 def login_view(request):
@@ -216,12 +251,20 @@ def logout_view(request):
 def register(request):
     """Public registration: allow testers to create their own account.
     Mirrors add_fighter flow but without marshal permission requirements."""
+    from django.conf import settings
+    # If test features are not enabled, redirect to index
+        # If we choose to open up registration, delete this section of code.
+    if not getattr(settings, 'AUTHZ_TEST_FEATURES', False):
+        messages.error(request, 'Registration is disabled on this site.')
+        return redirect('index')
+    # If the request is a POST, process the registration
     if request.method == 'POST':
         person_form = CreatePersonForm(request.POST)
 
         if person_form.is_valid():
             random_password = generate_random_password()
 
+            # Create the user
             try:
                 with transaction.atomic():
                     user = User.objects.create_user(
@@ -240,6 +283,7 @@ def register(request):
                         country=person_form.cleaned_data['country'],
                         phone_number=person_form.cleaned_data.get('phone_number', None),
                         birthday=person_form.cleaned_data.get('birthday', None),
+                        background_check_expiration=person_form.cleaned_data.get('background_check_expiration', None),
                     )
 
                     Person.objects.create(
@@ -257,6 +301,7 @@ def register(request):
                     'person_form': person_form
                 })
 
+            # Send the login credentials to the user
             login_path = reverse('login')
             login_url = f"{settings.SITE_URL}{login_path}"
             send_mail(
@@ -337,6 +382,7 @@ def recover_account(request):
         login_path = reverse('login')
         login_url = f"{settings.SITE_URL}{login_path}"
         
+        # Resetting password
         if action == 'reset_password':
             username = request.POST.get('username', '').strip()
             if not username:
@@ -369,6 +415,7 @@ def recover_account(request):
                 messages.error(request, 'No account with that username was found.')
                 return render(request, 'authorizations/recover_account.html')
                 
+        # Getting username
         elif action == 'get_username':
             email = request.POST.get('email', '').strip()
             if not email:
@@ -404,6 +451,7 @@ def recover_account(request):
 
 
 def generate_random_password(length=12):
+    """Generate a random password. This is used for temporary passwords."""
     characters = string.ascii_letters + string.digits + string.punctuation
     password = ''.join(random.choice(characters) for _ in range(length))
     return password
@@ -480,7 +528,7 @@ def search(request):
     matching_authorizations = Authorization.objects.filter(dynamic_filter).exclude(person__user_id=11968)
 
     if view_mode == 'card':
-        # --- CARD VIEW LOGIC (Corrected) ---
+        # --- CARD VIEW LOGIC ---
 
         # 1. Get the unique IDs of people who have matching authorizations. (No change)
         person_ids = matching_authorizations.values_list('person_id', flat=True).distinct()
@@ -505,9 +553,10 @@ def search(request):
         paginator = Paginator(people_list, items_per_page)
         page_obj = paginator.get_page(request.GET.get('page', 1))
     
-    else: # 'table' view is the default
-        # --- TABLE VIEW LOGIC ---
-        # This is the same logic as before, but simplified.
+    # 'table' view is the default
+    # --- TABLE VIEW LOGIC ---
+    # This is the same logic as before, but simplified.
+    else: 
         user_sort = request.GET.get('sort', 'person__sca_name')
         
         authorization_list = matching_authorizations.select_related(
@@ -557,7 +606,11 @@ def fighter(request, person_id):
     Create a link on the authorization search to go to this page."""
 
     # Get the person who's card is being requested
-    person = Person.objects.get(user_id=person_id)
+    try:
+        person = Person.objects.get(user_id=person_id)
+    except Person.DoesNotExist:
+        messages.error(request, 'Person not found.')
+        return redirect('search')
     user = person.user
 
     # If there is a post, confirm that they are authenticated.
@@ -718,8 +771,9 @@ def fighter(request, person_id):
 
 
 
-    branch_choices = Branch.objects.all()
-    discipline_choices = Discipline.objects.all()
+    # All branches except for type = other
+    branch_choices = Branch.objects.exclude(type='Other').order_by('name')
+    discipline_choices = Discipline.objects.all().order_by('name')
     auth_officer = is_kingdom_authorization_officer(request.user)
     regional_marshal = is_regional_marshal(request.user)
 
@@ -974,11 +1028,20 @@ def add_fighter(request):
 def add_authorization(request, person_id):
     """This will add a new authorization to a fighter or update an existing authorization."""
 
+    # Determine the authorizing marshal.
+    # Only the Authorization Officer may specify a different marshal via marshal_id.
+    authorizing_marshal = request.user
     marshal_id = request.POST.get('marshal_id')
     if marshal_id:
-        authorizing_marshal = User.objects.get(id=marshal_id)
-    else:
-        authorizing_marshal = request.user
+        if is_kingdom_authorization_officer(request.user):
+            try:
+                authorizing_marshal = User.objects.get(id=marshal_id)
+            except User.DoesNotExist:
+                messages.error(request, 'Selected authorizing marshal not found.')
+                return redirect('fighter', person_id=person_id)
+        else:
+            messages.error(request, 'You are not allowed to specify an authorizing marshal.')
+            return redirect('fighter', person_id=person_id)
     
     # Get the selected discipline from the form
     discipline_id = request.POST.get('discipline')
@@ -1134,6 +1197,9 @@ def add_authorization(request, person_id):
 @login_required
 def user_account(request, user_id):
     """Allows the user, their parent, or the Kingdom Authorization officer to view and edit the user's account."""
+    from django.conf import settings
+    testing = getattr(settings, 'AUTHZ_TEST_FEATURES')
+    print(testing)
     requestor = request.user
     user = User.objects.get(id=user_id)
     person = user.person
@@ -1143,12 +1209,11 @@ def user_account(request, user_id):
 
     children = user.person.children.all()
 
-    # Active regional marshal appointment (region-only)
+    # Active marshal appointment (any branch type)
     branch_officer = (
         BranchMarshal.objects.filter(
             person__user=user,
             end_date__gte=date.today(),
-            branch__type__in=['Kingdom', 'Principality', 'Region'],
         )
         .select_related('branch', 'discipline')
         .order_by('-end_date')
@@ -1188,6 +1253,9 @@ def user_account(request, user_id):
         person = user.person
 
         if action == 'add_authorization_self':
+            if not testing:
+                messages.error(request, 'Testing is not enabled; cannot submit authorization.')
+                return redirect('user_account', user_id=user.id)
             discipline_id = request.POST.get('discipline')
             style_ids = request.POST.getlist('weapon_styles')
             selected_styles = sorted(set(style_ids))
@@ -1260,16 +1328,24 @@ def user_account(request, user_id):
 
         elif action in ('self_set_regional', 'self_remove_regional'):
             # Only the owner can change their own appointment
+            if not testing:
+                messages.error(request, 'Testing is not enabled; cannot set self as marshal officer.')
+                return redirect('user_account', user_id=user.id)
             if request.user.id != user_id:
                 messages.error(request, "You can only change your own marshal appointment.")
                 return redirect('user_account', user_id=user_id)
 
-            region_id = request.POST.get('region_id')
+            # Accept either 'region_id' (legacy form field) or 'branch_id'
+            branch_id = request.POST.get('region_id') or request.POST.get('branch_id')
             discipline_id = request.POST.get('discipline_id')
             try:
-                region = Branch.objects.get(id=region_id)
+                branch = Branch.objects.get(id=branch_id)
             except Branch.DoesNotExist:
-                messages.error(request, 'Invalid region selected.')
+                messages.error(request, 'Invalid branch selected.')
+                return redirect('user_account', user_id=user_id)
+            # Exclude branches of type 'Other'
+            if branch.type == 'Other':
+                messages.error(request, 'Selected branch type is not eligible for marshal appointments.')
                 return redirect('user_account', user_id=user_id)
             try:
                 discipline = Discipline.objects.get(id=discipline_id)
@@ -1281,49 +1357,45 @@ def user_account(request, user_id):
                 # Validate requirements only for setting (not removing)
                 # Skip Senior Marshal requirement for Authorization Officer discipline
                 if discipline.name != 'Authorization Officer':
-                    has_senior = Authorization.objects.filter(
-                        person=person,
-                        style__name='Senior Marshal',
-                        style__discipline=discipline,
-                        status__name='Active',
-                        expiration__gte=date.today(),
-                    ).exists()
-                    if not has_senior:
-                        messages.error(request, f'You must hold an active Senior Marshal in {discipline.name}.')
-                        return redirect('user_account', user_id=user_id)
+                    if branch.type in ['Kingdom', 'Principality', 'Region']:
+                        # Regional/kingdom appointment requires Senior Marshal
+                        has_required = Authorization.objects.filter(
+                            person=person,
+                            style__name='Senior Marshal',
+                            style__discipline=discipline,
+                            status__name='Active',
+                            expiration__gte=date.today(),
+                        ).exists()
+                        if not has_required:
+                            messages.error(request, f'You must hold an active Senior Marshal in {discipline.name}.')
+                            return redirect('user_account', user_id=user_id)
+                    else:
+                        # Local branch appointment allows Junior or Senior Marshal
+                        has_required = Authorization.objects.filter(
+                            person=person,
+                            style__name__in=['Junior Marshal', 'Senior Marshal'],
+                            style__discipline=discipline,
+                            status__name='Active',
+                            expiration__gte=date.today(),
+                        ).exists()
+                        if not has_required:
+                            messages.error(request, f'You must hold an active Junior or Senior Marshal in {discipline.name}.')
+                            return redirect('user_account', user_id=user_id)
 
                 if not user.membership or not user.membership_expiration or user.membership_expiration < date.today():
                     messages.error(request, 'A current SCA membership (with valid expiration) is required.')
                     return redirect('user_account', user_id=user_id)
 
-                if not region.is_region():
-                    messages.error(request, 'Please select a region (Kingdom, Principality, or Region).')
-                    return redirect('user_account', user_id=user_id)
-
                 # Authorization Officer may only select the Kingdom (An Tir)
-                if discipline.name == 'Authorization Officer' and region.name != 'An Tir':
+                if discipline.name == 'Authorization Officer' and branch.name != 'An Tir':
                     messages.error(request, 'Authorization Officers must be appointed at the Kingdom level (An Tir).')
                     return redirect('user_account', user_id=user_id)
-
-                # Regional match: the user's branch must belong to the selected region (except Kingdom An Tir)
-                if region.name != 'An Tir':
-                    if not person.branch:
-                        messages.error(request, 'Your account must have a branch set to determine your region.')
-                        return redirect('user_account', user_id=user_id)
-                    # Determine the person region id based on their branch
-                    try:
-                        person_region_id = person.branch.id if person.branch.is_region() else (person.branch.region_id or None)
-                    except Exception:
-                        person_region_id = None
-                    if person_region_id != region.id:
-                        messages.error(request, 'Selected region does not match your home region.')
-                        return redirect('user_account', user_id=user_id)
 
                 # Enforce single active officer position at a time
                 has_other_active_office = BranchMarshal.objects.filter(
                     person=person,
                     end_date__gte=date.today(),
-                ).exclude(branch=region, discipline=discipline).exists()
+                ).exclude(branch=branch, discipline=discipline).exists()
                 if has_other_active_office:
                     messages.error(
                         request,
@@ -1331,27 +1403,27 @@ def user_account(request, user_id):
                     )
                     return redirect('user_account', user_id=user_id)
                 try:
-                    bm = BranchMarshal.objects.get(person=person, branch=region, discipline=discipline, end_date__gte=date.today())
+                    bm = BranchMarshal.objects.get(person=person, branch=branch, discipline=discipline, end_date__gte=date.today())
                     bm.end_date = date.today() + relativedelta(years=1)
                     bm.save()
-                    messages.success(request, f'Your regional marshal appointment for {discipline.name} in {region.name} has been refreshed.')
+                    messages.success(request, f'Your marshal appointment for {discipline.name} in {branch.name} has been refreshed.')
                 except BranchMarshal.DoesNotExist:
                     BranchMarshal.objects.create(
-                        branch=region,
+                        branch=branch,
                         person=person,
                         discipline=discipline,
                         start_date=date.today(),
                         end_date=date.today() + relativedelta(years=1),
                     )
-                    messages.success(request, f'You are now set as a regional marshal for {discipline.name} in {region.name}.')
+                    messages.success(request, f'You are now set as a marshal for {discipline.name} in {branch.name}.')
                 return redirect('user_account', user_id=user_id)
 
             if action == 'self_remove_regional':
-                qs = BranchMarshal.objects.filter(person=person, branch=region, discipline=discipline, end_date__gte=date.today())
+                qs = BranchMarshal.objects.filter(person=person, branch=branch, discipline=discipline, end_date__gte=date.today())
                 if qs.exists():
                     # Set end date to yesterday so it no longer counts as active (we check end_date__gte=today)
                     qs.update(end_date=date.today() - relativedelta(days=1))
-                    messages.success(request, f'Regional marshal appointment for {discipline.name} in {region.name} has been ended.')
+                    messages.success(request, f'Marshal appointment for {discipline.name} in {branch.name} has been ended.')
                 else:
                     messages.info(request, 'No active regional marshal appointment found to remove.')
                 return redirect('user_account', user_id=user_id)
@@ -1424,9 +1496,10 @@ def user_account(request, user_id):
         'auth_form': CreateAuthorizationForm(user=request.user, show_all=True),
         'auth_officer': is_kingdom_authorization_officer(request.user),
         'all_people': Person.objects.all().order_by('sca_name'),
-        # Exclude Avacal from selectable regions per testing requirement
-        'region_choices': Branch.objects.regions().exclude(name='Avacal').order_by('name'),
+        # Branch choices for self-appointment (exclude Other type)
+        'branch_choices': Branch.objects.exclude(type='Other').order_by('name'),
         'discipline_choices': Discipline.objects.order_by('name'),
+        'testing': testing,
     }
 
     return render(request, 'authorizations/user_account.html', context)
@@ -1773,7 +1846,12 @@ class CreatePersonForm(forms.Form):
     username = forms.CharField(label='Username', required=True)
     first_name = forms.CharField(label='First Name', required=True)
     last_name = forms.CharField(label='Last Name', required=True)
-    membership = forms.IntegerField(label='Membership Number', required=False)
+    membership = forms.CharField(
+        label='Membership Number',
+        required=False,
+        max_length=20,
+        validators=[RegexValidator(r'^\d{1,20}$', 'Enter 1-20 digits.')]
+    )
     membership_expiration = forms.DateField(label='Membership Expiration', required=False,
                                             widget=forms.DateInput(attrs={'type': 'date'}))
     address = forms.CharField(label='Address', required=True)
@@ -1820,6 +1898,8 @@ class CreatePersonForm(forms.Form):
         qs = Title.objects.filter(name__in=self.ALLOWED_TITLES)
         qs = qs.order_by('pk')
         self.fields['title'].queryset = qs
+        # Order branches alphabetically and exclude region-level types (Kingdom/Principality/Region)
+        self.fields['branch'].queryset = Branch.objects.non_regions().order_by('name')
 
     def clean_phone_number(self):
         raw = self.cleaned_data['phone_number']
@@ -1887,6 +1967,9 @@ class CreatePersonForm(forms.Form):
             raise forms.ValidationError('A user with this username already exists.')
 
         membership = cleaned_data.get('membership')
+        if isinstance(membership, str):
+            membership = membership.strip()
+            cleaned_data['membership'] = membership or None
         if membership and User.objects.filter(membership=membership).exclude(id=user_id).exists():
             raise forms.ValidationError('A user with this membership number already exists.')
 

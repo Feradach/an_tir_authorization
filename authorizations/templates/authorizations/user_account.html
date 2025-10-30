@@ -5,15 +5,7 @@
     User Account {{ user.person.sca_name }}
 {% endblock %}
 {% block body %}
-    {% if messages %}
-            <div id="messages-container">
-                {% for message in messages %}
-                    <div class="alert alert-{{ message.tags }}" role="alert">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            </div>
-        {% endif %}
+    {# Messages rendered globally in layout.html #}
 <div class="card">
     <div class="col-md-4">
             <div class="mb-3">
@@ -116,12 +108,13 @@
 </div>
 
 {# Moved Add New Authorization into the Regional Marshal card below #}
+{% if testing %}
 <div class="card mt-3">
     <div class="col-md-6">
         <div class="mb-3">
-            <strong>This section is for testing the system and it will not be present in the full deployment. You can make yourself a regional marshal and add any authorization to yourself here.</strong>
-            <h3>Regional Marshal (Testing)</h3>
-            <p class="text-muted">Set or remove yourself as a regional marshal. Requires an active Senior Marshal in the selected discipline and a current membership. You may only have one active officer position at a time.</p>
+            <strong>This section is for testing the system and it will not be present in the full deployment. You can make yourself a branch marshal and add any authorization to yourself here.</strong>
+            <h3>Branch Marshal (Testing)</h3>
+            <p class="text-muted">Set or remove yourself as a branch marshal. Kingdom/Principality/Region requires an active Senior Marshal in the selected discipline; local branches allow Junior or Senior Marshal. Current membership required. Only one active officer position at a time.</p>
 
             {% if branch_officer %}
             <div class="alert alert-info">
@@ -131,17 +124,17 @@
             <form method="post">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="self_remove_regional">
-                <input type="hidden" name="region_id" value="{{ branch_officer.branch.id }}">
+                <input type="hidden" name="branch_id" value="{{ branch_officer.branch.id }}">
                 <input type="hidden" name="discipline_id" value="{{ branch_officer.discipline.id }}">
-                <button type="submit" class="btn btn-danger mt-2">Remove Regional Marshal</button>
+                <button type="submit" class="btn btn-danger mt-2">Remove Branch Marshal</button>
             </form>
             {% else %}
             <form method="post" class="mb-2">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="self_set_regional">
-                <label for="rm_region">Region:</label>
-                <select id="rm_region" name="region_id" class="form-control">
-                    {% for b in region_choices %}
+                <label for="rm_branch">Branch:</label>
+                <select id="rm_branch" name="branch_id" class="form-control">
+                    {% for b in branch_choices %}
                         <option value="{{ b.id }}">{{ b.name }}</option>
                     {% endfor %}
                 </select>
@@ -151,7 +144,7 @@
                         <option value="{{ d.id }}">{{ d.name }}</option>
                     {% endfor %}
                 </select>
-                <button type="submit" class="btn btn-primary mt-2">Set as Regional Marshal</button>
+                <button type="submit" class="btn btn-primary mt-2">Set as Branch Marshal</button>
             </form>
             {% endif %}
 
@@ -186,6 +179,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 {% endblock %}
 
 {% block script %}

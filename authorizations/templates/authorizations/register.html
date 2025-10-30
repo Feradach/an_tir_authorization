@@ -6,15 +6,7 @@
 {% endblock %}
 
 {% block body %}
-    {% if messages %}
-        <div id="messages-container">
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}" role="alert">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        </div>
-    {% endif %}
+    {# Messages are now rendered globally in layout.html #}
 
     <h3>Register</h3>
     <p>This is a public testing form to create your own account.</p>
@@ -35,6 +27,7 @@
                     Canadian codes starting with <code>V</code>, or U.S. ZIPs starting with <code>97</code>, <code>98</code>,
                     or in the ranges <code>991–994</code>, <code>838</code>, or <code>835</code>.</li>
                 <li>Membership number and expiration must be provided together, or leave both blank. The experiation date must be in the future.</li>
+                <li>Membership number must be between 1 and 20 digits.</li>
                 <li>If registering a minor, a birthday is required. Non‑minors must not list a parent.</li>
                 <li>Title is optional; you may choose from the list or enter a new title with a rank.</li>
                 <li>After this is submitted, you will receive a temporary password via email. You will need to log in with this password to complete your registration.</li>
@@ -61,6 +54,20 @@
                 </div>
             {% endif %}
         {% endfor %}
+        {% if TEST_FEATURES_ENABLED %}
+            <div class="form-group">
+                {{ person_form.background_check_expiration.label_tag }}
+                {{ person_form.background_check_expiration }}
+                {% if person_form.background_check_expiration.help_text %}
+                    <small class="form-text text-muted">{{ person_form.background_check_expiration.help_text }}</small>
+                {% endif %}
+                {% if person_form.background_check_expiration.errors %}
+                    <div class="invalid-feedback d-block">
+                        {{ person_form.background_check_expiration.errors.0 }}
+                    </div>
+                {% endif %}
+            </div>
+        {% endif %}
         <button type="submit" class="btn btn-primary mt-3">Create Account</button>
     </form>
 

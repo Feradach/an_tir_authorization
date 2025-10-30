@@ -35,7 +35,7 @@ class User(AbstractUser):
     """User model. It is extended to include the membership information and their address."""
 
     # Used none@invalid.com for blank or invalid emails. Need to code this in.
-    membership = models.IntegerField(null=True, blank=True, unique=True)
+    membership = models.CharField(max_length=20, null=True, blank=True, unique=True)
     membership_expiration = models.DateField(null=True, blank=True)
     address = models.CharField(max_length=255,null=True, blank=True)
     address2 = models.CharField(max_length=255,null=True, blank=True)

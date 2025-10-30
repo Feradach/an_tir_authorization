@@ -1,5 +1,18 @@
 ## [Unreleased]
 - 
+## [0.1.0] - 2025-10-30
+### Fixed
+- Fixed issue with user lookup when two people have the same SCA name.
+- Fixed membership field so it allows up to 20 digits and handles errors better.
+- Shored up security for authorizations.
+- Fixed branch dropdown in account creation to exclude region-level types (Kingdom/Principality/Region).
+- Fixed branch dropdown to be alphabetically ordered.
+- Changed testing branch marshal to now allow any branch to be selected.
+- Made errors more visible.
+
+### Added
+- Added a "testing" flag to the settings so that test and production code can be unified. Flag set to false will turn off all testing features.
+- Added background check expiration to the self-registration form.
 
 ## [0.0.3] - 2025-10-27
 ### Added

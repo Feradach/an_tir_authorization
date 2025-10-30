@@ -7,6 +7,15 @@
 
 {% block body %}
 <div class="card">
+    {% if messages %}
+        <div id="messages-container">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }}" role="alert">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
     <h3>
     {% if person.title  %}
     	{{ person.title.name }}

@@ -21,6 +21,9 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") # Stored in the environment
 DEBUG = os.environ.get("DEBUG") == "True"  # Stored in the environment
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",") # Stored in the environment
 
+# Gate test-only features (default off in production; enable via env as needed)
+AUTHZ_TEST_FEATURES = os.environ.get('AUTHZ_TEST_FEATURES', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+
 SITE_URL = os.environ.get("SITE_URL", "https://auth.thebusinessduck.com")
 
 # Use PyMySQL as MySQLdb backend
