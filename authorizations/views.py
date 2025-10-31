@@ -9,7 +9,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.http import JsonResponse
 from datetime import date, timedelta
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, Max
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.core.paginator import Paginator
@@ -18,7 +18,7 @@ from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 from django.contrib.staticfiles import finders
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current
 from itertools import groupby
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName
@@ -233,7 +233,7 @@ def login_view(request):
         if user is not None:
             login(request, user)
             if not user.has_logged_in:
-                messages.error(request, 'You must change your password when you first log into the system.')
+                messages.warning(request, 'You must change your password when you first log into the system.')
                 return redirect('password_reset', user_id=user.id)
             return HttpResponseRedirect(reverse('index'))
         else:
@@ -340,14 +340,7 @@ def password_reset(request, user_id):
 
     # Get the old password
     if request.method == 'POST':
-        old_password = request.POST['old_password']
-        username = request.user.username
-        user = authenticate(request, username=username, password=old_password)
-        if user is None:
-            return render(request, 'authorizations/password_reset.html', {
-                'message': 'Invalid old password.'
-            })
-
+        
         # Create new password
         password = request.POST['password']
         confirmation = request.POST['confirmation']
@@ -456,6 +449,32 @@ def generate_random_password(length=12):
     password = ''.join(random.choice(characters) for _ in range(length))
     return password
 
+def _finalize_waiver_signed(request_user: User, target_user: User):
+    """Finalize waiver signing for target_user.
+    - Permitted if request_user == target_user OR request_user is Authorization Officer.
+    - If target_user has any 'Pending Waiver' authorizations, mark them Active and set
+      waiver_expiration to the latest of their expirations.
+    - Otherwise, set waiver_expiration to one year from today.
+    Returns (ok: bool, message: str).
+    """
+    if request_user.id != target_user.id and not is_kingdom_authorization_officer(request_user):
+        return False, 'You can only sign a waiver for your own account.'
+
+    pending_qs = Authorization.objects.filter(person__user=target_user, status__name='Pending Waiver')
+    if pending_qs.exists():
+        max_exp = pending_qs.aggregate(latest=Max('expiration'))['latest']
+        try:
+            active_status = AuthorizationStatus.objects.get(name='Active')
+        except AuthorizationStatus.DoesNotExist:
+            return False, 'System error: Active status not found.'
+        pending_qs.update(status=active_status)
+        target_user.waiver_expiration = max_exp
+        target_user.save()
+        return True, 'Waiver signed and authorizations activated.'
+    else:
+        target_user.waiver_expiration = date.today() + relativedelta(years=1)
+        target_user.save()
+        return True, 'Waiver signed for one year.'
 
 def search(request):
     """
@@ -665,6 +684,12 @@ def fighter(request, person_id):
     ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).order_by(
         'style__discipline__name', 'expiration', 'style__name')
 
+    pending_waiver_list = Authorization.objects.select_related(
+        'person__branch__region',
+        'style__discipline',
+    ).filter(person_id=person_id, status__name='Pending Waiver').order_by(
+        'style__discipline__name', 'expiration', 'style__name')
+
     sanctions_list = Authorization.objects.select_related(
         'person__branch__region',
         'style__discipline',
@@ -722,6 +747,25 @@ def fighter(request, person_id):
             if style_name not in pending_authorizations[discipline_name]['styles']:
                 pending_authorizations[discipline_name]['styles'].append(style_name)
 
+    pending_waivers = {}
+    for auth in pending_waiver_list:
+        discipline_name = auth.style.discipline.name
+        if discipline_name not in pending_waivers:
+            pending_waivers[discipline_name] = {
+                'auth_id': auth.id,
+                'marshal_name': auth.marshal.sca_name if auth.marshal else '',
+                'earliest_expiration': auth.expiration,
+                'styles': [auth.style.name],
+                'status': auth.status.name
+            }
+        else:
+            if auth.expiration < pending_waivers[discipline_name]['earliest_expiration']:
+                pending_waivers[discipline_name]['earliest_expiration'] = auth.expiration
+                pending_waivers[discipline_name]['marshal_name'] = auth.marshal.sca_name if auth.marshal else ''
+            style_name = auth.style.name
+            if style_name not in pending_waivers[discipline_name]['styles']:
+                pending_waivers[discipline_name]['styles'].append(style_name)
+
     sanctions = {}
     for auth in sanctions_list:
         discipline_name = auth.style.discipline.name
@@ -766,6 +810,7 @@ def fighter(request, person_id):
                 'is_marshal': False,
                 'branch_officer': branch_officer,
                 'sanctions': sanctions,
+                'pending_waivers': pending_waivers,
             },
         )
 
@@ -796,6 +841,7 @@ def fighter(request, person_id):
             'sanctions': sanctions,
             'regional_marshal': regional_marshal,
             'all_people': Person.objects.all().order_by('sca_name'),
+            'pending_waivers': pending_waivers,
         },
     )
 
@@ -1056,6 +1102,13 @@ def add_authorization(request, person_id):
         auth_form = CreateAuthorizationForm(request.POST, user=authorizing_marshal)
 
         if auth_form.is_valid():
+            # Helpers for waiver and statuses
+            def waiver_current(u):
+                return bool(u.waiver_expiration and u.waiver_expiration > date.today())
+
+            active_status = AuthorizationStatus.objects.get(name='Active')
+            pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
+            needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
             sent_styles = request.POST.getlist('weapon_styles')
             selected_styles = sorted(set(sent_styles))
 
@@ -1092,17 +1145,27 @@ def add_authorization(request, person_id):
                                         update_auth.status = AuthorizationStatus.objects.get(name='Pending')
                                         messages.success(request, f'Authorization for {update_auth.style.name} pending confirmation.')
                                     else:
-                                        update_auth.status = AuthorizationStatus.objects.get(name='Active')
+                                        # Marshal authorizations require current membership; never Pending Waiver here
+                                        if not membership_is_current(person.user):
+                                            messages.error(request, 'Marshal authorizations require a current membership.')
+                                            return redirect('fighter', person_id=person_id)
+                                        update_auth.status = active_status
                                         messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
                                 else:
-                                    update_auth.status = AuthorizationStatus.objects.get(name='Active')
-                                    messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                    update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
+                                    if update_auth.status == active_status:
+                                        messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                    else:
+                                        messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
                                 
                                 # Set expiration based on youth marshal rules
-                                if update_auth.style.discipline.name in ['Youth Armored', 'Youth Rapier'] and update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
+                                if update_auth.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
                                     two_years = date.today() + relativedelta(years=2)
-                                    if person.user.background_check_expiration:
-                                        update_auth.expiration = min(two_years, person.user.background_check_expiration)
+                                    if update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
+                                        if person.user.background_check_expiration:
+                                            update_auth.expiration = min(two_years, person.user.background_check_expiration)
+                                        else:
+                                            update_auth.expiration = two_years
                                     else:
                                         update_auth.expiration = two_years
                                 else:
@@ -1135,22 +1198,27 @@ def add_authorization(request, person_id):
                                                 style=style,
                                                 expiration=expiration,
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Needs Kingdom Approval'),
+                                                status=needs_kingdom_status,
                                             )
                                             messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                         else:
+                                            status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
                                             new_auth = Authorization.objects.create(
                                                 person=person,
                                                 style=style,
                                                 expiration=expiration,
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Active'),
+                                                status=status_to_set,
                                             )
-                                            messages.success(request, f'Authorization for {style.name} created successfully!')
-                                        # Update the waiver expiration date if it is greater than today to the authorization expiration date
-                                        if person.user.waiver_expiration and person.user.waiver_expiration < expiration:
-                                            person.user.waiver_expiration = expiration
-                                            person.user.save()
+                                            if status_to_set == active_status:
+                                                messages.success(request, f'Authorization for {style.name} created successfully!')
+                                            else:
+                                                messages.success(request, f'Authorization for {style.name} pending waiver.')
+                                        # Only push waiver when the new auth is Active
+                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                            if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
+                                                person.user.waiver_expiration = expiration
+                                                person.user.save()
                                     else:
                                         if AUTHORIZATION_OFFICER_SIGN_OFF:
                                             new_auth = Authorization.objects.create(
@@ -1158,22 +1226,27 @@ def add_authorization(request, person_id):
                                                 style=style,
                                                 expiration=date.today() + relativedelta(years=4),
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Needs Kingdom Approval'),
+                                                status=needs_kingdom_status,
                                             )
                                             messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                         else:
+                                            status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
                                             new_auth = Authorization.objects.create(
                                                 person=person,
                                                 style=style,
                                                 expiration=date.today() + relativedelta(years=4),
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Active'),
+                                                status=status_to_set,
                                             )
-                                            messages.success(request, f'Authorization for {style.name} created successfully!')
-                                        # Update the waiver expiration date if it is greater than today to the authorization expiration date
-                                        if person.user.waiver_expiration and person.user.waiver_expiration < new_auth.expiration:
-                                            person.user.waiver_expiration = new_auth.expiration
-                                            person.user.save()
+                                            if status_to_set == active_status:
+                                                messages.success(request, f'Authorization for {style.name} created successfully!')
+                                            else:
+                                                messages.success(request, f'Authorization for {style.name} pending waiver.')
+                                        # Only push waiver when the new auth is Active
+                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                            if (not person.user.waiver_expiration) or (person.user.waiver_expiration < new_auth.expiration):
+                                                person.user.waiver_expiration = new_auth.expiration
+                                                person.user.save()
 
                         except Exception as e:
                             print(f"Error processing style {style_id}: {e}")
@@ -1292,7 +1365,10 @@ def user_account(request, user_id):
 
                     if style.name in ['Senior Marshal', 'Junior Marshal']:
                         expiration = date.today() + relativedelta(years=4)
-                        status = AuthorizationStatus.objects.get(name='Pending')
+                        if not membership_is_current(person.user):
+                            messages.error(request, 'Marshal authorizations require a current membership.')
+                            return redirect('user_account', user_id=user.id)
+                        status = active_status
                     else:
                         if style.discipline.name in ['Youth Armored', 'Youth Rapier'] and style.name in ['Junior Marshal', 'Senior Marshal']:
                             two_years = date.today() + relativedelta(years=2)
@@ -1303,10 +1379,7 @@ def user_account(request, user_id):
                         else:
                             expiration = date.today() + relativedelta(years=4)
 
-                        if AUTHORIZATION_OFFICER_SIGN_OFF:
-                            status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
-                        else:
-                            status = AuthorizationStatus.objects.get(name='Active')
+                        status = active_status if waiver_current(person.user) else pending_waiver_status
 
                     Authorization.objects.create(
                         person=person,
@@ -1468,20 +1541,16 @@ def user_account(request, user_id):
     else:
         form = CreatePersonForm(initial=initial_data, user_instance=user, request=request)
 
-    # Calculate the maximum expiration date
-    waiver_signed = False
+    # Calculate waiver status strictly by waiver_expiration (not membership)
+    waiver_signed = bool(user.waiver_expiration and user.waiver_expiration > date.today())
+    # Preserve display of a maximum relevant date for UI (waiver or membership)
     max_expiration = None
-    if user.waiver_expiration and user.waiver_expiration > date.today():
-        waiver_signed = True
-    elif user.membership_expiration and user.membership_expiration > date.today():
-        waiver_signed = True
-    if waiver_signed:
-        if user.waiver_expiration and user.membership_expiration:
-            max_expiration = max(user.waiver_expiration, user.membership_expiration)
-        elif user.waiver_expiration:
-            max_expiration = user.waiver_expiration
-        elif user.membership_expiration:
-            max_expiration = user.membership_expiration
+    if user.waiver_expiration and user.membership_expiration:
+        max_expiration = max(user.waiver_expiration, user.membership_expiration)
+    elif user.waiver_expiration:
+        max_expiration = user.waiver_expiration
+    elif user.membership_expiration:
+        max_expiration = user.membership_expiration
 
     context = {
         'person': person,
@@ -1506,12 +1575,20 @@ def user_account(request, user_id):
 
 @login_required
 def sign_waiver(request, user_id):
+    user = User.objects.get(id=user_id)
     if request.method == 'POST':
-        user = User.objects.get(id=user_id)
-        user.waiver_expiration = date.today() + relativedelta(years=1)
-        user.save()
-        return redirect('user_account', user_id=user.id)
+        ok, msg = _finalize_waiver_signed(request.user, user)
+        if ok:
+            messages.success(request, msg)
+            return redirect('user_account', user_id=user.id)
+        else:
+            messages.error(request, msg)
+            return redirect('index')
     else:
+        # Only the account owner may view the waiver page (AO cannot view others' waiver page)
+        if request.user.id != user_id:
+            messages.error(request, 'You can only sign a waiver for your own account.')
+            return redirect('index')
         return render(request, 'authorizations/waiver.html')
 
 def reject_authorization(request, authorization):

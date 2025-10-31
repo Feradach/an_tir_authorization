@@ -7,15 +7,6 @@
 
 {% block body %}
 <div class="card">
-    {% if messages %}
-        <div id="messages-container">
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}" role="alert">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        </div>
-    {% endif %}
     <h3>
     {% if person.title  %}
     	{{ person.title.name }}
@@ -158,6 +149,30 @@
             {% endfor %}
         </div>
     {% endif %}
+
+    {% if pending_waivers %}
+        <h4>Pending Waiver</h4>
+        <div class="row">
+            {% for discipline, data in pending_waivers.items %}
+                <div class="col-md-3">
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #e9ecef; color: #333;">
+                        <h5>{{ discipline }}</h5>
+                        <p><strong>Styles:</strong>
+                        <ul>
+                        {% for style in data.styles %}
+                          <li>{{ style }}{% if not forloop.last %}, {% endif %}</li>
+                        {% endfor %}
+                        </ul>
+                        </p>
+                        <p><strong>Status:</strong> {{ data.status }}</p>
+                        {% if data.marshal_name %}
+                            <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
 </div>
 </div>
 {% if sanctions  %}
@@ -270,7 +285,7 @@
                 </a>
             </div>
         {% endif %}
-        <p><strong>Instructions:</strong> You must print the card following the link. Downloading will cause it to lose the text.</p>
+        <p><strong>Note:</strong> Fighter cards are not currently working in the Firefox browser. Please use Chrome or Edge.</p>
     </div>
 </div>
 

@@ -36,7 +36,14 @@
                 {% endif %}
                 <p><strong>Background Check Expiration:</strong> {{ user.background_check_expiration }}</p>
                 {% if not waiver_signed %}
-                    <a href="{% url 'sign_waiver' user_id=user.id %}" class="btn btn-primary">Sign Waiver</a><br>
+                    {% if user.id == request.user.id %}
+                        <a href="{% url 'sign_waiver' user_id=user.id %}" class="btn btn-primary">Sign Waiver</a><br>
+                    {% elif is_authorization_officer %}
+                        <form method="post" action="{% url 'sign_waiver' user_id=user.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-primary">Sign Waiver</button>
+                        </form><br>
+                    {% endif %}
                 {% endif %}
             </div>
     </div>

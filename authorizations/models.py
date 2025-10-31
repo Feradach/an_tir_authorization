@@ -73,6 +73,12 @@ class User(AbstractUser):
             self.membership = None
             self.membership_expiration = None
 
+        # If a membership expiration is present, ensure waiver_expiration is at
+        # least as long. This treats current membership as an acceptable waiver.
+        if self.membership_expiration:
+            if not self.waiver_expiration or self.waiver_expiration < self.membership_expiration:
+                self.waiver_expiration = self.membership_expiration
+
         super().save(*args, **kwargs)
 
 class BranchManager(models.Manager):

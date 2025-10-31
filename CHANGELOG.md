@@ -1,5 +1,5 @@
 ## [Unreleased]
-- 
+
 ## [0.1.0] - 2025-10-30
 ### Fixed
 - Fixed issue with user lookup when two people have the same SCA name.
@@ -9,10 +9,18 @@
 - Fixed branch dropdown to be alphabetically ordered.
 - Changed testing branch marshal to now allow any branch to be selected.
 - Made errors more visible.
+- Setting a marshal authorization in testing will make it active.
+- Set rule so that adults cannot be authorized as youth fighters.
+- Set so that waiver can only be signed by the account owner or the authorization officer.
+- Removed requirement to enter old password on password reset page.
+- Fixed issue where dropdowns were cut off on the search pages with few values returned.
 
 ### Added
 - Added a "testing" flag to the settings so that test and production code can be unified. Flag set to false will turn off all testing features.
 - Added background check expiration to the self-registration form.
+- Added a note saying that fighter cards do not work in Firefox.
+- Added pending waiver status. If a fighter does not have a current waiver, authorizations assigned to them will be set to pending waiver. When they sign the waiver all pending waiver authorizations will be set to active.
+- Added go to page feature on search pages.
 
 ## [0.0.3] - 2025-10-27
 ### Added

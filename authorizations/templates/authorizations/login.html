@@ -8,16 +8,6 @@
 {% block body %}
 
     <h2>Login</h2>
-
-    {% if messages %}
-        <div id="messages-container">
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}" role="alert">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        </div>
-    {% endif %}
 <div class="col-md-4">
     <form action="{% url 'login' %}" method="post">
         {% csrf_token %}

@@ -191,6 +191,42 @@ td {
     overflow-y: auto;
     border: 1px solid #ccc;
     border-radius: 4px;
+    z-index: 1050; /* ensure dropdown overlays table containers */
+}
+
+/* Allow dropdowns inside responsive tables to overflow vertically */
+.table-responsive {
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+}
+
+/* Stronger scoping for search table to prevent clipping in header cells */
+#table-view thead,
+#table-view th {
+    overflow: visible !important;
+}
+
+#table-view th {
+    position: relative; /* provides stacking context for absolute dropdown */
+    z-index: 1;
+}
+
+#table-view .choices {
+    overflow: visible !important;
+    z-index: 2;
+}
+
+#table-view .choices.is-open .choices__list--dropdown {
+    position: fixed !important; /* let JS set left/top/width inline */
+    z-index: 3000 !important;
+}
+
+/* Ensure parent containers don't clip dropdowns on the search page */
+#main-content,
+.container-fluid,
+.card,
+.card-body {
+    overflow: visible !important;
 }
 
 .choices__item--selectable:hover {
