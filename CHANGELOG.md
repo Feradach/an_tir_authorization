@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+## [0.1.1] - 2025-11-28
+### Fixed
+- Fixed bug where the page would crash if user put in incorrect date format into URL.
+
 ## [0.1.0] - 2025-10-30
 ### Fixed
 - Fixed issue with user lookup when two people have the same SCA name.

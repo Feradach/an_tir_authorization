@@ -3,12 +3,13 @@ from django.core.mail import send_mail
 from django.conf import settings
 import random
 import string
-from datetime import date
+from datetime import date, datetime
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.http import JsonResponse
-from datetime import date, timedelta
+from datetime import timedelta
+import logging
 from django.db.models import Q, Prefetch, Max
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
@@ -28,6 +29,8 @@ from django.core.validators import RegexValidator
 import re
 import mistune
 import bleach
+
+logger = logging.getLogger(__name__)
 
 # Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
@@ -476,6 +479,22 @@ def _finalize_waiver_signed(request_user: User, target_user: User):
         target_user.save()
         return True, 'Waiver signed for one year.'
 
+def _parse_search_date(value: str):
+    """
+    Validate date filter inputs so malformed values do not crash the view.
+    Returns a tuple of (parsed_date_or_none, invalid_flag).
+    """
+    if not value:
+        return None, False
+    candidate = value.strip()
+    if not candidate:
+        return None, False
+    try:
+        return datetime.strptime(candidate, '%Y-%m-%d').date(), False
+    except ValueError:
+        return None, True
+
+
 def search(request):
     """
     Handles both the search form display and the search results display.
@@ -517,16 +536,31 @@ def search(request):
     if region: dynamic_filter &= Q(person__branch__region__name=region)
     branch = request.GET.get('branch')
     if branch: dynamic_filter &= Q(person__branch__name=branch)
+    invalid_query_params = set()
+
     discipline = request.GET.get('discipline')
     if discipline: dynamic_filter &= Q(style__discipline__name=discipline)
     style = request.GET.get('style')
     if style: dynamic_filter &= Q(style__name=style)
     marshal = request.GET.get('marshal')
     if marshal: dynamic_filter &= Q(marshal__sca_name=marshal)
-    start_date = request.GET.get('start_date')
-    if start_date: dynamic_filter &= Q(expiration__gte=start_date)
-    end_date = request.GET.get('end_date')
-    if end_date: dynamic_filter &= Q(expiration__lte=end_date)
+    start_date_raw = request.GET.get('start_date')
+    start_date, start_invalid = _parse_search_date(start_date_raw)
+    if start_invalid:
+        invalid_query_params.add('start_date')
+        messages.error(request, 'Start date must be in YYYY-MM-DD format.')
+        logger.warning('Invalid start_date provided to search: %s', start_date_raw)
+    if start_date:
+        dynamic_filter &= Q(expiration__gte=start_date)
+
+    end_date_raw = request.GET.get('end_date')
+    end_date, end_invalid = _parse_search_date(end_date_raw)
+    if end_invalid:
+        invalid_query_params.add('end_date')
+        messages.error(request, 'End date must be in YYYY-MM-DD format.')
+        logger.warning('Invalid end_date provided to search: %s', end_date_raw)
+    if end_date:
+        dynamic_filter &= Q(expiration__lte=end_date)
     is_minor = request.GET.get('is_minor')
     if is_minor: dynamic_filter &= Q(person__is_minor=(is_minor == 'True'))
     if membership_num := request.GET.get('membership'):
@@ -594,6 +628,9 @@ def search(request):
     query_params = request.GET.copy()
     if 'page' in query_params:
         query_params.pop('page')
+    for param in invalid_query_params:
+        if param in query_params:
+            query_params.pop(param)
 
     return render(
         request,
