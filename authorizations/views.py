@@ -25,6 +25,8 @@ from itertools import groupby
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName, PageMerge
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 import os
 from django.contrib import messages
 from django import forms
@@ -35,6 +37,8 @@ import bleach
 
 logger = logging.getLogger(__name__)
 FIGHTER_CARD_WATERMARK = ''
+PDF_FONT_NAME = 'DejaVuSans'
+_PDF_FONT_REGISTERED = False
 
 # Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
@@ -499,6 +503,17 @@ def _parse_search_date(value: str):
         return None, True
 
 
+def _ensure_pdf_font_registered():
+    global _PDF_FONT_REGISTERED
+    if _PDF_FONT_REGISTERED:
+        return
+    font_path = finders.find('fonts/DejaVuSans.ttf') or finders.find('authorizations/static/fonts/DejaVuSans.ttf')
+    if not font_path:
+        raise Exception('DejaVuSans.ttf font file not found for PDF generation.')
+    pdfmetrics.registerFont(TTFont(PDF_FONT_NAME, font_path))
+    _PDF_FONT_REGISTERED = True
+
+
 def _to_float(value):
     try:
         return float(value)
@@ -575,6 +590,7 @@ def _build_overlay_page(page, data, watermark_text, watermark_overlays):
     page_width, page_height = _get_page_size(page)
     packet = BytesIO()
     can = canvas.Canvas(packet, pagesize=(page_width, page_height))
+    _ensure_pdf_font_registered()
     for overlay in watermark_overlays:
         _draw_watermark(
             can,
@@ -603,7 +619,7 @@ def _build_overlay_page(page, data, watermark_text, watermark_overlays):
             continue
         left, bottom, right, top = [_to_float(coord) for coord in rect]
         font_size = _extract_font_size(annotation)
-        can.setFont('Helvetica', font_size)
+        can.setFont(PDF_FONT_NAME, font_size)
         can.setFillColorRGB(0, 0, 0)
 
         rotation = 0
