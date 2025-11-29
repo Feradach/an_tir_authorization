@@ -285,7 +285,6 @@
                 </a>
             </div>
         {% endif %}
-        <p><strong>Note:</strong> Fighter cards are not currently working in the Firefox browser. Please use Chrome or Edge.</p>
     </div>
 </div>
 
@@ -302,6 +301,10 @@
         const stylesSelect = document.getElementById('weapon-styles-select');
         const cartContainer = document.getElementById('cart-container');
         const form = document.querySelector('form');
+
+        if (!disciplineSelect || !stylesSelect || !cartContainer || !form) {
+            return;
+        }
 
         // Initialize Choices.js if the dropdown exists
         if (authorizingMarshalSelect) {

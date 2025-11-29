@@ -55,3 +55,4 @@ whitenoise==6.8.2
 yarg==0.1.9
 cryptography
 Faker==30.8.2
+reportlab==4.2.5

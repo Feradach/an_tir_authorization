@@ -1,8 +1,9 @@
-## [Unreleased]
-
-## [0.1.1] - 2025-11-28
+﻿## [0.1.1] - 2025-11-28
 ### Fixed
 - Fixed bug where the page would crash if user put in incorrect date format into URL.
+- Fixed fighter cards so that they appear correctly in Firefox by flattening the PDF.
+- Added ability to place watermark on fighter cards.
+- Updated logging for better debugging.
 
 ## [0.1.0] - 2025-10-30
 ### Fixed

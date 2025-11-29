@@ -1,4 +1,4 @@
-from dateutil.relativedelta import relativedelta
+﻿from dateutil.relativedelta import relativedelta
 from django.core.mail import send_mail
 from django.conf import settings
 import random
@@ -10,6 +10,7 @@ from django.core.exceptions import ValidationError, PermissionDenied
 from django.http import JsonResponse
 from datetime import timedelta
 import logging
+from io import BytesIO
 from django.db.models import Q, Prefetch, Max
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
@@ -22,7 +23,9 @@ from .models import User, Authorization, Branch, Discipline, WeaponStyle, Author
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current
 from itertools import groupby
 from operator import attrgetter
-from pdfrw import PdfReader, PdfWriter, PdfName
+from pdfrw import PdfReader, PdfWriter, PdfName, PageMerge
+from reportlab.pdfgen import canvas
+import os
 from django.contrib import messages
 from django import forms
 from django.core.validators import RegexValidator
@@ -31,6 +34,7 @@ import mistune
 import bleach
 
 logger = logging.getLogger(__name__)
+FIGHTER_CARD_WATERMARK = ''
 
 # Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
@@ -495,6 +499,166 @@ def _parse_search_date(value: str):
         return None, True
 
 
+def _to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        try:
+            return float(str(value))
+        except (TypeError, ValueError):
+            return 0.0
+
+
+def _get_page_size(page):
+    media_box = getattr(page, 'MediaBox', None)
+    if not media_box:
+        return (612, 792)  # Default to letter
+    lower_left_x, lower_left_y, upper_right_x, upper_right_y = [_to_float(coord) for coord in media_box]
+    return upper_right_x - lower_left_x, upper_right_y - lower_left_y
+
+
+def _extract_font_size(annotation, default=10):
+    default_appearance = getattr(annotation, 'DA', None)
+    if not default_appearance:
+        return default
+    tokens = default_appearance.strip().split()
+    if 'Tf' in tokens:
+        idx = tokens.index('Tf')
+        if idx >= 2:
+            try:
+                return float(tokens[idx - 1])
+            except (TypeError, ValueError):
+                return default
+    return default
+
+
+def _draw_watermark(
+    can,
+    width,
+    height,
+    text,
+    image_path=None,
+    image_opacity=0.15,
+    scale=0.2,
+    x_ratio=0.5,
+    y_ratio=0.5,
+):
+    if not text and not image_path:
+        return
+    can.saveState()
+    if hasattr(can, 'setFillAlpha'):
+        can.setFillAlpha(image_opacity)
+    if image_path and os.path.exists(image_path):
+        target_width = width * scale
+        target_height = height * scale
+        x = (width * x_ratio) - (target_width / 2)
+        y = (height * y_ratio) - (target_height / 2)
+        can.drawImage(
+            image_path,
+            x,
+            y,
+            width=target_width,
+            height=target_height,
+            mask='auto',
+            preserveAspectRatio=True,
+        )
+    elif text:
+        can.setFont('Helvetica-Bold', 42)
+        can.setFillColorRGB(0.85, 0.85, 0.85)
+        can.translate(width / 2, height / 2)
+        can.rotate(45)
+        can.drawCentredString(0, 0, text)
+    can.restoreState()
+
+
+def _build_overlay_page(page, data, watermark_text, watermark_overlays):
+    page_width, page_height = _get_page_size(page)
+    packet = BytesIO()
+    can = canvas.Canvas(packet, pagesize=(page_width, page_height))
+    for overlay in watermark_overlays:
+        _draw_watermark(
+            can,
+            page_width,
+            page_height,
+            watermark_text if overlay.get('use_text') else '',
+            image_path=overlay.get('image_path'),
+            image_opacity=overlay.get('opacity', 0.15),
+            scale=overlay.get('scale', 0.2),
+            x_ratio=overlay.get('x_ratio', 0.5),
+            y_ratio=overlay.get('y_ratio', 0.5),
+        )
+
+    annotations = getattr(page, 'Annots', []) or []
+    for annotation in annotations:
+        if getattr(annotation, 'Subtype', None) != '/Widget' or not getattr(annotation, 'T', None):
+            continue
+
+        field_name = annotation.T[1:-1].strip()
+        value = data.get(field_name)
+        if not value:
+            continue
+
+        rect = getattr(annotation, 'Rect', None)
+        if not rect:
+            continue
+        left, bottom, right, top = [_to_float(coord) for coord in rect]
+        font_size = _extract_font_size(annotation)
+        can.setFont('Helvetica', font_size)
+        can.setFillColorRGB(0, 0, 0)
+
+        rotation = 0
+        mk = getattr(annotation, 'MK', None)
+        if mk is not None:
+            rot = None
+            if hasattr(mk, 'R'):
+                rot = mk.R
+            elif isinstance(mk, dict):
+                rot = mk.get('/R')
+            if rot is not None:
+                try:
+                    rotation = float(str(rot))
+                except (TypeError, ValueError):
+                    rotation = 0
+
+        if rotation:
+            center_x = (left + right) / 2
+            center_y = (bottom + top) / 2
+            can.saveState()
+            can.translate(center_x, center_y)
+            can.rotate(rotation)
+            can.drawCentredString(0, -font_size / 2, str(value))
+            can.restoreState()
+        else:
+            text_x = left
+            text_y = top - font_size
+            can.drawString(text_x, text_y, str(value))
+
+    can.save()
+    packet.seek(0)
+    overlay_pdf = PdfReader(packet)
+    overlay_page = overlay_pdf.pages[0]
+    if getattr(page, 'Rotate', None):
+        overlay_page.Rotate = page.Rotate
+    return overlay_page
+
+
+def _flatten_pdf_template(template, data, watermark_text=FIGHTER_CARD_WATERMARK, watermark_overlays=None):
+    watermark_overlays = watermark_overlays or []
+    for page in template.pages:
+        overlay_page = _build_overlay_page(page, data, watermark_text, watermark_overlays)
+        PageMerge(page).add(overlay_page).render()
+        if getattr(page, 'Annots', None) is not None:
+            page.Annots = []
+
+    if hasattr(template.Root, 'AcroForm'):
+        try:
+            del template.Root.AcroForm
+        except AttributeError:
+            template.Root.AcroForm = None
+
+    return template
+
+
 def search(request):
     """
     Handles both the search form display and the search results display.
@@ -885,6 +1049,25 @@ def fighter(request, person_id):
 
 def generate_fighter_card(request, person_id, template_id):
 
+    add_watermark = False
+    watermark_overlays = []
+    if add_watermark:
+        watermark_image_path = finders.find('pdf_forms/Fighter_Card_Watermark.png') or finders.find('authorizations/static/pdf_forms/Fighter_Card_Watermark.png')
+        if watermark_image_path:
+            if template_id == '1':
+                watermark_overlays = [
+                    {'image_path': watermark_image_path, 'scale': .20, 'x_ratio': 0.33, 'y_ratio': 0.13},
+                    {'image_path': watermark_image_path, 'scale': .22, 'x_ratio': 0.70, 'y_ratio': 0.13},
+                ]
+            elif template_id == '2':
+                watermark_overlays = [
+                    {'image_path': watermark_image_path, 'scale': .20, 'x_ratio': 0.70, 'y_ratio': 0.16},
+                ]
+            else:
+                watermark_overlays = [
+                    {'image_path': watermark_image_path, 'scale': .2, 'x_ratio': 0.5, 'y_ratio': 0.13},
+                ]
+
     # Get core information
     authorization_list = Authorization.objects.select_related(
         'person__branch',
@@ -995,20 +1178,7 @@ def generate_fighter_card(request, person_id, template_id):
         raise Exception(f'Error reading PDF template file {absolute_template_path}: {str(e)}')
     
     print(f'Successfully loaded template from: {absolute_template_path}')
-    for page in template.pages:
-        annotations = page.Annots
-        if annotations:
-            for annotation in annotations:
-                if annotation.Subtype == '/Widget' and annotation.T:
-                    field_name = annotation.T[1:-1].strip()
-                    if field_name in data:
-                        print(f'Writing PDF field "{field_name}" with value "{data[field_name]}"')
-                        annotation.V = data[field_name]
-                        annotation.AP = None
-                    else:
-                        print(f'No data found for PDF field "{field_name}"')
-                    flags = annotation[PdfName.Ff] if PdfName.Ff in annotation else 0
-                    annotation[PdfName.Ff] = flags | 1
+    template = _flatten_pdf_template(template, data, watermark_overlays=watermark_overlays)
 
     response = HttpResponse(content_type='application/pdf')
     response['Content-Disposition'] = f'inline; filename="fighter_card.pdf"'
@@ -1940,7 +2110,7 @@ def changelog_view(request):
 
 class TitleModelChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
-        # show “Duke (Ducal)” etc.
+        # show ΓÇ£Duke (Ducal)ΓÇ¥ etc.
         return f"{obj.name} ({obj.rank})"
 
 class CreatePersonForm(forms.Form):
@@ -1982,7 +2152,7 @@ class CreatePersonForm(forms.Form):
         label='Title',
         queryset=Title.objects.none(),
         required=False,
-        empty_label='— choose one —'
+        empty_label='ΓÇö choose one ΓÇö'
     )
     new_title = forms.CharField(
         label='Or enter a new title',
@@ -1991,7 +2161,7 @@ class CreatePersonForm(forms.Form):
     )
     new_title_rank = forms.ChoiceField(
         label='Rank for new title',
-        choices=[('', '— select a rank —')] + list(TITLE_RANK_CHOICES),
+        choices=[('', 'ΓÇö select a rank ΓÇö')] + list(TITLE_RANK_CHOICES),
         required=False
     )
     branch = forms.ModelChoiceField(label='Branch', queryset=Branch.objects.non_regions(), required=True)
