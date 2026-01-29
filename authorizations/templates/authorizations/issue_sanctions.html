@@ -8,15 +8,6 @@
 {% block body %}
 <h2>Issue Sanctions Against</h2>
 <h4><a href="{% url 'fighter' person_id=person.id %}">{{ person.sca_name }}</a></h4>
-{% if messages %}
-    <div id="messages-container">
-        {% for message in messages %}
-            <div class="alert alert-{{ message.tags }}" role="alert">
-                {{ message }}
-            </div>
-        {% endfor %}
-    </div>
-{% endif %}
 <p><strong>Select a Discipline</strong></p>
 <p>
     <form method="get" id="disciplineForm">

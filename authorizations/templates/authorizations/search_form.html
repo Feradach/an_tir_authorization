@@ -24,7 +24,7 @@
                 </div>
                 <div class="col-md-6 mb-3">
                     <label for="membership" class="form-label">Membership #:</label>
-                    <input type="text" class="form-control" id="membership" name="membership" value="{{ request.GET.membership|default:'' }}" placeholder="Enter membership number...">
+                    <input type="text" class="form-control" id="membership" name="membership" value="{{ request.GET.membership|default:'' }}" placeholder="Enter membership number..." inputmode="numeric" pattern="\d*" maxlength="20" title="Only numeric characters allowed." oninvalid="this.setCustomValidity('Only numeric characters allowed.')" oninput="this.setCustomValidity('')">
                 </div>
 
                 <div class="col-md-6 mb-3">

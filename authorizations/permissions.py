@@ -203,13 +203,6 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
         age = calculate_age(birthday)
     else:
         age = 30
-    
-    # Rule 0: A current waiver or membership is required to be authorized
-    print("checking for signed waiver")
-    waiver = waiver_signed(existing_fighter.user)
-    print("waiver signed: ", waiver)
-    if not waiver:
-        return False, 'Fighter must have a current waiver or membership to be authorized.'
 
     # Rule 1: A senior marshal in a discipline can authorize any person in a weapon style for that discipline
     if not is_senior_marshal(marshal, style.discipline.name):
@@ -232,8 +225,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
     # Rule 4: A Rapier or Youth Rapier fighter must have single sword as their first weapon authorization
     # Since these require single sword first, they rely on single sword being before the other combat styles so that they can be added in the same form submission.
     if not style.name in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
-        if style.discipline.name == 'Rapier':
-            if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier', status__name='Active').exists():
+        if style.discipline.name == 'Rapier Combat':
+            if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier Combat', status__name='Active').exists():
                 return False, 'A fighter must be authorized with single sword as their first rapier authorization.'
         if style.discipline.name == 'Youth Rapier':
             if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Youth Rapier', status__name='Active').exists():
@@ -245,7 +238,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             return False, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.'
 
     # Rule 5: Rapier fighters must be at lest 14 years old
-    if style.discipline.name == 'Rapier':
+    if style.discipline.name == 'Rapier Combat':
         if age < 14:
             return False, 'Must be at least 14 years old to become a rapier fighter.'
 
@@ -284,8 +277,9 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             return False, f'Must be an adult to become authorized in {style.name}.'
 
     # Rule 11: Youth rapier marshals must already be Senior Rapier marshals
-    if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier'):
-        return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
+    if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
+        if style.name == 'Junior Marshal' or style.name == 'Senior Marshal':
+            return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
 
     # Rule 12: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':
@@ -338,9 +332,14 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
         return False, 'Cannot make an authorization for yourself.'
 
     # Rule 21: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored combat, they can only be authorized by a regional marshal.
-    if existing_fighter.is_minor and style.discipline.name in ['Rapier', 'Cut & Thrust', 'Armored']:
+    if existing_fighter.is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored']:
         if not is_regional_marshal(marshal):
             return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored combat unless you are a regional marshal.'
+
+    # Rule 22: Adults cannot be authorized as youth armored or youth rapier fighters. They can be authorized as youth marshals.
+    if not existing_fighter.is_minor and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+        if style.name != 'Junior Marshal' and style.name != 'Senior Marshal':
+            return False, 'Adults cannot be authorized as youth armored or youth rapier fighters.'
 
     return True, 'Authorization follows all rules.'
 
@@ -368,46 +367,100 @@ def approve_authorization(request):
     active_status = AuthorizationStatus.objects.get(name='Active')
     regional_status = AuthorizationStatus.objects.get(name='Needs Regional Approval')
     kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
+    pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
+
+    # Helper: determine if waiver is current strictly by waiver_expiration
+    def waiver_current(u: User):
+        return bool(u.waiver_expiration and u.waiver_expiration > date.today())
 
     # Rule 1: Kingdom authorization officer can approve any marshal by themselves.
     if is_kingdom_authorization_officer(marshal):
-        authorization.status = active_status
-        # Rule 1a: If Youth Armored or Youth Rapier, set expiration the lesser of 2 years or when their background check expires.
-        if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-            two_years = date.today() + relativedelta(years=2)
-            if authorization.person.user.background_check_expiration:
-                authorization.expiration = min(two_years, authorization.person.user.background_check_expiration)
+        # Marshal authorizations require current membership; never Pending Waiver for marshal styles
+        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+            authorization.status = active_status
+            
+            # Rule 1a: If Youth Armored or Youth Rapier, set expiration the lesser of 2 years or when their background check expires.
+            if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+                two_years = date.today() + relativedelta(years=2)
+                if authorization.person.user.background_check_expiration:
+                    authorization.expiration = min(two_years, authorization.person.user.background_check_expiration)
+                else:
+                    authorization.expiration = two_years
+            
+            # Rule 1b: If not Youth Armored or Youth Rapier, set expiration to 4 years.
             else:
-                authorization.expiration = two_years
-        # Rule 1b: If not Youth Armored or Youth Rapier, set expiration to 4 years.
+                authorization.expiration = date.today() + relativedelta(years=4)
+            authorization.save()
+            # Ensure waiver does not trail authorization expiration
+            user = authorization.person.user
+            if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
+                user.waiver_expiration = authorization.expiration
+                user.save()
+            
+            # Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
+            if authorization.style.name == 'Senior Marshal':
+                remove_junior_marshal(authorization)
+            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
         else:
-            authorization.expiration = date.today() + relativedelta(years=4)
-        authorization.save()
-        # Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-        if authorization.style.name == 'Senior Marshal':
-            remove_junior_marshal(authorization)
-        return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+            if waiver_current(authorization.person.user):
+                authorization.status = active_status
+                
+                # Rule 1a: If Youth Armored or Youth Rapier, set expiration the lesser of 2 years or when their background check expires.
+                if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+                    two_years = date.today() + relativedelta(years=2)
+                    if authorization.person.user.background_check_expiration:
+                        authorization.expiration = min(two_years, authorization.person.user.background_check_expiration)
+                    else:
+                        authorization.expiration = two_years
+                
+                # Rule 1b: If not Youth Armored or Youth Rapier, set expiration to 4 years.
+                else:
+                    authorization.expiration = date.today() + relativedelta(years=4)
+                authorization.save()
+                # Ensure waiver does not trail authorization expiration
+                user = authorization.person.user
+                if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
+                    user.waiver_expiration = authorization.expiration
+                    user.save()
+                
+                # Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
+                if authorization.style.name == 'Senior Marshal':
+                    remove_junior_marshal(authorization)
+                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+            else:
+                authorization.status = pending_waiver_status
+                authorization.save()
+                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
 
 
     if authorization.status.name == 'Pending':
         # Rule 2: must be a senior marshal in the discipline to approve (exception for missile marshal concurence).
         if not is_senior_marshal(marshal, discipline):
             return False, 'You must be a senior marshal in this discipline to approve this authorization.'
+        
         # Rule 3: Cannot concur with an authorization you proposed.
         if authorization.marshal.user == marshal:
             return False, 'You cannot concur with your own authorization.'
+        
         # Rule 4: If a pending authorization for Senior marshal is approved, it then goes to the region for approval.
         if authorization.style.name == 'Senior Marshal':
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
             authorization.status = regional_status
             authorization.save()
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for regional approval!'
-        # Rule 4a: If a junior marshal is approved it becomes active.
+        
+        # Rule 4a: If a junior marshal is approved it becomes active (or pending waiver).
         if authorization.style.name == 'Junior Marshal':
             if AUTHORIZATION_OFFICER_SIGN_OFF:
                 authorization.status = kingdom_status
                 authorization.save()
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
             else:
+                if not membership_is_current(authorization.person.user):
+                    return False, 'Marshal authorizations require a current membership.'
                 authorization.status = active_status
                 authorization.save()
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
@@ -422,18 +475,43 @@ def approve_authorization(request):
         else:
             if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
-        # Rule 5: If the regional marshal approves a senior marshal, it becomes active.
+        # Rule 5: If the regional marshal approves a senior marshal, it becomes active (or pending waiver).
         if AUTHORIZATION_OFFICER_SIGN_OFF:
             authorization.status = kingdom_status
             authorization.save()
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
         else:
-            authorization.status = active_status
-            authorization.expiration = date.today() + relativedelta(years=4)
-            authorization.save()
-            # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-            remove_junior_marshal(authorization)
-            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+            if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
+                if not membership_is_current(authorization.person.user):
+                    return False, 'Marshal authorizations require a current membership.'
+                authorization.status = active_status
+                authorization.expiration = date.today() + relativedelta(years=4)
+                authorization.save()
+                # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
+                remove_junior_marshal(authorization)
+                # Ensure waiver does not trail authorization expiration
+                user = authorization.person.user
+                if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
+                    user.waiver_expiration = authorization.expiration
+                    user.save()
+                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+            else:
+                if waiver_current(authorization.person.user):
+                    authorization.status = active_status
+                    authorization.expiration = date.today() + relativedelta(years=4)
+                    authorization.save()
+                    # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
+                    remove_junior_marshal(authorization)
+                    # Ensure waiver does not trail authorization expiration
+                    user = authorization.person.user
+                    if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
+                        user.waiver_expiration = authorization.expiration
+                        user.save()
+                    return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+                else:
+                    authorization.status = pending_waiver_status
+                    authorization.save()
+                    return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
 
     else:
         return False, 'Authorization status not valid for confirmation.'

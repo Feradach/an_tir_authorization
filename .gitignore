@@ -21,6 +21,15 @@ local_settings.py
 db.sqlite3
 sql_details.env
 import_csv
+# Local dumps and backups
+backups/
+an_tir_authorization_anonymized*.sql
+
+# Local runtime/output
+tmp/
+
+# Local helper scripts not needed in repo
+scripts/dump-anonymized.ps1
 
 # If your Django app stores media or static files that are generated
 # (if they're user-uploaded or created by Django), you might consider
@@ -39,3 +48,8 @@ import_csv
 
 # Windows thumbnail cache files
 Thumbs.db
+.env
+.env.example
+
+# Static files
+staticfiles/

@@ -5,8 +5,15 @@
     <a href="{% url 'homepage' %}" class="nav-link">Home</a>
     <a href="{% url 'contact' %}" class="nav-link">Contact</a>
     <a href="{% url 'forms' %}" class="nav-link">Forms</a>
+    <a href="{% url 'reports' %}" class="nav-link">Reports</a>
     <a href="{% url 'index' %}" class="nav-link">Authorizations</a>
     <a href="{% url 'roadmap' %}" class="nav-link">Roadmap</a>
+    {% if user.is_authenticated %}
+        <a href="{% url 'user_account' user_id=user.id %}" class="nav-link">My Account</a>
+        <a href="{% url 'logout' %}" class="nav-link">Logout</a>
+    {% else %}
+        <a href="{% url 'login' %}" class="nav-link">Login</a>
+    {% endif %}
     <a href="{% url 'faq' %}" class="nav-link">FAQ</a>
 {% endblock %}
 
@@ -14,7 +21,14 @@
     <li><a href="{% url 'homepage' %}" class="hamburger-link">Home</a></li>
     <li><a href="{% url 'contact' %}" class="hamburger-link">Contact</a></li>
     <li><a href="{% url 'forms' %}" class="hamburger-link">Forms</a></li>
+    <li><a href="{% url 'reports' %}" class="hamburger-link">Reports</a></li>
     <li><a href="{% url 'index' %}" class="hamburger-link">Authorizations</a></li>
     <li><a href="{% url 'roadmap' %}" class="hamburger-link">Roadmap</a></li>
+    {% if user.is_authenticated %}
+        <li><a href="{% url 'user_account' user_id=user.id %}" class="hamburger-link">My Account</a></li>
+        <li><a href="{% url 'logout' %}" class="hamburger-link">Logout</a></li>
+    {% else %}
+        <li><a href="{% url 'login' %}" class="hamburger-link">Login</a></li>
+    {% endif %}
     <li><a href="{% url 'faq' %}" class="hamburger-link">FAQ</a></li>
 {% endblock %}

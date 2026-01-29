@@ -35,7 +35,7 @@ class User(AbstractUser):
     """User model. It is extended to include the membership information and their address."""
 
     # Used none@invalid.com for blank or invalid emails. Need to code this in.
-    membership = models.IntegerField(null=True, blank=True, unique=True)
+    membership = models.CharField(max_length=20, null=True, blank=True, unique=True)
     membership_expiration = models.DateField(null=True, blank=True)
     address = models.CharField(max_length=255,null=True, blank=True)
     address2 = models.CharField(max_length=255,null=True, blank=True)
@@ -72,6 +72,12 @@ class User(AbstractUser):
         if not self.membership or not self.membership_expiration:
             self.membership = None
             self.membership_expiration = None
+
+        # If a membership expiration is present, ensure waiver_expiration is at
+        # least as long. This treats current membership as an acceptable waiver.
+        if self.membership_expiration:
+            if not self.waiver_expiration or self.waiver_expiration < self.membership_expiration:
+                self.waiver_expiration = self.membership_expiration
 
         super().save(*args, **kwargs)
 

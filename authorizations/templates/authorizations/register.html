@@ -1,0 +1,74 @@
+{% extends "authorizations/inner_layout.html" %}
+{% load static %}
+
+{% block title %}
+    Create Your Account (Public Testing)
+{% endblock %}
+
+{% block body %}
+    {# Messages are now rendered globally in layout.html #}
+
+    <h3>Register</h3>
+    <p>This is a public testing form to create your own account.</p>
+
+    <p>
+        <a class="btn btn-primary" data-bs-toggle="collapse" href="#registerRules" role="button" aria-expanded="true" aria-controls="registerRules">
+            Account creation rules
+        </a>
+    </p>
+    <div class="collapse show" id="registerRules">
+        <div class="card card-body mb-3">
+            <h5 class="mb-2">Before you begin</h5>
+            <ul class="mb-0">
+                <li>Email, username, first name, last name, address, city, state/province, postal code, and branch are required.</li>
+                <li>Username must be unique (no duplicates). You can use the same email as another user.</li>
+                <li>Phone number must be 10 digits; formatting is applied automatically.</li>
+                <li>Postal code must be within An Tir:
+                    Canadian codes starting with <code>V</code>, or U.S. ZIPs starting with <code>97</code>, <code>98</code>,
+                    or in the ranges <code>991–994</code>, <code>838</code>, or <code>835</code>.</li>
+                <li>Membership number and expiration must be provided together, or leave both blank. The experiation date must be in the future.</li>
+                <li>Membership number must be between 1 and 20 digits.</li>
+                <li>If registering a minor, a birthday is required. Non‑minors must not list a parent.</li>
+                <li>Title is optional; you may choose from the list or enter a new title with a rank.</li>
+                <li>After this is submitted, you will receive a temporary password via email. You will need to log in with this password to complete your registration.</li>
+                <li>When you first log into your account you will be asked to update your password. Once you have done that you will need to go to "My Account" and sign your waiver. After that you will be able to add authorizations to yourself.</li>
+            </ul>
+        </div>
+    </div>
+
+    <form method="post" id="register_form">
+        {% csrf_token %}
+        {% for field in person_form %}
+            {% if field.name != 'background_check_expiration' %}
+                <div class="form-group">
+                    {{ field.label_tag }}
+                    {{ field }}
+                    {% if field.help_text %}
+                        <small class="form-text text-muted">{{ field.help_text }}</small>
+                    {% endif %}
+                    {% if field.errors %}
+                        <div class="invalid-feedback d-block">
+                            {{ field.errors.0 }}
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
+        {% endfor %}
+        {% if TEST_FEATURES_ENABLED %}
+            <div class="form-group">
+                {{ person_form.background_check_expiration.label_tag }}
+                {{ person_form.background_check_expiration }}
+                {% if person_form.background_check_expiration.help_text %}
+                    <small class="form-text text-muted">{{ person_form.background_check_expiration.help_text }}</small>
+                {% endif %}
+                {% if person_form.background_check_expiration.errors %}
+                    <div class="invalid-feedback d-block">
+                        {{ person_form.background_check_expiration.errors.0 }}
+                    </div>
+                {% endif %}
+            </div>
+        {% endif %}
+        <button type="submit" class="btn btn-primary mt-3">Create Account</button>
+    </form>
+
+{% endblock %}

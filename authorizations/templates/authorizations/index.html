@@ -6,19 +6,12 @@
 {% endblock %}
 
 {% block body %}
+<h1>Authorization Portal</h1>
     <p>Welcome to the Authorization portal for An Tir.
     <br>Below you will find a selection of actions that you can perform.</p>
     <p>The actions you will be able to perform will depend on whether you are logged in and your marshal role.</p>
 
-    {% if messages %}
-        <div id="messages-container">
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }}" role="alert">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        </div>
-    {% endif %}
+    {# Messages are now rendered globally in layout.html #}
     <p><a href="{% url 'search' %}?goal=search" class="btn btn-primary">Search Fighters</a></p>
     {% if senior_marshal %}
         <p><a href="{% url 'add_fighter' %}" class="btn btn-primary">Add a New Fighter to the Database</a></p>
@@ -42,6 +35,25 @@
             </form>
         </p>
     </div>
+    {% if name_matches %}
+        <div id="name-results">
+            <h3>Multiple Matches Found</h3>
+            <table>
+                <tr>
+                    <th>SCA Name</th>
+                    <th>ID</th>
+                    <th>Branch</th>
+                </tr>
+                {% for p in name_matches %}
+                    <tr>
+                        <td><a href="{% url 'fighter' p.id %}">{{ p.sca_name }}</a></td>
+                        <td>{{ p.id }}</td>
+                        <td>{% if p.branch %}{{ p.branch.name }}{% else %}-{% endif %}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        </div>
+    {% endif %}
     {% if pending_authorizations %}
         <h3>Authorizations Needing Approval</h3>
          <table>
@@ -102,6 +114,11 @@
 
                 // Add form submission on change for each dropdown
                 dropdown.addEventListener('change', function () {
+                    // Clear any existing name results so they don't stack
+                    const results = document.getElementById('name-results');
+                    if (results) {
+                        results.remove();
+                    }
                     const form = dropdown.closest('form');
                     addQueryParamsToForm(form); // Retain current query parameters
                     form.submit();

@@ -33,7 +33,7 @@ Pygments==2.19.1
 PyMySQL==1.1.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
-pywin32==308
+pywin32==308; sys_platform == 'win32'
 pyzmq==26.2.0
 referencing==0.36.2
 requests==2.32.3
@@ -54,3 +54,5 @@ webencodings==0.5.1
 whitenoise==6.8.2
 yarg==0.1.9
 cryptography
+Faker==30.8.2
+reportlab==4.2.5

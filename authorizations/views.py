@@ -1,15 +1,17 @@
-from dateutil.relativedelta import relativedelta
+﻿from dateutil.relativedelta import relativedelta
 from django.core.mail import send_mail
 from django.conf import settings
 import random
 import string
-from datetime import date
+from datetime import date, datetime
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.http import JsonResponse
-from datetime import date, timedelta
-from django.db.models import Q, Prefetch
+from datetime import timedelta
+import logging
+from io import BytesIO
+from django.db.models import Q, Prefetch, Max
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.core.paginator import Paginator
@@ -18,13 +20,25 @@ from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 from django.contrib.staticfiles import finders
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current
 from itertools import groupby
 from operator import attrgetter
-from pdfrw import PdfReader, PdfWriter, PdfName
+from pdfrw import PdfReader, PdfWriter, PdfName, PageMerge
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import os
 from django.contrib import messages
 from django import forms
+from django.core.validators import RegexValidator
 import re
+import mistune
+import bleach
+
+logger = logging.getLogger(__name__)
+FIGHTER_CARD_WATERMARK = ''
+PDF_FONT_NAME = 'DejaVuSans'
+_PDF_FONT_REGISTERED = False
 
 # Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
@@ -101,18 +115,46 @@ state_province_choices = state_choices + province_choices
 
 # Create your views here.
 def index(request):
-    """This is the page they land on for the """
+    """This is the page they land on for the authorization system."""
 
     all_people = Person.objects.all().order_by('sca_name').values_list('sca_name',                                                                            flat=True).distinct()
     fighter_name = request.GET.get('sca_name')
 
+    # If a fighter name is selected, handle potential duplicates gracefully
     if fighter_name:
-        fighter_id = Person.objects.get(sca_name=fighter_name).user_id
-        return redirect('fighter', person_id=fighter_id)
+        matches = Person.objects.select_related('branch__region').filter(sca_name=fighter_name)
+        match_count = matches.count()
+
+        # Single match: go straight to fighter card
+        if match_count == 1:
+            fighter_id = matches.first().user_id
+            return redirect('fighter', person_id=fighter_id)
+
+        # Multiple matches: render index with a results table under the dropdown
+        if match_count > 1:
+            context = {
+                'all_people': all_people,
+                'name_matches': matches.order_by('user_id'),
+            }
+            # If anonymous, we don't populate marshal-related context
+            if request.user.is_anonymous:
+                return render(request, 'authorizations/index.html', context)
+
+            # Otherwise, fall through to include role-based context below
+            # by storing matches in a temp var we can merge later
+            name_matches = matches.order_by('user_id')
+        else:
+            # No matches found; just continue to render the page normally
+            name_matches = None
 
     if request.user.is_anonymous:
-        return render(request, 'authorizations/index.html' , {'all_people': all_people})
+        # If the fighter name hasn't been chosen and the user is anonymous, load the page.
+        anon_context = {'all_people': all_people}
+        if 'name_matches' in locals() and name_matches:
+            anon_context['name_matches'] = name_matches
+        return render(request, 'authorizations/index.html' , anon_context)
 
+    # If the user is authenticated, load the page with their marshal context
     pending_authorizations = []
     person = Person.objects.get(user_id=request.user.id)
     senior_marshal = is_senior_marshal(request.user)
@@ -169,7 +211,7 @@ def index(request):
                 messages.success(request, mssg)
 
 
-    return render(request, 'authorizations/index.html', {
+    base_context = {
         'senior_marshal': senior_marshal,
         'branch_marshal': branch_marshal,
         'regional_marshal': regional_marshal,
@@ -178,7 +220,13 @@ def index(request):
         'auth_officer': auth_officer,
         'pending_authorizations': pending_authorizations,
         'all_people': all_people,
-    })
+    }
+
+    # Include potential duplicate results for logged-in users
+    if 'name_matches' in locals() and name_matches:
+        base_context['name_matches'] = name_matches
+
+    return render(request, 'authorizations/index.html', base_context)
 
 
 def login_view(request):
@@ -196,13 +244,12 @@ def login_view(request):
         if user is not None:
             login(request, user)
             if not user.has_logged_in:
-                messages.error(request, 'You must change your password when you first log into the system.')
+                messages.warning(request, 'You must change your password when you first log into the system.')
                 return redirect('password_reset', user_id=user.id)
             return HttpResponseRedirect(reverse('index'))
         else:
-            return render(request, 'authorizations/login.html', {
-                'message': 'Invalid email and/or password.'
-            })
+            messages.error(request, 'Invalid email and/or password.')
+            return render(request, 'authorizations/login.html')
     else:
         return render(request, 'authorizations/login.html')
 
@@ -210,6 +257,88 @@ def login_view(request):
 def logout_view(request):
     logout(request)
     return HttpResponseRedirect(reverse('index'))
+
+
+def register(request):
+    """Public registration: allow testers to create their own account.
+    Mirrors add_fighter flow but without marshal permission requirements."""
+    from django.conf import settings
+    # If test features are not enabled, redirect to index
+        # If we choose to open up registration, delete this section of code.
+    if not getattr(settings, 'AUTHZ_TEST_FEATURES', False):
+        messages.error(request, 'Registration is disabled on this site.')
+        return redirect('index')
+    # If the request is a POST, process the registration
+    if request.method == 'POST':
+        person_form = CreatePersonForm(request.POST)
+
+        if person_form.is_valid():
+            random_password = generate_random_password()
+
+            # Create the user
+            try:
+                with transaction.atomic():
+                    user = User.objects.create_user(
+                        email=person_form.cleaned_data['email'],
+                        username=person_form.cleaned_data['username'],
+                        password=random_password,
+                        first_name=person_form.cleaned_data['first_name'],
+                        last_name=person_form.cleaned_data['last_name'],
+                        membership=person_form.cleaned_data.get('membership', None),
+                        membership_expiration=person_form.cleaned_data.get('membership_expiration', None),
+                        address=person_form.cleaned_data['address'],
+                        address2=person_form.cleaned_data.get('address2', None),
+                        city=person_form.cleaned_data['city'],
+                        state_province=person_form.cleaned_data['state_province'],
+                        postal_code=person_form.cleaned_data['postal_code'],
+                        country=person_form.cleaned_data['country'],
+                        phone_number=person_form.cleaned_data.get('phone_number', None),
+                        birthday=person_form.cleaned_data.get('birthday', None),
+                        background_check_expiration=person_form.cleaned_data.get('background_check_expiration', None),
+                    )
+
+                    Person.objects.create(
+                        user=user,
+                        sca_name=person_form.cleaned_data.get('sca_name') or f"{person_form.cleaned_data['first_name']} {person_form.cleaned_data['last_name']}",
+                        title=person_form.cleaned_data.get('title'),
+                        branch=person_form.cleaned_data['branch'],
+                        is_minor=person_form.cleaned_data['is_minor'],
+                        parent=person_form.cleaned_data.get('parent', None),
+                    )
+
+            except Exception as e:
+                messages.error(request, f'Error during creation: {e}')
+                return render(request, 'authorizations/register.html', {
+                    'person_form': person_form
+                })
+
+            # Send the login credentials to the user
+            login_path = reverse('login')
+            login_url = f"{settings.SITE_URL}{login_path}"
+            send_mail(
+                'An Tir Authorization: New Account',
+                f'Your account has been created. Your credentials are:\nURL: {login_url}\nUsername: {person_form.cleaned_data["username"]}\nPassword: {random_password}\n'
+                f'Please reset your password after logging in.',
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=False,
+            )
+            messages.success(request, 'Account created! Login credentials have been emailed to you.')
+            return redirect('fighter', person_id=user.id)
+
+        # invalid form
+        for field, errors in person_form.errors.items():
+            for error in errors:
+                if field == '__all__':
+                    messages.error(request, error)
+                else:
+                    field_label = person_form.fields[field].label if field in person_form.fields else field
+                    messages.error(request, f"{field_label}: {error}")
+        return render(request, 'authorizations/register.html', {'person_form': person_form})
+
+    # GET
+    person_form = CreatePersonForm()
+    return render(request, 'authorizations/register.html', {'person_form': person_form})
 
 
 @login_required
@@ -222,14 +351,7 @@ def password_reset(request, user_id):
 
     # Get the old password
     if request.method == 'POST':
-        old_password = request.POST['old_password']
-        username = request.user.username
-        user = authenticate(request, username=username, password=old_password)
-        if user is None:
-            return render(request, 'authorizations/password_reset.html', {
-                'message': 'Invalid old password.'
-            })
-
+        
         # Create new password
         password = request.POST['password']
         confirmation = request.POST['confirmation']
@@ -264,6 +386,7 @@ def recover_account(request):
         login_path = reverse('login')
         login_url = f"{settings.SITE_URL}{login_path}"
         
+        # Resetting password
         if action == 'reset_password':
             username = request.POST.get('username', '').strip()
             if not username:
@@ -296,6 +419,7 @@ def recover_account(request):
                 messages.error(request, 'No account with that username was found.')
                 return render(request, 'authorizations/recover_account.html')
                 
+        # Getting username
         elif action == 'get_username':
             email = request.POST.get('email', '').strip()
             if not email:
@@ -331,9 +455,224 @@ def recover_account(request):
 
 
 def generate_random_password(length=12):
+    """Generate a random password. This is used for temporary passwords."""
     characters = string.ascii_letters + string.digits + string.punctuation
     password = ''.join(random.choice(characters) for _ in range(length))
     return password
+
+def _finalize_waiver_signed(request_user: User, target_user: User):
+    """Finalize waiver signing for target_user.
+    - Permitted if request_user == target_user OR request_user is Authorization Officer.
+    - If target_user has any 'Pending Waiver' authorizations, mark them Active and set
+      waiver_expiration to the latest of their expirations.
+    - Otherwise, set waiver_expiration to one year from today.
+    Returns (ok: bool, message: str).
+    """
+    if request_user.id != target_user.id and not is_kingdom_authorization_officer(request_user):
+        return False, 'You can only sign a waiver for your own account.'
+
+    pending_qs = Authorization.objects.filter(person__user=target_user, status__name='Pending Waiver')
+    if pending_qs.exists():
+        max_exp = pending_qs.aggregate(latest=Max('expiration'))['latest']
+        try:
+            active_status = AuthorizationStatus.objects.get(name='Active')
+        except AuthorizationStatus.DoesNotExist:
+            return False, 'System error: Active status not found.'
+        pending_qs.update(status=active_status)
+        target_user.waiver_expiration = max_exp
+        target_user.save()
+        return True, 'Waiver signed and authorizations activated.'
+    else:
+        target_user.waiver_expiration = date.today() + relativedelta(years=1)
+        target_user.save()
+        return True, 'Waiver signed for one year.'
+
+def _parse_search_date(value: str):
+    """
+    Validate date filter inputs so malformed values do not crash the view.
+    Returns a tuple of (parsed_date_or_none, invalid_flag).
+    """
+    if not value:
+        return None, False
+    candidate = value.strip()
+    if not candidate:
+        return None, False
+    try:
+        return datetime.strptime(candidate, '%Y-%m-%d').date(), False
+    except ValueError:
+        return None, True
+
+
+def _ensure_pdf_font_registered():
+    global _PDF_FONT_REGISTERED
+    if _PDF_FONT_REGISTERED:
+        return
+    font_path = finders.find('fonts/DejaVuSans.ttf') or finders.find('authorizations/static/fonts/DejaVuSans.ttf')
+    if not font_path:
+        raise Exception('DejaVuSans.ttf font file not found for PDF generation.')
+    pdfmetrics.registerFont(TTFont(PDF_FONT_NAME, font_path))
+    _PDF_FONT_REGISTERED = True
+
+
+def _to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        try:
+            return float(str(value))
+        except (TypeError, ValueError):
+            return 0.0
+
+
+def _get_page_size(page):
+    media_box = getattr(page, 'MediaBox', None)
+    if not media_box:
+        return (612, 792)  # Default to letter
+    lower_left_x, lower_left_y, upper_right_x, upper_right_y = [_to_float(coord) for coord in media_box]
+    return upper_right_x - lower_left_x, upper_right_y - lower_left_y
+
+
+def _extract_font_size(annotation, default=10):
+    default_appearance = getattr(annotation, 'DA', None)
+    if not default_appearance:
+        return default
+    tokens = default_appearance.strip().split()
+    if 'Tf' in tokens:
+        idx = tokens.index('Tf')
+        if idx >= 2:
+            try:
+                return float(tokens[idx - 1])
+            except (TypeError, ValueError):
+                return default
+    return default
+
+
+def _draw_watermark(
+    can,
+    width,
+    height,
+    text,
+    image_path=None,
+    image_opacity=0.15,
+    scale=0.2,
+    x_ratio=0.5,
+    y_ratio=0.5,
+):
+    if not text and not image_path:
+        return
+    can.saveState()
+    if hasattr(can, 'setFillAlpha'):
+        can.setFillAlpha(image_opacity)
+    if image_path and os.path.exists(image_path):
+        target_width = width * scale
+        target_height = height * scale
+        x = (width * x_ratio) - (target_width / 2)
+        y = (height * y_ratio) - (target_height / 2)
+        can.drawImage(
+            image_path,
+            x,
+            y,
+            width=target_width,
+            height=target_height,
+            mask='auto',
+            preserveAspectRatio=True,
+        )
+    elif text:
+        can.setFont('Helvetica-Bold', 42)
+        can.setFillColorRGB(0.85, 0.85, 0.85)
+        can.translate(width / 2, height / 2)
+        can.rotate(45)
+        can.drawCentredString(0, 0, text)
+    can.restoreState()
+
+
+def _build_overlay_page(page, data, watermark_text, watermark_overlays):
+    page_width, page_height = _get_page_size(page)
+    packet = BytesIO()
+    can = canvas.Canvas(packet, pagesize=(page_width, page_height))
+    _ensure_pdf_font_registered()
+    for overlay in watermark_overlays:
+        _draw_watermark(
+            can,
+            page_width,
+            page_height,
+            watermark_text if overlay.get('use_text') else '',
+            image_path=overlay.get('image_path'),
+            image_opacity=overlay.get('opacity', 0.15),
+            scale=overlay.get('scale', 0.2),
+            x_ratio=overlay.get('x_ratio', 0.5),
+            y_ratio=overlay.get('y_ratio', 0.5),
+        )
+
+    annotations = getattr(page, 'Annots', []) or []
+    for annotation in annotations:
+        if getattr(annotation, 'Subtype', None) != '/Widget' or not getattr(annotation, 'T', None):
+            continue
+
+        field_name = annotation.T[1:-1].strip()
+        value = data.get(field_name)
+        if not value:
+            continue
+
+        rect = getattr(annotation, 'Rect', None)
+        if not rect:
+            continue
+        left, bottom, right, top = [_to_float(coord) for coord in rect]
+        font_size = _extract_font_size(annotation)
+        can.setFont(PDF_FONT_NAME, font_size)
+        can.setFillColorRGB(0, 0, 0)
+
+        rotation = 0
+        mk = getattr(annotation, 'MK', None)
+        if mk is not None:
+            rot = None
+            if hasattr(mk, 'R'):
+                rot = mk.R
+            elif isinstance(mk, dict):
+                rot = mk.get('/R')
+            if rot is not None:
+                try:
+                    rotation = float(str(rot))
+                except (TypeError, ValueError):
+                    rotation = 0
+
+        if rotation:
+            center_x = (left + right) / 2
+            center_y = (bottom + top) / 2
+            can.saveState()
+            can.translate(center_x, center_y)
+            can.rotate(rotation)
+            can.drawCentredString(0, -font_size / 2, str(value))
+            can.restoreState()
+        else:
+            text_x = left
+            text_y = top - font_size
+            can.drawString(text_x, text_y, str(value))
+
+    can.save()
+    packet.seek(0)
+    overlay_pdf = PdfReader(packet)
+    overlay_page = overlay_pdf.pages[0]
+    if getattr(page, 'Rotate', None):
+        overlay_page.Rotate = page.Rotate
+    return overlay_page
+
+
+def _flatten_pdf_template(template, data, watermark_text=FIGHTER_CARD_WATERMARK, watermark_overlays=None):
+    watermark_overlays = watermark_overlays or []
+    for page in template.pages:
+        overlay_page = _build_overlay_page(page, data, watermark_text, watermark_overlays)
+        PageMerge(page).add(overlay_page).render()
+        if getattr(page, 'Annots', None) is not None:
+            page.Annots = []
+
+    if hasattr(template.Root, 'AcroForm'):
+        try:
+            del template.Root.AcroForm
+        except AttributeError:
+            template.Root.AcroForm = None
+
+    return template
 
 
 def search(request):
@@ -377,16 +716,31 @@ def search(request):
     if region: dynamic_filter &= Q(person__branch__region__name=region)
     branch = request.GET.get('branch')
     if branch: dynamic_filter &= Q(person__branch__name=branch)
+    invalid_query_params = set()
+
     discipline = request.GET.get('discipline')
     if discipline: dynamic_filter &= Q(style__discipline__name=discipline)
     style = request.GET.get('style')
     if style: dynamic_filter &= Q(style__name=style)
     marshal = request.GET.get('marshal')
     if marshal: dynamic_filter &= Q(marshal__sca_name=marshal)
-    start_date = request.GET.get('start_date')
-    if start_date: dynamic_filter &= Q(expiration__gte=start_date)
-    end_date = request.GET.get('end_date')
-    if end_date: dynamic_filter &= Q(expiration__lte=end_date)
+    start_date_raw = request.GET.get('start_date')
+    start_date, start_invalid = _parse_search_date(start_date_raw)
+    if start_invalid:
+        invalid_query_params.add('start_date')
+        messages.error(request, 'Start date must be in YYYY-MM-DD format.')
+        logger.warning('Invalid start_date provided to search: %s', start_date_raw)
+    if start_date:
+        dynamic_filter &= Q(expiration__gte=start_date)
+
+    end_date_raw = request.GET.get('end_date')
+    end_date, end_invalid = _parse_search_date(end_date_raw)
+    if end_invalid:
+        invalid_query_params.add('end_date')
+        messages.error(request, 'End date must be in YYYY-MM-DD format.')
+        logger.warning('Invalid end_date provided to search: %s', end_date_raw)
+    if end_date:
+        dynamic_filter &= Q(expiration__lte=end_date)
     is_minor = request.GET.get('is_minor')
     if is_minor: dynamic_filter &= Q(person__is_minor=(is_minor == 'True'))
     if membership_num := request.GET.get('membership'):
@@ -407,7 +761,7 @@ def search(request):
     matching_authorizations = Authorization.objects.filter(dynamic_filter).exclude(person__user_id=11968)
 
     if view_mode == 'card':
-        # --- CARD VIEW LOGIC (Corrected) ---
+        # --- CARD VIEW LOGIC ---
 
         # 1. Get the unique IDs of people who have matching authorizations. (No change)
         person_ids = matching_authorizations.values_list('person_id', flat=True).distinct()
@@ -432,9 +786,10 @@ def search(request):
         paginator = Paginator(people_list, items_per_page)
         page_obj = paginator.get_page(request.GET.get('page', 1))
     
-    else: # 'table' view is the default
-        # --- TABLE VIEW LOGIC ---
-        # This is the same logic as before, but simplified.
+    # 'table' view is the default
+    # --- TABLE VIEW LOGIC ---
+    # This is the same logic as before, but simplified.
+    else: 
         user_sort = request.GET.get('sort', 'person__sca_name')
         
         authorization_list = matching_authorizations.select_related(
@@ -450,6 +805,13 @@ def search(request):
         page_obj = paginator.get_page(request.GET.get('page', 1))
 
     # === STEP 4: RENDER THE TEMPLATE ===
+    query_params = request.GET.copy()
+    if 'page' in query_params:
+        query_params.pop('page')
+    for param in invalid_query_params:
+        if param in query_params:
+            query_params.pop(param)
+
     return render(
         request,
         'authorizations/search.html',
@@ -458,6 +820,7 @@ def search(request):
             'items_per_page': items_per_page,
             'view_mode': view_mode,
             'today': date.today(),
+            'querystring': query_params.urlencode(),
             
             # Add these back in for the table header filters
             'sca_name_options': sca_name_options,
@@ -479,7 +842,11 @@ def fighter(request, person_id):
     Create a link on the authorization search to go to this page."""
 
     # Get the person who's card is being requested
-    person = Person.objects.get(user_id=person_id)
+    try:
+        person = Person.objects.get(user_id=person_id)
+    except Person.DoesNotExist:
+        messages.error(request, 'Person not found.')
+        return redirect('search')
     user = person.user
 
     # If there is a post, confirm that they are authenticated.
@@ -532,6 +899,12 @@ def fighter(request, person_id):
         'person__branch__region',
         'style__discipline',
     ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).order_by(
+        'style__discipline__name', 'expiration', 'style__name')
+
+    pending_waiver_list = Authorization.objects.select_related(
+        'person__branch__region',
+        'style__discipline',
+    ).filter(person_id=person_id, status__name='Pending Waiver').order_by(
         'style__discipline__name', 'expiration', 'style__name')
 
     sanctions_list = Authorization.objects.select_related(
@@ -591,6 +964,25 @@ def fighter(request, person_id):
             if style_name not in pending_authorizations[discipline_name]['styles']:
                 pending_authorizations[discipline_name]['styles'].append(style_name)
 
+    pending_waivers = {}
+    for auth in pending_waiver_list:
+        discipline_name = auth.style.discipline.name
+        if discipline_name not in pending_waivers:
+            pending_waivers[discipline_name] = {
+                'auth_id': auth.id,
+                'marshal_name': auth.marshal.sca_name if auth.marshal else '',
+                'earliest_expiration': auth.expiration,
+                'styles': [auth.style.name],
+                'status': auth.status.name
+            }
+        else:
+            if auth.expiration < pending_waivers[discipline_name]['earliest_expiration']:
+                pending_waivers[discipline_name]['earliest_expiration'] = auth.expiration
+                pending_waivers[discipline_name]['marshal_name'] = auth.marshal.sca_name if auth.marshal else ''
+            style_name = auth.style.name
+            if style_name not in pending_waivers[discipline_name]['styles']:
+                pending_waivers[discipline_name]['styles'].append(style_name)
+
     sanctions = {}
     for auth in sanctions_list:
         discipline_name = auth.style.discipline.name
@@ -635,13 +1027,15 @@ def fighter(request, person_id):
                 'is_marshal': False,
                 'branch_officer': branch_officer,
                 'sanctions': sanctions,
+                'pending_waivers': pending_waivers,
             },
         )
 
 
 
-    branch_choices = Branch.objects.all()
-    discipline_choices = Discipline.objects.all()
+    # All branches except for type = other
+    branch_choices = Branch.objects.exclude(type='Other').order_by('name')
+    discipline_choices = Discipline.objects.all().order_by('name')
     auth_officer = is_kingdom_authorization_officer(request.user)
     regional_marshal = is_regional_marshal(request.user)
 
@@ -664,11 +1058,31 @@ def fighter(request, person_id):
             'sanctions': sanctions,
             'regional_marshal': regional_marshal,
             'all_people': Person.objects.all().order_by('sca_name'),
+            'pending_waivers': pending_waivers,
         },
     )
 
 
 def generate_fighter_card(request, person_id, template_id):
+
+    add_watermark = False
+    watermark_overlays = []
+    if add_watermark:
+        watermark_image_path = finders.find('pdf_forms/Fighter_Card_Watermark.png') or finders.find('authorizations/static/pdf_forms/Fighter_Card_Watermark.png')
+        if watermark_image_path:
+            if template_id == '1':
+                watermark_overlays = [
+                    {'image_path': watermark_image_path, 'scale': .20, 'x_ratio': 0.33, 'y_ratio': 0.13},
+                    {'image_path': watermark_image_path, 'scale': .22, 'x_ratio': 0.70, 'y_ratio': 0.13},
+                ]
+            elif template_id == '2':
+                watermark_overlays = [
+                    {'image_path': watermark_image_path, 'scale': .20, 'x_ratio': 0.70, 'y_ratio': 0.16},
+                ]
+            else:
+                watermark_overlays = [
+                    {'image_path': watermark_image_path, 'scale': .2, 'x_ratio': 0.5, 'y_ratio': 0.13},
+                ]
 
     # Get core information
     authorization_list = Authorization.objects.select_related(
@@ -762,6 +1176,8 @@ def generate_fighter_card(request, person_id, template_id):
         for marshal in marshal_list:
             data[marshal['discipline']] = marshal['marshal']
 
+    print(f'PDF data payload for person {person_id}: {data}')
+
 
     # Build the card
     # Find the absolute path to the template using Django's static files finder
@@ -778,17 +1194,7 @@ def generate_fighter_card(request, person_id, template_id):
         raise Exception(f'Error reading PDF template file {absolute_template_path}: {str(e)}')
     
     print(f'Successfully loaded template from: {absolute_template_path}')
-    for page in template.pages:
-        annotations = page.Annots
-        if annotations:
-            for annotation in annotations:
-                if annotation.Subtype == '/Widget' and annotation.T:
-                    field_name = annotation.T[1:-1].strip()
-                    if field_name in data:
-                        annotation.V = data[field_name]
-                        annotation.AP = None
-                    flags = annotation[PdfName.Ff] if PdfName.Ff in annotation else 0
-                    annotation[PdfName.Ff] = flags | 1
+    template = _flatten_pdf_template(template, data, watermark_overlays=watermark_overlays)
 
     response = HttpResponse(content_type='application/pdf')
     response['Content-Disposition'] = f'inline; filename="fighter_card.pdf"'
@@ -891,11 +1297,20 @@ def add_fighter(request):
 def add_authorization(request, person_id):
     """This will add a new authorization to a fighter or update an existing authorization."""
 
+    # Determine the authorizing marshal.
+    # Only the Authorization Officer may specify a different marshal via marshal_id.
+    authorizing_marshal = request.user
     marshal_id = request.POST.get('marshal_id')
     if marshal_id:
-        authorizing_marshal = User.objects.get(id=marshal_id)
-    else:
-        authorizing_marshal = request.user
+        if is_kingdom_authorization_officer(request.user):
+            try:
+                authorizing_marshal = User.objects.get(id=marshal_id)
+            except User.DoesNotExist:
+                messages.error(request, 'Selected authorizing marshal not found.')
+                return redirect('fighter', person_id=person_id)
+        else:
+            messages.error(request, 'You are not allowed to specify an authorizing marshal.')
+            return redirect('fighter', person_id=person_id)
     
     # Get the selected discipline from the form
     discipline_id = request.POST.get('discipline')
@@ -910,6 +1325,13 @@ def add_authorization(request, person_id):
         auth_form = CreateAuthorizationForm(request.POST, user=authorizing_marshal)
 
         if auth_form.is_valid():
+            # Helpers for waiver and statuses
+            def waiver_current(u):
+                return bool(u.waiver_expiration and u.waiver_expiration > date.today())
+
+            active_status = AuthorizationStatus.objects.get(name='Active')
+            pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
+            needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
             sent_styles = request.POST.getlist('weapon_styles')
             selected_styles = sorted(set(sent_styles))
 
@@ -946,17 +1368,27 @@ def add_authorization(request, person_id):
                                         update_auth.status = AuthorizationStatus.objects.get(name='Pending')
                                         messages.success(request, f'Authorization for {update_auth.style.name} pending confirmation.')
                                     else:
-                                        update_auth.status = AuthorizationStatus.objects.get(name='Active')
+                                        # Marshal authorizations require current membership; never Pending Waiver here
+                                        if not membership_is_current(person.user):
+                                            messages.error(request, 'Marshal authorizations require a current membership.')
+                                            return redirect('fighter', person_id=person_id)
+                                        update_auth.status = active_status
                                         messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
                                 else:
-                                    update_auth.status = AuthorizationStatus.objects.get(name='Active')
-                                    messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                    update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
+                                    if update_auth.status == active_status:
+                                        messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                    else:
+                                        messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
                                 
                                 # Set expiration based on youth marshal rules
-                                if update_auth.style.discipline.name in ['Youth Armored', 'Youth Rapier'] and update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
+                                if update_auth.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
                                     two_years = date.today() + relativedelta(years=2)
-                                    if person.user.background_check_expiration:
-                                        update_auth.expiration = min(two_years, person.user.background_check_expiration)
+                                    if update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
+                                        if person.user.background_check_expiration:
+                                            update_auth.expiration = min(two_years, person.user.background_check_expiration)
+                                        else:
+                                            update_auth.expiration = two_years
                                     else:
                                         update_auth.expiration = two_years
                                 else:
@@ -989,22 +1421,27 @@ def add_authorization(request, person_id):
                                                 style=style,
                                                 expiration=expiration,
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Needs Kingdom Approval'),
+                                                status=needs_kingdom_status,
                                             )
                                             messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                         else:
+                                            status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
                                             new_auth = Authorization.objects.create(
                                                 person=person,
                                                 style=style,
                                                 expiration=expiration,
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Active'),
+                                                status=status_to_set,
                                             )
-                                            messages.success(request, f'Authorization for {style.name} created successfully!')
-                                        # Update the waiver expiration date if it is greater than today to the authorization expiration date
-                                        if person.user.waiver_expiration and person.user.waiver_expiration < expiration:
-                                            person.user.waiver_expiration = expiration
-                                            person.user.save()
+                                            if status_to_set == active_status:
+                                                messages.success(request, f'Authorization for {style.name} created successfully!')
+                                            else:
+                                                messages.success(request, f'Authorization for {style.name} pending waiver.')
+                                        # Only push waiver when the new auth is Active
+                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                            if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
+                                                person.user.waiver_expiration = expiration
+                                                person.user.save()
                                     else:
                                         if AUTHORIZATION_OFFICER_SIGN_OFF:
                                             new_auth = Authorization.objects.create(
@@ -1012,22 +1449,27 @@ def add_authorization(request, person_id):
                                                 style=style,
                                                 expiration=date.today() + relativedelta(years=4),
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Needs Kingdom Approval'),
+                                                status=needs_kingdom_status,
                                             )
                                             messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                         else:
+                                            status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
                                             new_auth = Authorization.objects.create(
                                                 person=person,
                                                 style=style,
                                                 expiration=date.today() + relativedelta(years=4),
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=AuthorizationStatus.objects.get(name='Active'),
+                                                status=status_to_set,
                                             )
-                                            messages.success(request, f'Authorization for {style.name} created successfully!')
-                                        # Update the waiver expiration date if it is greater than today to the authorization expiration date
-                                        if person.user.waiver_expiration and person.user.waiver_expiration < new_auth.expiration:
-                                            person.user.waiver_expiration = new_auth.expiration
-                                            person.user.save()
+                                            if status_to_set == active_status:
+                                                messages.success(request, f'Authorization for {style.name} created successfully!')
+                                            else:
+                                                messages.success(request, f'Authorization for {style.name} pending waiver.')
+                                        # Only push waiver when the new auth is Active
+                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                            if (not person.user.waiver_expiration) or (person.user.waiver_expiration < new_auth.expiration):
+                                                person.user.waiver_expiration = new_auth.expiration
+                                                person.user.save()
 
                         except Exception as e:
                             print(f"Error processing style {style_id}: {e}")
@@ -1051,6 +1493,9 @@ def add_authorization(request, person_id):
 @login_required
 def user_account(request, user_id):
     """Allows the user, their parent, or the Kingdom Authorization officer to view and edit the user's account."""
+    from django.conf import settings
+    testing = getattr(settings, 'AUTHZ_TEST_FEATURES')
+    print(testing)
     requestor = request.user
     user = User.objects.get(id=user_id)
     person = user.person
@@ -1060,10 +1505,16 @@ def user_account(request, user_id):
 
     children = user.person.children.all()
 
-    try:
-        branch_officer = BranchMarshal.objects.get(person__user=user, end_date__gte=date.today())
-    except BranchMarshal.DoesNotExist:
-        branch_officer = None
+    # Active marshal appointment (any branch type)
+    branch_officer = (
+        BranchMarshal.objects.filter(
+            person__user=user,
+            end_date__gte=date.today(),
+        )
+        .select_related('branch', 'discipline')
+        .order_by('-end_date')
+        .first()
+    )
 
     # Pre-fill the form with the user's and person's information
     initial_data = {
@@ -1092,15 +1543,193 @@ def user_account(request, user_id):
     }
 
     if request.method == 'POST':
+        action = request.POST.get('action')
         requestor = request.user
         user = User.objects.get(id=user_id)
         person = user.person
+
+        if action == 'add_authorization_self':
+            if not testing:
+                messages.error(request, 'Testing is not enabled; cannot submit authorization.')
+                return redirect('user_account', user_id=user.id)
+            discipline_id = request.POST.get('discipline')
+            style_ids = request.POST.getlist('weapon_styles')
+            selected_styles = sorted(set(style_ids))
+            if not discipline_id or not selected_styles:
+                messages.error(request, 'Please select a discipline and at least one style.')
+                return redirect('user_account', user_id=user.id)
+
+            # Find an administrative user to record as the authorizing marshal for testing.
+            admin_user = User.objects.filter(is_superuser=True).order_by('id').first()
+            if not admin_user:
+                admin_user = User.objects.filter(username__iexact='admin').order_by('id').first()
+            if not admin_user:
+                messages.error(request, 'Admin user not found; cannot submit authorization.')
+                return redirect('user_account', user_id=user.id)
+            try:
+                admin_person = Person.objects.get(user=admin_user)
+            except Person.DoesNotExist:
+                # Create a minimal Person record for the superuser if missing (testing only)
+                admin_person = Person.objects.create(
+                    user=admin_user,
+                    sca_name=admin_user.get_full_name() or admin_user.username or 'Admin',
+                    branch=person.branch,
+                    is_minor=False,
+                )
+
+            created = 0
+            try:
+                for sid in selected_styles:
+                    style = WeaponStyle.objects.get(id=sid)
+
+                    # Skip if an authorization already exists for this person/style
+                    if Authorization.objects.filter(person=person, style=style).exists():
+                        continue
+
+                    if style.name in ['Senior Marshal', 'Junior Marshal']:
+                        expiration = date.today() + relativedelta(years=4)
+                        if not membership_is_current(person.user):
+                            messages.error(request, 'Marshal authorizations require a current membership.')
+                            return redirect('user_account', user_id=user.id)
+                        status = active_status
+                    else:
+                        if style.discipline.name in ['Youth Armored', 'Youth Rapier'] and style.name in ['Junior Marshal', 'Senior Marshal']:
+                            two_years = date.today() + relativedelta(years=2)
+                            if person.user.background_check_expiration:
+                                expiration = min(two_years, person.user.background_check_expiration)
+                            else:
+                                expiration = two_years
+                        else:
+                            expiration = date.today() + relativedelta(years=4)
+
+                        status = active_status if waiver_current(person.user) else pending_waiver_status
+
+                    Authorization.objects.create(
+                        person=person,
+                        style=style,
+                        expiration=expiration,
+                        marshal=admin_person,
+                        status=status,
+                    )
+                    created += 1
+
+                if created:
+                    messages.success(request, f'{created} authorization(s) submitted.')
+                else:
+                    messages.info(request, 'No new authorizations were created (duplicates skipped).')
+                return redirect('user_account', user_id=user.id)
+            except Exception as e:
+                messages.error(request, f'Error creating authorization(s): {e}')
+                return redirect('user_account', user_id=user.id)
+
+        elif action in ('self_set_regional', 'self_remove_regional'):
+            # Only the owner can change their own appointment
+            if not testing:
+                messages.error(request, 'Testing is not enabled; cannot set self as marshal officer.')
+                return redirect('user_account', user_id=user.id)
+            if request.user.id != user_id:
+                messages.error(request, "You can only change your own marshal appointment.")
+                return redirect('user_account', user_id=user_id)
+
+            # Accept either 'region_id' (legacy form field) or 'branch_id'
+            branch_id = request.POST.get('region_id') or request.POST.get('branch_id')
+            discipline_id = request.POST.get('discipline_id')
+            try:
+                branch = Branch.objects.get(id=branch_id)
+            except Branch.DoesNotExist:
+                messages.error(request, 'Invalid branch selected.')
+                return redirect('user_account', user_id=user_id)
+            # Exclude branches of type 'Other'
+            if branch.type == 'Other':
+                messages.error(request, 'Selected branch type is not eligible for marshal appointments.')
+                return redirect('user_account', user_id=user_id)
+            try:
+                discipline = Discipline.objects.get(id=discipline_id)
+            except Discipline.DoesNotExist:
+                messages.error(request, 'Invalid discipline selected.')
+                return redirect('user_account', user_id=user_id)
+
+            if action == 'self_set_regional':
+                # Validate requirements only for setting (not removing)
+                # Skip Senior Marshal requirement for Authorization Officer discipline
+                if discipline.name != 'Authorization Officer':
+                    if branch.type in ['Kingdom', 'Principality', 'Region']:
+                        # Regional/kingdom appointment requires Senior Marshal
+                        has_required = Authorization.objects.filter(
+                            person=person,
+                            style__name='Senior Marshal',
+                            style__discipline=discipline,
+                            status__name='Active',
+                            expiration__gte=date.today(),
+                        ).exists()
+                        if not has_required:
+                            messages.error(request, f'You must hold an active Senior Marshal in {discipline.name}.')
+                            return redirect('user_account', user_id=user_id)
+                    else:
+                        # Local branch appointment allows Junior or Senior Marshal
+                        has_required = Authorization.objects.filter(
+                            person=person,
+                            style__name__in=['Junior Marshal', 'Senior Marshal'],
+                            style__discipline=discipline,
+                            status__name='Active',
+                            expiration__gte=date.today(),
+                        ).exists()
+                        if not has_required:
+                            messages.error(request, f'You must hold an active Junior or Senior Marshal in {discipline.name}.')
+                            return redirect('user_account', user_id=user_id)
+
+                if not user.membership or not user.membership_expiration or user.membership_expiration < date.today():
+                    messages.error(request, 'A current SCA membership (with valid expiration) is required.')
+                    return redirect('user_account', user_id=user_id)
+
+                # Authorization Officer may only select the Kingdom (An Tir)
+                if discipline.name == 'Authorization Officer' and branch.name != 'An Tir':
+                    messages.error(request, 'Authorization Officers must be appointed at the Kingdom level (An Tir).')
+                    return redirect('user_account', user_id=user_id)
+
+                # Enforce single active officer position at a time
+                has_other_active_office = BranchMarshal.objects.filter(
+                    person=person,
+                    end_date__gte=date.today(),
+                ).exclude(branch=branch, discipline=discipline).exists()
+                if has_other_active_office:
+                    messages.error(
+                        request,
+                        'You already hold an active officer position. Please end it before setting a new one.'
+                    )
+                    return redirect('user_account', user_id=user_id)
+                try:
+                    bm = BranchMarshal.objects.get(person=person, branch=branch, discipline=discipline, end_date__gte=date.today())
+                    bm.end_date = date.today() + relativedelta(years=1)
+                    bm.save()
+                    messages.success(request, f'Your marshal appointment for {discipline.name} in {branch.name} has been refreshed.')
+                except BranchMarshal.DoesNotExist:
+                    BranchMarshal.objects.create(
+                        branch=branch,
+                        person=person,
+                        discipline=discipline,
+                        start_date=date.today(),
+                        end_date=date.today() + relativedelta(years=1),
+                    )
+                    messages.success(request, f'You are now set as a marshal for {discipline.name} in {branch.name}.')
+                return redirect('user_account', user_id=user_id)
+
+            if action == 'self_remove_regional':
+                qs = BranchMarshal.objects.filter(person=person, branch=branch, discipline=discipline, end_date__gte=date.today())
+                if qs.exists():
+                    # Set end date to yesterday so it no longer counts as active (we check end_date__gte=today)
+                    qs.update(end_date=date.today() - relativedelta(days=1))
+                    messages.success(request, f'Marshal appointment for {discipline.name} in {branch.name} has been ended.')
+                else:
+                    messages.info(request, 'No active regional marshal appointment found to remove.')
+                return redirect('user_account', user_id=user_id)
+
+        # Default: update account information
         if requestor != user and (not hasattr(user, 'person') or user.person.parent_id != requestor.id):
             if not is_kingdom_authorization_officer(requestor):
                 raise PermissionDenied
         form = CreatePersonForm(request.POST, user_instance=user, request=request)
         if form.is_valid():
-            # Update User fields
             user.email = form.cleaned_data['email']
             user.username = form.cleaned_data['username']
             user.first_name = form.cleaned_data['first_name']
@@ -1115,14 +1744,12 @@ def user_account(request, user_id):
             user.country = form.cleaned_data['country']
             user.phone_number = form.cleaned_data.get('phone_number')
             user.birthday = form.cleaned_data.get('birthday')
-            
-            # Only allow authorization officers to modify background_check_expiration
+
             if is_kingdom_authorization_officer(request.user):
                 user.background_check_expiration = form.cleaned_data.get('background_check_expiration')
-            
+
             user.save()
 
-            # Update Person fields
             person.sca_name = form.cleaned_data['sca_name']
             person.title = form.cleaned_data['title']
             person.branch = form.cleaned_data['branch']
@@ -1137,20 +1764,16 @@ def user_account(request, user_id):
     else:
         form = CreatePersonForm(initial=initial_data, user_instance=user, request=request)
 
-    # Calculate the maximum expiration date
-    waiver_signed = False
+    # Calculate waiver status strictly by waiver_expiration (not membership)
+    waiver_signed = bool(user.waiver_expiration and user.waiver_expiration > date.today())
+    # Preserve display of a maximum relevant date for UI (waiver or membership)
     max_expiration = None
-    if user.waiver_expiration and user.waiver_expiration > date.today():
-        waiver_signed = True
-    elif user.membership_expiration and user.membership_expiration > date.today():
-        waiver_signed = True
-    if waiver_signed:
-        if user.waiver_expiration and user.membership_expiration:
-            max_expiration = max(user.waiver_expiration, user.membership_expiration)
-        elif user.waiver_expiration:
-            max_expiration = user.waiver_expiration
-        elif user.membership_expiration:
-            max_expiration = user.membership_expiration
+    if user.waiver_expiration and user.membership_expiration:
+        max_expiration = max(user.waiver_expiration, user.membership_expiration)
+    elif user.waiver_expiration:
+        max_expiration = user.waiver_expiration
+    elif user.membership_expiration:
+        max_expiration = user.membership_expiration
 
     context = {
         'person': person,
@@ -1161,18 +1784,34 @@ def user_account(request, user_id):
         'waiver_signed': waiver_signed,
         'max_expiration': max_expiration,
         'is_authorization_officer': is_kingdom_authorization_officer(request.user),
+        # Prep authorization UI (initially just show the form; logic wired later)
+        'auth_form': CreateAuthorizationForm(user=request.user, show_all=True),
+        'auth_officer': is_kingdom_authorization_officer(request.user),
+        'all_people': Person.objects.all().order_by('sca_name'),
+        # Branch choices for self-appointment (exclude Other type)
+        'branch_choices': Branch.objects.exclude(type='Other').order_by('name'),
+        'discipline_choices': Discipline.objects.order_by('name'),
+        'testing': testing,
     }
 
     return render(request, 'authorizations/user_account.html', context)
 
 @login_required
 def sign_waiver(request, user_id):
+    user = User.objects.get(id=user_id)
     if request.method == 'POST':
-        user = User.objects.get(id=user_id)
-        user.waiver_expiration = date.today() + relativedelta(years=1)
-        user.save()
-        return redirect('user_account', user_id=user.id)
+        ok, msg = _finalize_waiver_signed(request.user, user)
+        if ok:
+            messages.success(request, msg)
+            return redirect('user_account', user_id=user.id)
+        else:
+            messages.error(request, msg)
+            return redirect('index')
     else:
+        # Only the account owner may view the waiver page (AO cannot view others' waiver page)
+        if request.user.id != user_id:
+            messages.error(request, 'You can only sign a waiver for your own account.')
+            return redirect('index')
         return render(request, 'authorizations/waiver.html')
 
 def reject_authorization(request, authorization):
@@ -1417,7 +2056,8 @@ def branch_marshals(request):
     if discipline := request.GET.get('discipline'):
         dynamic_filter &= Q(discipline__name=discipline)
     if region := request.GET.get('region'):
-        dynamic_filter &= Q(region__name=region)
+        # Region is a property of the related Branch (self-referential FK)
+        dynamic_filter &= Q(branch__region__name=region)
     
     matching_appointments = BranchMarshal.objects.filter(dynamic_filter).exclude(person__user_id=11968)
     view_mode = request.GET.get('view', 'table')
@@ -1452,11 +2092,41 @@ def branch_marshals(request):
     }
     return render(request, 'authorizations/branch_marshals.html', context)
 
+def changelog_view(request):
+    """Render the local CHANGELOG.md as HTML on the changelog page.
+
+    Reads from settings.BASE_DIR so it uses the project root regardless of module location.
+    """
+    base_dir = settings.BASE_DIR  # Path object
+    candidates = ['CHANGELOG.md', 'Changelog.md', 'changelog.md']
+
+    md = mistune.create_markdown()
+    allowed_tags = [
+        'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'em', 'i', 'li', 'ol',
+        'p', 'pre', 'strong', 'ul', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
+    ]
+    allowed_attrs = {'a': ['href', 'title', 'rel', 'target']}
+
+    changelog_html = None
+    for name in candidates:
+        path = base_dir / name
+        if path.exists():
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                html = md(text)
+                changelog_html = bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
+            except Exception:
+                changelog_html = None
+            break
+
+    return render(request, 'changelog.html', {'changelog_html': changelog_html})
+
 # This is where the Forms are kept
 
 class TitleModelChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
-        # show “Duke (Ducal)” etc.
+        # show ΓÇ£Duke (Ducal)ΓÇ¥ etc.
         return f"{obj.name} ({obj.rank})"
 
 class CreatePersonForm(forms.Form):
@@ -1476,7 +2146,12 @@ class CreatePersonForm(forms.Form):
     username = forms.CharField(label='Username', required=True)
     first_name = forms.CharField(label='First Name', required=True)
     last_name = forms.CharField(label='Last Name', required=True)
-    membership = forms.IntegerField(label='Membership Number', required=False)
+    membership = forms.CharField(
+        label='Membership Number',
+        required=False,
+        max_length=20,
+        validators=[RegexValidator(r'^\d{1,20}$', 'Enter 1-20 digits.')]
+    )
     membership_expiration = forms.DateField(label='Membership Expiration', required=False,
                                             widget=forms.DateInput(attrs={'type': 'date'}))
     address = forms.CharField(label='Address', required=True)
@@ -1493,7 +2168,7 @@ class CreatePersonForm(forms.Form):
         label='Title',
         queryset=Title.objects.none(),
         required=False,
-        empty_label='— choose one —'
+        empty_label='ΓÇö choose one ΓÇö'
     )
     new_title = forms.CharField(
         label='Or enter a new title',
@@ -1502,7 +2177,7 @@ class CreatePersonForm(forms.Form):
     )
     new_title_rank = forms.ChoiceField(
         label='Rank for new title',
-        choices=[('', '— select a rank —')] + list(TITLE_RANK_CHOICES),
+        choices=[('', 'ΓÇö select a rank ΓÇö')] + list(TITLE_RANK_CHOICES),
         required=False
     )
     branch = forms.ModelChoiceField(label='Branch', queryset=Branch.objects.non_regions(), required=True)
@@ -1518,10 +2193,13 @@ class CreatePersonForm(forms.Form):
         """Allow passing a user instance when updating."""
         self.user_instance = kwargs.pop('user_instance', None)
         self.request = kwargs.pop('request', None)
+        show_all = kwargs.pop('show_all', False)
         super().__init__(*args, **kwargs)
         qs = Title.objects.filter(name__in=self.ALLOWED_TITLES)
         qs = qs.order_by('pk')
         self.fields['title'].queryset = qs
+        # Order branches alphabetically and exclude region-level types (Kingdom/Principality/Region)
+        self.fields['branch'].queryset = Branch.objects.non_regions().order_by('name')
 
     def clean_phone_number(self):
         raw = self.cleaned_data['phone_number']
@@ -1554,6 +2232,26 @@ class CreatePersonForm(forms.Form):
             
         return postal_code
 
+    def clean_state_province(self):
+        state_province = self.cleaned_data.get('state_province', '').strip().title()
+        if not state_province:
+            raise forms.ValidationError('State/Province is required.')
+        
+        # Check if the state/province matches any of the valid patterns
+        valid = (
+            state_province == 'Oregon' or
+            state_province == 'Washington' or
+            state_province == 'Idaho' or
+            state_province == 'British Columbia'
+        )
+        
+        if not valid:
+            raise forms.ValidationError(
+                'State/Province must be within An Tir.'
+            )
+        
+        return state_province
+
     def clean(self):
         cleaned_data = super().clean()
         new_title = cleaned_data.get('new_title')
@@ -1569,6 +2267,9 @@ class CreatePersonForm(forms.Form):
             raise forms.ValidationError('A user with this username already exists.')
 
         membership = cleaned_data.get('membership')
+        if isinstance(membership, str):
+            membership = membership.strip()
+            cleaned_data['membership'] = membership or None
         if membership and User.objects.filter(membership=membership).exclude(id=user_id).exists():
             raise forms.ValidationError('A user with this membership number already exists.')
 
@@ -1606,9 +2307,13 @@ class CreateAuthorizationForm(forms.Form):
     def __init__(self, *args, **kwargs):
         # Expecting 'user' to be passed during form initialization
         user = kwargs.pop('user', None)
+        show_all = kwargs.pop('show_all', False)
         super().__init__(*args, **kwargs)
 
-        if user:
+        if show_all:
+            # Public testing: expose all disciplines (except AO/EM which aren't user auths)
+            self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
+        elif user:
             # Filter disciplines based on the user's senior marshal authorizations
             if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name__in=['Authorization Officer', 'Earl Marshal']).exists():
                 self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])

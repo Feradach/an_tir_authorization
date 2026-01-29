@@ -149,6 +149,30 @@
             {% endfor %}
         </div>
     {% endif %}
+
+    {% if pending_waivers %}
+        <h4>Pending Waiver</h4>
+        <div class="row">
+            {% for discipline, data in pending_waivers.items %}
+                <div class="col-md-3">
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #e9ecef; color: #333;">
+                        <h5>{{ discipline }}</h5>
+                        <p><strong>Styles:</strong>
+                        <ul>
+                        {% for style in data.styles %}
+                          <li>{{ style }}{% if not forloop.last %}, {% endif %}</li>
+                        {% endfor %}
+                        </ul>
+                        </p>
+                        <p><strong>Status:</strong> {{ data.status }}</p>
+                        {% if data.marshal_name %}
+                            <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
 </div>
 </div>
 {% if sanctions  %}
@@ -261,7 +285,6 @@
                 </a>
             </div>
         {% endif %}
-        <p><strong>Instructions:</strong> You must print the card following the link. Downloading will cause it to lose the text.</p>
     </div>
 </div>
 
@@ -278,6 +301,10 @@
         const stylesSelect = document.getElementById('weapon-styles-select');
         const cartContainer = document.getElementById('cart-container');
         const form = document.querySelector('form');
+
+        if (!disciplineSelect || !stylesSelect || !cartContainer || !form) {
+            return;
+        }
 
         // Initialize Choices.js if the dropdown exists
         if (authorizingMarshalSelect) {
