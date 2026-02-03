@@ -27,7 +27,7 @@ ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") # Stored i
 # Gate test-only features (default off in production; enable via env as needed)
 AUTHZ_TEST_FEATURES = os.environ.get('AUTHZ_TEST_FEATURES', '0').strip().lower() in ('1', 'true', 'yes', 'on')
 
-SITE_URL = os.environ.get("SITE_URL", "https://authorizations.thebusinessduck.com")
+SITE_URL = os.environ.get("SITE_URL")
 
 # Use PyMySQL as MySQLdb backend
 pymysql.install_as_MySQLdb()
@@ -69,17 +69,18 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-# Email configuration (production-safe)
-# ------------------------------------
-# DigitalOcean blocks outbound SMTP. To prevent email failures
-# from crashing Gunicorn workers, production uses a file-based
-# email backend. Messages are written to disk and can be inspected
-# or replayed manually if needed.
+# Email configuration (HTTPS)
 
+# Email to file for testing
+'''
 EMAIL_BACKEND = 'django.core.mail.backends.filebased.EmailBackend'
 EMAIL_FILE_PATH = '/home/antir/mail_outbox'
-
 DEFAULT_FROM_EMAIL = 'no-reply@authorizations.antir.org'
+'''
+
+# Email using Gmail API
+EMAIL_BACKEND = 'core.email_backends.GmailAPIBackend'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL')
 
 
 # Static files (CSS, JavaScript, Images)

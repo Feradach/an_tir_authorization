@@ -2,14 +2,13 @@
 {% load static %}
 
 {% block title %}
-    Create Your Account (Public Testing)
+    Create Your Account
 {% endblock %}
 
 {% block body %}
     {# Messages are now rendered globally in layout.html #}
 
     <h3>Register</h3>
-    <p>This is a public testing form to create your own account.</p>
 
     <p>
         <a class="btn btn-primary" data-bs-toggle="collapse" href="#registerRules" role="button" aria-expanded="true" aria-controls="registerRules">
@@ -30,16 +29,20 @@
                 <li>Membership number must be between 1 and 20 digits.</li>
                 <li>If registering a minor, a birthday is required. Non‑minors must not list a parent.</li>
                 <li>Title is optional; you may choose from the list or enter a new title with a rank.</li>
-                <li>After this is submitted, you will receive a temporary password via email. You will need to log in with this password to complete your registration.</li>
-                <li>When you first log into your account you will be asked to update your password. Once you have done that you will need to go to "My Account" and sign your waiver. After that you will be able to add authorizations to yourself.</li>
+                <li>After this is submitted, you will receive a password setup link via email.</li>
+                <li>After you set your password, log in and go to "My Account" to sign your waiver. After that you will be able to add authorizations to yourself.</li>
             </ul>
         </div>
     </div>
 
     <form method="post" id="register_form">
         {% csrf_token %}
+        <div style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
+            {{ person_form.honeypot.label_tag }}
+            {{ person_form.honeypot }}
+        </div>
         {% for field in person_form %}
-            {% if field.name != 'background_check_expiration' %}
+            {% if field.name != 'background_check_expiration' and field.name != 'honeypot' %}
                 <div class="form-group">
                     {{ field.label_tag }}
                     {{ field }}

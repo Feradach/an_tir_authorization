@@ -1,11 +1,12 @@
 ﻿from dateutil.relativedelta import relativedelta
 from django.core.mail import send_mail
 from django.conf import settings
-import random
-import string
 from datetime import date, datetime
 from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.http import JsonResponse
 from datetime import timedelta
@@ -19,6 +20,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 from django.contrib.staticfiles import finders
+from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current
 from itertools import groupby
@@ -39,6 +41,17 @@ logger = logging.getLogger(__name__)
 FIGHTER_CARD_WATERMARK = ''
 PDF_FONT_NAME = 'DejaVuSans'
 _PDF_FONT_REGISTERED = False
+_PASSWORD_TOKEN_GENERATOR = PasswordResetTokenGenerator()
+
+USERNAME_RECOVERY_IP_LIMIT = 5
+USERNAME_RECOVERY_EMAIL_LIMIT = 3
+USERNAME_RECOVERY_WINDOW_SECONDS = 15 * 60
+PASSWORD_RESET_IP_LIMIT = 5
+PASSWORD_RESET_USERNAME_LIMIT = 3
+PASSWORD_RESET_WINDOW_SECONDS = 15 * 60
+REGISTER_IP_LIMIT = 5
+REGISTER_EMAIL_LIMIT = 3
+REGISTER_WINDOW_SECONDS = 15 * 60
 
 # Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
@@ -260,28 +273,35 @@ def logout_view(request):
 
 
 def register(request):
-    """Public registration: allow testers to create their own account.
+    """Public registration: allow users to create their own account.
     Mirrors add_fighter flow but without marshal permission requirements."""
     from django.conf import settings
-    # If test features are not enabled, redirect to index
-        # If we choose to open up registration, delete this section of code.
-    if not getattr(settings, 'AUTHZ_TEST_FEATURES', False):
-        messages.error(request, 'Registration is disabled on this site.')
-        return redirect('index')
     # If the request is a POST, process the registration
     if request.method == 'POST':
+        if not is_kingdom_authorization_officer(request.user):
+            ip_address = _get_client_ip(request)
+            email = request.POST.get('email', '').strip().lower()
+            ip_key = f"register:ip:{ip_address}"
+            email_key = f"register:email:{email}"
+            if _throttle_request(ip_key, REGISTER_IP_LIMIT, REGISTER_WINDOW_SECONDS) or \
+               (email and _throttle_request(email_key, REGISTER_EMAIL_LIMIT, REGISTER_WINDOW_SECONDS)):
+                logger.warning('Registration throttled for email=%s ip=%s', email, ip_address)
+                messages.error(request, 'Too many registration attempts. Please wait a bit and try again.')
+                return render(request, 'authorizations/register.html', {
+                    'person_form': CreatePersonForm(request.POST)
+                })
+
         person_form = CreatePersonForm(request.POST)
 
         if person_form.is_valid():
-            random_password = generate_random_password()
-
             # Create the user
             try:
                 with transaction.atomic():
                     user = User.objects.create_user(
                         email=person_form.cleaned_data['email'],
                         username=person_form.cleaned_data['username'],
-                        password=random_password,
+                        password=None,
+                        is_active=False,
                         first_name=person_form.cleaned_data['first_name'],
                         last_name=person_form.cleaned_data['last_name'],
                         membership=person_form.cleaned_data.get('membership', None),
@@ -306,24 +326,33 @@ def register(request):
                         parent=person_form.cleaned_data.get('parent', None),
                     )
 
-            except Exception as e:
-                messages.error(request, f'Error during creation: {e}')
+            except Exception:
+                logger.exception('Error during account creation')
+                messages.error(request, 'We could not create the account right now. Please try again later. If this continues, contact the web team.')
                 return render(request, 'authorizations/register.html', {
                     'person_form': person_form
                 })
 
             # Send the login credentials to the user
-            login_path = reverse('login')
-            login_url = f"{settings.SITE_URL}{login_path}"
-            send_mail(
-                'An Tir Authorization: New Account',
-                f'Your account has been created. Your credentials are:\nURL: {login_url}\nUsername: {person_form.cleaned_data["username"]}\nPassword: {random_password}\n'
-                f'Please reset your password after logging in.',
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                fail_silently=False,
-            )
-            messages.success(request, 'Account created! Login credentials have been emailed to you.')
+            reset_link = _build_password_reset_link(user)
+            try:
+                send_mail(
+                    'An Tir Authorization: New Account',
+                    f'Your account has been created.\n\n'
+                    f'Username: {person_form.cleaned_data["username"]}\n'
+                    f'Set your password here: {reset_link}',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                    fail_silently=False,
+                )
+                messages.success(request, 'Account created! A password setup link has been emailed to you.')
+            except Exception:
+                logger.exception('Error sending new account email for user_id=%s', user.id)
+                messages.warning(
+                    request,
+                    'Account created, but the email failed to send. '
+                    'Please contact the web team for assistance.'
+                )
             return redirect('fighter', person_id=user.id)
 
         # invalid form
@@ -379,12 +408,71 @@ def password_reset(request, user_id):
     else:
         return render(request, 'authorizations/password_reset.html')
 
+def _build_password_reset_link(user: User) -> str:
+    uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+    token = _PASSWORD_TOKEN_GENERATOR.make_token(user)
+    reset_path = reverse('password_reset_token', kwargs={'uidb64': uidb64, 'token': token})
+    return f"{settings.SITE_URL}{reset_path}"
+
+def _get_client_ip(request) -> str:
+    forwarded = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded:
+        return forwarded.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+def _throttle_request(key: str, limit: int, window_seconds: int) -> bool:
+    """Return True if throttled."""
+    count = cache.get(key)
+    if count is None:
+        cache.set(key, 1, timeout=window_seconds)
+        return False
+    if count >= limit:
+        return True
+    cache.incr(key)
+    return False
+
+def password_reset_token(request, uidb64, token):
+    user = None
+    try:
+        user_id = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=user_id)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+
+    if not user or not _PASSWORD_TOKEN_GENERATOR.check_token(user, token):
+        messages.error(request, 'This password reset link is invalid or has expired.')
+        return render(request, 'authorizations/password_reset_token.html', {'valid_link': False})
+
+    if request.method == 'POST':
+        password = request.POST.get('password', '')
+        confirmation = request.POST.get('confirmation', '')
+        if password != confirmation:
+            return render(request, 'authorizations/password_reset_token.html', {
+                'valid_link': True,
+                'message': 'Passwords must match.'
+            })
+
+        try:
+            validate_password(password, user=user)
+        except ValidationError as e:
+            return render(request, 'authorizations/password_reset_token.html', {
+                'valid_link': True,
+                'message': ' '.join(e.messages),
+            })
+
+        user.set_password(password)
+        user.is_active = True
+        user.has_logged_in = True
+        user.save()
+        messages.success(request, 'Your password has been set. You can now log in.')
+        return redirect('login')
+
+    return render(request, 'authorizations/password_reset_token.html', {'valid_link': True})
+
 
 def recover_account(request):
     if request.method == 'POST':
         action = request.POST.get('action')
-        login_path = reverse('login')
-        login_url = f"{settings.SITE_URL}{login_path}"
         
         # Resetting password
         if action == 'reset_password':
@@ -392,32 +480,44 @@ def recover_account(request):
             if not username:
                 messages.error(request, 'Please enter a username.')
                 return render(request, 'authorizations/recover_account.html')
+
+            ip_address = _get_client_ip(request)
+            username_key = f"password-reset:username:{username.lower()}"
+            ip_key = f"password-reset:ip:{ip_address}"
+            if _throttle_request(username_key, PASSWORD_RESET_USERNAME_LIMIT, PASSWORD_RESET_WINDOW_SECONDS) or \
+               _throttle_request(ip_key, PASSWORD_RESET_IP_LIMIT, PASSWORD_RESET_WINDOW_SECONDS):
+                logger.warning('Password reset throttled for username=%s ip=%s', username, ip_address)
+                messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
+                return redirect('login')
                 
             try:
                 user = User.objects.get(username=username)
-                new_password = generate_random_password()
-                user.set_password(new_password)
-                user.has_logged_in = False
-                user.save()
-                
-                # Send the password via email
+            except User.DoesNotExist:
+                # Avoid user enumeration: behave as if a reset was requested.
+                messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
+                return redirect('login')
+
+            reset_link = _build_password_reset_link(user)
+            
+            # Send the password reset link via email
+            try:
                 send_mail(
                     'An Tir Authorization: Password Reset',
-                    f'Your password has been reset.\n\n'
+                    f'We received a request to reset your password.\n\n'
                     f'Username: {user.username}\n'
-                    f'Temporary Password: {new_password}\n\n'
-                    f'Please log in and change your password.\n'
-                    f'Login URL: {login_url}',
+                    f'Password Reset Link: {reset_link}\n\n'
+                    f'If you did not request this, you can ignore this email.',
                     settings.DEFAULT_FROM_EMAIL,
                     [user.email],
                     fail_silently=False,
                 )
-                messages.success(request, 'A temporary password has been sent to the email on file for this username.')
-                return redirect('login')
-                
-            except User.DoesNotExist:
-                messages.error(request, 'No account with that username was found.')
+            except Exception:
+                logger.exception('Error sending password reset email for user_id=%s', user.id)
+                messages.error(request, 'We could not send a reset email right now. Please try again later.')
                 return render(request, 'authorizations/recover_account.html')
+
+            messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
+            return redirect('login')
                 
         # Getting username
         elif action == 'get_username':
@@ -425,26 +525,43 @@ def recover_account(request):
             if not email:
                 messages.error(request, 'Please enter an email address.')
                 return render(request, 'authorizations/recover_account.html')
-                
-            users = User.objects.filter(email=email)
-            if not users.exists():
-                messages.error(request, 'No accounts were found with that email address.')
+
+            ip_address = _get_client_ip(request)
+            email_key = f"username-recovery:email:{email.lower()}"
+            ip_key = f"username-recovery:ip:{ip_address}"
+            if _throttle_request(email_key, USERNAME_RECOVERY_EMAIL_LIMIT, USERNAME_RECOVERY_WINDOW_SECONDS) or \
+               _throttle_request(ip_key, USERNAME_RECOVERY_IP_LIMIT, USERNAME_RECOVERY_WINDOW_SECONDS):
+                logger.warning('Username recovery throttled for email=%s ip=%s', email, ip_address)
+                messages.error(request, 'Too many recovery attempts. Please wait a bit and try again.')
                 return render(request, 'authorizations/recover_account.html')
+
+            logger.info('Username recovery requested for email=%s ip=%s', email, ip_address)
+            users = User.objects.filter(email=email)
+            login_path = reverse('login')
+            login_url = f"{settings.SITE_URL}{login_path}"
                 
             usernames = [user.username for user in users]
             username_list = '\n'.join([f'- {username}' for username in usernames])
             
-            send_mail(
-                'An Tir Authorization: Username Recovery',
-                f'We found the following usernames associated with this email address:\n\n'
-                f'{username_list}\n\n'
-                f'You can use any of these usernames to log in. If you need to reset your password, please use the "Forgot Password" option.\n\n'
-                f'Login URL: {login_url}',
-                settings.DEFAULT_FROM_EMAIL,
-                [email],
-                fail_silently=False,
-            )
-            messages.success(request, f'A list of usernames has been sent to {email}.')
+            if users.exists():
+                try:
+                    send_mail(
+                        'An Tir Authorization: Username Recovery',
+                        f'We found the following usernames associated with this email address:\n\n'
+                        f'{username_list}\n\n'
+                        f'You can use any of these usernames to log in. If you need to reset your password, please use the "Forgot Password" option.\n\n'
+                        f'Login URL: {login_url}',
+                        settings.DEFAULT_FROM_EMAIL,
+                        [email],
+                        fail_silently=False,
+                    )
+                except Exception:
+                    logger.exception('Error sending username recovery email for %s', email)
+                    messages.error(request, 'We could not send an email right now. Please try again later.')
+                    return render(request, 'authorizations/recover_account.html')
+
+            # Avoid user enumeration: same response whether or not accounts exist.
+            messages.success(request, 'If any accounts exist for that email address, the usernames have been sent.')
             return redirect('login')
             
         else:
@@ -453,12 +570,6 @@ def recover_account(request):
 
     return render(request, 'authorizations/recover_account.html')
 
-
-def generate_random_password(length=12):
-    """Generate a random password. This is used for temporary passwords."""
-    characters = string.ascii_letters + string.digits + string.punctuation
-    password = ''.join(random.choice(characters) for _ in range(length))
-    return password
 
 def _finalize_waiver_signed(request_user: User, target_user: User):
     """Finalize waiver signing for target_user.
@@ -1210,8 +1321,8 @@ def get_weapon_styles(request, discipline_id):
 @login_required
 def add_fighter(request):
     """This will create a new fighter and add them to the database.
-    Only available to senior marshals."""
-    if not is_senior_marshal(request.user):
+    Only available to the kingdom authorization officer."""
+    if not is_kingdom_authorization_officer(request.user):
         messages.error(request, "You don't have the required permission to add a new fighter.")
         raise PermissionDenied
 
@@ -1220,9 +1331,6 @@ def add_fighter(request):
 
         if person_form.is_valid():
 
-            # Generate a random password
-            random_password = generate_random_password()
-
             try:
                 with transaction.atomic():
 
@@ -1230,7 +1338,8 @@ def add_fighter(request):
                     user = User.objects.create_user(
                         email=person_form.cleaned_data['email'],
                         username=person_form.cleaned_data['username'],
-                        password=random_password,
+                        password=None,
+                        is_active=False,
                         first_name=person_form.cleaned_data['first_name'],
                         last_name=person_form.cleaned_data['last_name'],
                         membership=person_form.cleaned_data.get('membership', None),
@@ -1255,24 +1364,33 @@ def add_fighter(request):
                         parent=person_form.cleaned_data.get('parent', None),
                     )
 
-            except Exception as e:
-                messages.error(request, f'Error during creation: {e}')
+            except Exception:
+                logger.exception('Error during marshal account creation')
+                messages.error(request, 'We could not create the account right now. Please try again later. If this continues, contact the web team.')
                 return render(request, 'authorizations/new_fighter.html', {
                     'person_form': person_form
                 })
             
-            login_path = reverse('login')
-            login_url = f"{settings.SITE_URL}{login_path}"
-            send_mail(
-                'An Tir Authorization: New Account',
-                f'Your account has been created. Your credentials are:\nURL: {login_url}\nUsername: {person_form.cleaned_data["username"]}\nPassword: {random_password}\n'
-                f'Please reset your password after logging in.',
-                settings.DEFAULT_FROM_EMAIL,
-                [user.email],
-                fail_silently=False,
-            )
-            messages.success(request,
-                             'User and person created successfully! Login credentials have been sent to the user.')
+            reset_link = _build_password_reset_link(user)
+            try:
+                send_mail(
+                    'An Tir Authorization: New Account',
+                    f'Your account has been created.\n\n'
+                    f'Username: {person_form.cleaned_data["username"]}\n'
+                    f'Set your password here: {reset_link}',
+                    settings.DEFAULT_FROM_EMAIL,
+                    [user.email],
+                    fail_silently=False,
+                )
+                messages.success(request,
+                                 'User and person created successfully! A password setup link has been sent to the user.')
+            except Exception:
+                logger.exception('Error sending new account email for user_id=%s', user.id)
+                messages.warning(
+                    request,
+                    'User and person created successfully, but the email failed to send. '
+                    'Please contact the web team for assistance.'
+                )
 
             return redirect('fighter', person_id=user.id)
 
@@ -1618,8 +1736,9 @@ def user_account(request, user_id):
                 else:
                     messages.info(request, 'No new authorizations were created (duplicates skipped).')
                 return redirect('user_account', user_id=user.id)
-            except Exception as e:
-                messages.error(request, f'Error creating authorization(s): {e}')
+            except Exception:
+                logger.exception('Error creating authorization(s) for person_id=%s', person_id)
+                messages.error(request, 'We could not create the authorization(s) right now. Please try again later. If this continues, contact the web team.')
                 return redirect('user_account', user_id=user.id)
 
         elif action in ('self_set_regional', 'self_remove_regional'):
@@ -2126,7 +2245,7 @@ def changelog_view(request):
 
 class TitleModelChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
-        # show ΓÇ£Duke (Ducal)ΓÇ¥ etc.
+        # show "Duke (Ducal)" etc.
         return f"{obj.name} ({obj.rank})"
 
 class CreatePersonForm(forms.Form):
@@ -2143,6 +2262,14 @@ class CreatePersonForm(forms.Form):
         "Lord", "Lady", "Gentle",
     ]
     email = forms.EmailField(label='Email', required=True)
+    honeypot = forms.CharField(
+        label='Leave this field blank',
+        required=False,
+        widget=forms.TextInput(attrs={
+            'autocomplete': 'off',
+            'tabindex': '-1',
+        })
+    )
     username = forms.CharField(label='Username', required=True)
     first_name = forms.CharField(label='First Name', required=True)
     last_name = forms.CharField(label='Last Name', required=True)
@@ -2157,9 +2284,17 @@ class CreatePersonForm(forms.Form):
     address = forms.CharField(label='Address', required=True)
     address2 = forms.CharField(label='Address Line 2', required=False)
     city = forms.CharField(label='City', required=True)
-    state_province = forms.ChoiceField(label='State/Province', choices=state_province_choices, required=True)
+    state_province = forms.ChoiceField(
+        label='State/Province',
+        choices=[('', '-- select one --')] + state_province_choices,
+        required=True
+    )
     postal_code = forms.CharField(label='Postal Code', required=True)
-    country = forms.ChoiceField(label='Country', choices=[('Canada', 'Canada'), ('United States', 'United States')], required=True)
+    country = forms.ChoiceField(
+        label='Country',
+        choices=[('', '-- select one --'), ('Canada', 'Canada'), ('United States', 'United States')],
+        required=True
+    )
     phone_number = forms.CharField(label='Phone Number', required=True, help_text='Enter a 10 digit phone number')
     birthday = forms.DateField(label='Birthday', required=False, widget=forms.DateInput(attrs={'type': 'date'}))
     discipline_names = Discipline.objects.values_list('name', flat=True)
@@ -2168,7 +2303,7 @@ class CreatePersonForm(forms.Form):
         label='Title',
         queryset=Title.objects.none(),
         required=False,
-        empty_label='ΓÇö choose one ΓÇö'
+        empty_label='-- choose one --'
     )
     new_title = forms.CharField(
         label='Or enter a new title',
@@ -2177,7 +2312,7 @@ class CreatePersonForm(forms.Form):
     )
     new_title_rank = forms.ChoiceField(
         label='Rank for new title',
-        choices=[('', 'ΓÇö select a rank ΓÇö')] + list(TITLE_RANK_CHOICES),
+        choices=[('', '-- select a rank --')] + list(TITLE_RANK_CHOICES),
         required=False
     )
     branch = forms.ModelChoiceField(label='Branch', queryset=Branch.objects.non_regions(), required=True)
@@ -2258,6 +2393,9 @@ class CreatePersonForm(forms.Form):
         new_title_rank = cleaned_data.get('new_title_rank')
 
         user_id = self.user_instance.id if self.user_instance else None
+
+        if cleaned_data.get('honeypot'):
+            raise forms.ValidationError('Unable to process submission.')
 
         if not cleaned_data.get('is_minor') and cleaned_data.get('parent_id'):
             raise forms.ValidationError('A non-minor must not have a parent ID.')

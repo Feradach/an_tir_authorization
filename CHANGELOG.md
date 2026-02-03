@@ -1,7 +1,12 @@
 ﻿## [0.1.2] - 2026-02-02
-### Change
+### Fixed
+- Changed dropdowns to be more readable.
+
+### Added
 - Moved system from PythonAnywhere to DigitalOcean.
 - Changed email from SMTP to HTTPS.
+- Opened up self registration for production version.
+- Added security features for password reset and registration.
 
 ## [0.1.1] - 2025-11-28
 ### Fixed
