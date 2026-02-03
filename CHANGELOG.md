@@ -1,4 +1,9 @@
-﻿## [0.1.1] - 2025-11-28
+﻿## [0.1.2] - 2026-02-02
+### Change
+- Moved system from PythonAnywhere to DigitalOcean.
+- Changed email from SMTP to HTTPS.
+
+## [0.1.1] - 2025-11-28
 ### Fixed
 - Fixed bug where the page would crash if user put in incorrect date format into URL.
 - Fixed fighter cards so that they appear correctly in Firefox by flattening the PDF.
