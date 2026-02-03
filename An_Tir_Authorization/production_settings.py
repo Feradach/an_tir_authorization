@@ -79,7 +79,8 @@ DEFAULT_FROM_EMAIL = 'no-reply@authorizations.antir.org'
 '''
 
 # Email using Gmail API
-EMAIL_BACKEND = 'core.email_backends.GmailAPIBackend'
+EMAIL_BACKEND = 'authorizations.email_backends.GmailAPIBackend'
+GMAIL_TOKEN_FILE = os.environ.get("GMAIL_TOKEN_FILE")
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL')
 
 
