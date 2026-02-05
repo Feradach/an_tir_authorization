@@ -22,7 +22,7 @@ from django.urls import reverse
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current, calculate_authorization_expiration
 from itertools import groupby
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName, PageMerge
@@ -190,18 +190,32 @@ def index(request):
             if senior_marshal:
                 branch = marshal.branch
                 discipline = marshal.discipline
-                pending_authorizations = Authorization.objects.filter(person__branch=branch, style__discipline=discipline, status__name='Pending').order_by('expiration')
+                pending_authorizations = Authorization.objects.with_effective_expiration().filter(
+                    person__branch=branch,
+                    style__discipline=discipline,
+                    status__name='Pending'
+                ).order_by('effective_expiration_date')
         if regional_marshal:
             discipline = marshal.discipline
-            pending_authorizations = Authorization.objects.filter(person__branch__region=marshal.branch, style__discipline=discipline, status__name='Needs Regional Approval').order_by('expiration')
+            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
+                person__branch__region=marshal.branch,
+                style__discipline=discipline,
+                status__name='Needs Regional Approval'
+            ).order_by('effective_expiration_date')
         if kingdom_marshal:
             discipline = marshal.discipline
-            pending_authorizations = Authorization.objects.filter(style__discipline=discipline,
-                                                          status__name='Needs Regional Approval').order_by('expiration')
+            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
+                style__discipline=discipline,
+                status__name='Needs Regional Approval'
+            ).order_by('effective_expiration_date')
         if kingdom_earl_marshal:
-            pending_authorizations = Authorization.objects.filter(status__name='Needs Regional Approval').order_by('expiration')
+            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
+                status__name='Needs Regional Approval'
+            ).order_by('effective_expiration_date')
         if auth_officer:
-            pending_authorizations = Authorization.objects.filter(status__name='Needs Kingdom Approval').order_by('expiration')
+            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
+                status__name='Needs Kingdom Approval'
+            ).order_by('effective_expiration_date')
 
     if request.method == 'POST':
         if not request.user.is_authenticated:
@@ -864,23 +878,27 @@ def search(request):
     if style: dynamic_filter &= Q(style__name=style)
     marshal = request.GET.get('marshal')
     if marshal: dynamic_filter &= Q(marshal__sca_name=marshal)
-    start_date_raw = request.GET.get('start_date')
-    start_date, start_invalid = _parse_search_date(start_date_raw)
-    if start_invalid:
-        invalid_query_params.add('start_date')
-        messages.error(request, 'Start date must be in YYYY-MM-DD format.')
-        logger.warning('Invalid start_date provided to search: %s', start_date_raw)
-    if start_date:
-        dynamic_filter &= Q(expiration__gte=start_date)
+    is_current = request.GET.get('is_current')
+    if is_current:
+        dynamic_filter &= Q(effective_expiration_date__gte=date.today())
+    else:
+        start_date_raw = request.GET.get('start_date')
+        start_date, start_invalid = _parse_search_date(start_date_raw)
+        if start_invalid:
+            invalid_query_params.add('start_date')
+            messages.error(request, 'Start date must be in YYYY-MM-DD format.')
+            logger.warning('Invalid start_date provided to search: %s', start_date_raw)
+        if start_date:
+            dynamic_filter &= Q(effective_expiration_date__gte=start_date)
 
-    end_date_raw = request.GET.get('end_date')
-    end_date, end_invalid = _parse_search_date(end_date_raw)
-    if end_invalid:
-        invalid_query_params.add('end_date')
-        messages.error(request, 'End date must be in YYYY-MM-DD format.')
-        logger.warning('Invalid end_date provided to search: %s', end_date_raw)
-    if end_date:
-        dynamic_filter &= Q(expiration__lte=end_date)
+        end_date_raw = request.GET.get('end_date')
+        end_date, end_invalid = _parse_search_date(end_date_raw)
+        if end_invalid:
+            invalid_query_params.add('end_date')
+            messages.error(request, 'End date must be in YYYY-MM-DD format.')
+            logger.warning('Invalid end_date provided to search: %s', end_date_raw)
+        if end_date:
+            dynamic_filter &= Q(effective_expiration_date__lte=end_date)
     is_minor = request.GET.get('is_minor')
     if is_minor: dynamic_filter &= Q(person__is_minor=(is_minor == 'True'))
     if membership_num := request.GET.get('membership'):
@@ -898,7 +916,7 @@ def search(request):
 
     # First, get all authorizations that match the filter.
     # We use this as a base for both views.
-    matching_authorizations = Authorization.objects.filter(dynamic_filter).exclude(person__user_id=11968)
+    matching_authorizations = Authorization.objects.with_effective_expiration().filter(dynamic_filter).exclude(person__user_id=11968)
 
     if view_mode == 'card':
         # --- CARD VIEW LOGIC ---
@@ -931,6 +949,8 @@ def search(request):
     # This is the same logic as before, but simplified.
     else: 
         user_sort = request.GET.get('sort', 'person__sca_name')
+        if user_sort in ['expiration', '-expiration']:
+            user_sort = user_sort.replace('expiration', 'effective_expiration_date')
         
         authorization_list = matching_authorizations.select_related(
             'person__branch__region',
@@ -1030,28 +1050,28 @@ def fighter(request, person_id):
                 messages.success(request, mssg)
 
     # Get the lists of authorizations
-    authorization_list = Authorization.objects.select_related(
+    authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
-    ).filter(person_id=person_id, status__name='Active', expiration__gte=date.today()).order_by('style__discipline__name', 'expiration', 'style__name')
+    ).filter(person_id=person_id, status__name='Active', effective_expiration_date__gte=date.today()).order_by('style__discipline__name', 'effective_expiration_date', 'style__name')
 
-    pending_authorization_list = Authorization.objects.select_related(
+    pending_authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
     ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).order_by(
-        'style__discipline__name', 'expiration', 'style__name')
+        'style__discipline__name', 'effective_expiration_date', 'style__name')
 
-    pending_waiver_list = Authorization.objects.select_related(
+    pending_waiver_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
     ).filter(person_id=person_id, status__name='Pending Waiver').order_by(
-        'style__discipline__name', 'expiration', 'style__name')
+        'style__discipline__name', 'effective_expiration_date', 'style__name')
 
-    sanctions_list = Authorization.objects.select_related(
+    sanctions_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
     ).filter(person_id=person_id, status__name='Revoked').order_by(
-        'style__discipline__name', 'expiration', 'style__name'
+        'style__discipline__name', 'effective_expiration_date', 'style__name'
     )
 
     # Group by discipline
@@ -1063,6 +1083,12 @@ def fighter(request, person_id):
     grouped_authorizations = {}
     for auth in authorization_list:
         discipline_name = auth.style.discipline.name
+        marshal_renewal = None
+        marshal_renewal_requires_bg = False
+        if auth.style.name in ['Junior Marshal', 'Senior Marshal'] and auth.effective_expiration < auth.expiration:
+            marshal_renewal = auth.expiration
+            if auth.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+                marshal_renewal_requires_bg = True
         if discipline_name not in grouped_authorizations:
             if discipline_name == 'Equestrian':
                 equestrian = True
@@ -1074,13 +1100,21 @@ def fighter(request, person_id):
                 fighter = True
             grouped_authorizations[discipline_name] = {
                 'marshal_name': auth.marshal.sca_name,
-                'earliest_expiration': auth.expiration,
+                'earliest_expiration': auth.effective_expiration,
+                'marshal_renewal': marshal_renewal,
+                'marshal_renewal_requires_bg': marshal_renewal_requires_bg,
                 'styles': [auth.style.name],
             }
         else:
-            if auth.expiration < grouped_authorizations[discipline_name]['earliest_expiration']:
-                grouped_authorizations[discipline_name]['earliest_expiration'] = auth.expiration
+            if auth.effective_expiration < grouped_authorizations[discipline_name]['earliest_expiration']:
+                grouped_authorizations[discipline_name]['earliest_expiration'] = auth.effective_expiration
                 grouped_authorizations[discipline_name]['marshal_name'] = auth.marshal.sca_name
+            if marshal_renewal:
+                current_renewal = grouped_authorizations[discipline_name].get('marshal_renewal')
+                if not current_renewal or marshal_renewal > current_renewal:
+                    grouped_authorizations[discipline_name]['marshal_renewal'] = marshal_renewal
+                if marshal_renewal_requires_bg:
+                    grouped_authorizations[discipline_name]['marshal_renewal_requires_bg'] = True
             style_name = auth.style.name
             if style_name not in grouped_authorizations[discipline_name]['styles']:
                 grouped_authorizations[discipline_name]['styles'].append(style_name)
@@ -1092,13 +1126,13 @@ def fighter(request, person_id):
             pending_authorizations[discipline_name] = {
                 'auth_id': auth.id,
                 'marshal_name': auth.marshal.sca_name,
-                'earliest_expiration': auth.expiration,
+                'earliest_expiration': auth.effective_expiration,
                 'styles': [auth.style.name],
                 'status': auth.status.name
             }
         else:
-            if auth.expiration < pending_authorizations[discipline_name]['earliest_expiration']:
-                pending_authorizations[discipline_name]['earliest_expiration'] = auth.expiration
+            if auth.effective_expiration < pending_authorizations[discipline_name]['earliest_expiration']:
+                pending_authorizations[discipline_name]['earliest_expiration'] = auth.effective_expiration
                 pending_authorizations[discipline_name]['marshal_name'] = auth.marshal.sca_name
             style_name = auth.style.name
             if style_name not in pending_authorizations[discipline_name]['styles']:
@@ -1111,13 +1145,13 @@ def fighter(request, person_id):
             pending_waivers[discipline_name] = {
                 'auth_id': auth.id,
                 'marshal_name': auth.marshal.sca_name if auth.marshal else '',
-                'earliest_expiration': auth.expiration,
+                'earliest_expiration': auth.effective_expiration,
                 'styles': [auth.style.name],
                 'status': auth.status.name
             }
         else:
-            if auth.expiration < pending_waivers[discipline_name]['earliest_expiration']:
-                pending_waivers[discipline_name]['earliest_expiration'] = auth.expiration
+            if auth.effective_expiration < pending_waivers[discipline_name]['earliest_expiration']:
+                pending_waivers[discipline_name]['earliest_expiration'] = auth.effective_expiration
                 pending_waivers[discipline_name]['marshal_name'] = auth.marshal.sca_name if auth.marshal else ''
             style_name = auth.style.name
             if style_name not in pending_waivers[discipline_name]['styles']:
@@ -1129,13 +1163,13 @@ def fighter(request, person_id):
         if discipline_name not in sanctions:
             sanctions[discipline_name] = {
                 'auth_id': auth.id,
-                'earliest_expiration': auth.expiration,
+                'earliest_expiration': auth.effective_expiration,
                 'styles': [auth.style.name],
                 'status': auth.status.name
             }
         else:
-            if auth.expiration < sanctions[discipline_name]['earliest_expiration']:
-                sanctions[discipline_name]['earliest_expiration'] = auth.expiration
+            if auth.effective_expiration < sanctions[discipline_name]['earliest_expiration']:
+                sanctions[discipline_name]['earliest_expiration'] = auth.effective_expiration
             style_name = auth.style.name
             if style_name not in sanctions[discipline_name]['styles']:
                 sanctions[discipline_name]['styles'].append(style_name)
@@ -1168,6 +1202,7 @@ def fighter(request, person_id):
                 'branch_officer': branch_officer,
                 'sanctions': sanctions,
                 'pending_waivers': pending_waivers,
+                'today': date.today(),
             },
         )
 
@@ -1199,6 +1234,7 @@ def fighter(request, person_id):
             'regional_marshal': regional_marshal,
             'all_people': Person.objects.all().order_by('sca_name'),
             'pending_waivers': pending_waivers,
+            'today': date.today(),
         },
     )
 
@@ -1225,16 +1261,16 @@ def generate_fighter_card(request, person_id, template_id):
                 ]
 
     # Get core information
-    authorization_list = Authorization.objects.select_related(
+    authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch',
         'style__discipline',
     ).filter(
         person_id=person_id,
-        expiration__gte=date.today(),
+        effective_expiration_date__gte=date.today(),
         status__name='Active'
     ).order_by(
         'style__discipline__name',
-        'expiration', 'style__name')
+        'effective_expiration_date', 'style__name')
 
     person = Person.objects.get(user_id=person_id)
 
@@ -1264,7 +1300,8 @@ def generate_fighter_card(request, person_id, template_id):
         raise Exception('Invalid template id')
 
     # Get the data for the card
-    expiration = authorization_list.earliest('expiration').expiration
+    earliest_auth = authorization_list.order_by('effective_expiration_date').first()
+    expiration = earliest_auth.effective_expiration if earliest_auth else None
 
     weapon_styles = WeaponStyle.objects.select_related('discipline').all()
     status_list = []
@@ -1510,7 +1547,7 @@ def add_authorization(request, person_id):
                                 
                                 # Check if this is a marshal authorization and if it has been expired for more than a year
                                 if update_auth.style.name in ['Senior Marshal', 'Junior Marshal']:
-                                    days_expired = (date.today() - update_auth.expiration).days
+                                    days_expired = (date.today() - update_auth.effective_expiration).days
                                     if days_expired > 365:  # More than one year expired
                                         update_auth.status = AuthorizationStatus.objects.get(name='Pending')
                                         messages.success(request, f'Authorization for {update_auth.style.name} pending confirmation.')
@@ -1528,95 +1565,51 @@ def add_authorization(request, person_id):
                                     else:
                                         messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
                                 
-                                # Set expiration based on youth marshal rules
-                                if update_auth.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-                                    two_years = date.today() + relativedelta(years=2)
-                                    if update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
-                                        if person.user.background_check_expiration:
-                                            update_auth.expiration = min(two_years, person.user.background_check_expiration)
-                                        else:
-                                            update_auth.expiration = two_years
-                                    else:
-                                        update_auth.expiration = two_years
-                                else:
-                                    update_auth.expiration = date.today() + relativedelta(years=4)
+                                update_auth.expiration = calculate_authorization_expiration(person, update_auth.style)
                                 update_auth.save()
                                 selected_styles.remove(style_id)
 
                             else:
                                 style = WeaponStyle.objects.get(id=style_id)
                                 if style.name in ['Senior Marshal', 'Junior Marshal']:
+                                    expiration = calculate_authorization_expiration(person, style)
                                     new_auth = Authorization.objects.create(
                                         person=person,
                                         style=style,
-                                        expiration=date.today() + relativedelta(years=4),
+                                        expiration=expiration,
                                         marshal=Person.objects.get(user=authorizing_marshal),
                                         status=AuthorizationStatus.objects.get(name='Pending'),
                                     )
                                     messages.success(request, f'Authorization for {style.name} pending confirmation.')
                                 else:
-                                    # Set expiration based on youth marshal rules
-                                    if style.discipline.name in ['Youth Armored', 'Youth Rapier'] and style.name in ['Junior Marshal', 'Senior Marshal']:
-                                        two_years = date.today() + relativedelta(years=2)
-                                        if person.user.background_check_expiration:
-                                            expiration = min(two_years, person.user.background_check_expiration)
-                                        else:
-                                            expiration = two_years
-                                        if AUTHORIZATION_OFFICER_SIGN_OFF:
-                                            new_auth = Authorization.objects.create(
-                                                person=person,
-                                                style=style,
-                                                expiration=expiration,
-                                                marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=needs_kingdom_status,
-                                            )
-                                            messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
-                                        else:
-                                            status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
-                                            new_auth = Authorization.objects.create(
-                                                person=person,
-                                                style=style,
-                                                expiration=expiration,
-                                                marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=status_to_set,
-                                            )
-                                            if status_to_set == active_status:
-                                                messages.success(request, f'Authorization for {style.name} created successfully!')
-                                            else:
-                                                messages.success(request, f'Authorization for {style.name} pending waiver.')
-                                        # Only push waiver when the new auth is Active
-                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
-                                            if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
-                                                person.user.waiver_expiration = expiration
-                                                person.user.save()
+                                    expiration = calculate_authorization_expiration(person, style)
+                                    if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                        new_auth = Authorization.objects.create(
+                                            person=person,
+                                            style=style,
+                                            expiration=expiration,
+                                            marshal=Person.objects.get(user=authorizing_marshal),
+                                            status=needs_kingdom_status,
+                                        )
+                                        messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                     else:
-                                        if AUTHORIZATION_OFFICER_SIGN_OFF:
-                                            new_auth = Authorization.objects.create(
-                                                person=person,
-                                                style=style,
-                                                expiration=date.today() + relativedelta(years=4),
-                                                marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=needs_kingdom_status,
-                                            )
-                                            messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
+                                        status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
+                                        new_auth = Authorization.objects.create(
+                                            person=person,
+                                            style=style,
+                                            expiration=expiration,
+                                            marshal=Person.objects.get(user=authorizing_marshal),
+                                            status=status_to_set,
+                                        )
+                                        if status_to_set == active_status:
+                                            messages.success(request, f'Authorization for {style.name} created successfully!')
                                         else:
-                                            status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
-                                            new_auth = Authorization.objects.create(
-                                                person=person,
-                                                style=style,
-                                                expiration=date.today() + relativedelta(years=4),
-                                                marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=status_to_set,
-                                            )
-                                            if status_to_set == active_status:
-                                                messages.success(request, f'Authorization for {style.name} created successfully!')
-                                            else:
-                                                messages.success(request, f'Authorization for {style.name} pending waiver.')
-                                        # Only push waiver when the new auth is Active
-                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
-                                            if (not person.user.waiver_expiration) or (person.user.waiver_expiration < new_auth.expiration):
-                                                person.user.waiver_expiration = new_auth.expiration
-                                                person.user.save()
+                                            messages.success(request, f'Authorization for {style.name} pending waiver.')
+                                    # Only push waiver when the new auth is Active
+                                    if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                        if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
+                                            person.user.waiver_expiration = expiration
+                                            person.user.save()
 
                         except Exception as e:
                             print(f"Error processing style {style_id}: {e}")
@@ -1734,20 +1727,13 @@ def user_account(request, user_id):
                         continue
 
                     if style.name in ['Senior Marshal', 'Junior Marshal']:
-                        expiration = date.today() + relativedelta(years=4)
+                        expiration = calculate_authorization_expiration(person, style)
                         if not membership_is_current(person.user):
                             messages.error(request, 'Marshal authorizations require a current membership.')
                             return redirect('user_account', user_id=user.id)
                         status = active_status
                     else:
-                        if style.discipline.name in ['Youth Armored', 'Youth Rapier'] and style.name in ['Junior Marshal', 'Senior Marshal']:
-                            two_years = date.today() + relativedelta(years=2)
-                            if person.user.background_check_expiration:
-                                expiration = min(two_years, person.user.background_check_expiration)
-                            else:
-                                expiration = two_years
-                        else:
-                            expiration = date.today() + relativedelta(years=4)
+                        expiration = calculate_authorization_expiration(person, style)
 
                         status = active_status if waiver_current(person.user) else pending_waiver_status
 
@@ -1803,24 +1789,24 @@ def user_account(request, user_id):
                 if discipline.name != 'Authorization Officer':
                     if branch.type in ['Kingdom', 'Principality', 'Region']:
                         # Regional/kingdom appointment requires Senior Marshal
-                        has_required = Authorization.objects.filter(
+                        has_required = Authorization.objects.with_effective_expiration().filter(
                             person=person,
                             style__name='Senior Marshal',
                             style__discipline=discipline,
                             status__name='Active',
-                            expiration__gte=date.today(),
+                            effective_expiration_date__gte=date.today(),
                         ).exists()
                         if not has_required:
                             messages.error(request, f'You must hold an active Senior Marshal in {discipline.name}.')
                             return redirect('user_account', user_id=user_id)
                     else:
                         # Local branch appointment allows Junior or Senior Marshal
-                        has_required = Authorization.objects.filter(
+                        has_required = Authorization.objects.with_effective_expiration().filter(
                             person=person,
                             style__name__in=['Junior Marshal', 'Senior Marshal'],
                             style__discipline=discipline,
                             status__name='Active',
-                            expiration__gte=date.today(),
+                            effective_expiration_date__gte=date.today(),
                         ).exists()
                         if not has_required:
                             messages.error(request, f'You must hold an active Junior or Senior Marshal in {discipline.name}.')
@@ -2492,10 +2478,10 @@ class CreateAuthorizationForm(forms.Form):
             if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name__in=['Authorization Officer', 'Earl Marshal']).exists():
                 self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
             else:
-                senior_authorizations = Authorization.objects.filter(
+                senior_authorizations = Authorization.objects.with_effective_expiration().filter(
                     person__user=user,
                     style__name='Senior Marshal',  # Assuming 'Senior Marshal' is the style name
-                    expiration__gte=date.today()  # Ensure the authorization is still valid
+                    effective_expiration_date__gte=date.today()  # Ensure the authorization is still valid
                 ).values_list('style__discipline', flat=True)
 
                 # Update the discipline queryset with the filtered disciplines

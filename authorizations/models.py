@@ -2,6 +2,8 @@ from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
+from django.db.models import Case, When, F
+from django.db.models.functions import Coalesce, Least
 
 BRANCH_TYPE_CHOICES = [
     ('Kingdom', 'Kingdom'),
@@ -215,6 +217,34 @@ class Title(models.Model):
     def __str__(self):
         return self.name
 
+class AuthorizationQuerySet(models.QuerySet):
+    def with_effective_expiration(self):
+        marshal = models.Q(style__name__in=['Junior Marshal', 'Senior Marshal'])
+        youth_marshal = (
+            models.Q(style__name__in=['Junior Marshal', 'Senior Marshal'])
+            & models.Q(style__discipline__name__in=['Youth Armored', 'Youth Rapier'])
+        )
+        base_membership = Least(
+            F('expiration'),
+            Coalesce(F('person__user__membership_expiration'), F('expiration')),
+        )
+        effective_expiration = Case(
+            When(
+                youth_marshal,
+                then=Least(
+                    base_membership,
+                    Coalesce(F('person__user__background_check_expiration'), base_membership),
+                ),
+            ),
+            When(
+                marshal,
+                then=base_membership,
+            ),
+            default=F('expiration'),
+            output_field=models.DateField(),
+        )
+        return self.annotate(effective_expiration_date=effective_expiration)
+
 class Person(models.Model):
     """This is the public information about a person. It is attached to the user and the authorization."""
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True, db_index=True)
@@ -268,6 +298,7 @@ class Person(models.Model):
 
 class Authorization(models.Model):
     """These are the authorizations. They are the primary entity that the system manages."""
+    objects = AuthorizationQuerySet.as_manager()
     person = models.ForeignKey(Person, on_delete=models.CASCADE, db_index=True)
     style = models.ForeignKey(WeaponStyle, on_delete=models.SET_NULL, null=True, db_index=True)
     status = models.ForeignKey(AuthorizationStatus, on_delete=models.SET_NULL, null=True, default=1)
@@ -284,6 +315,23 @@ class Authorization(models.Model):
 
     def __str__(self):
         return self.person.sca_name + ': ' + self.style.discipline.name + ' ' + self.style.name + ' authorization'
+
+    @property
+    def effective_expiration(self):
+        annotated = getattr(self, 'effective_expiration_date', None)
+        if annotated is not None:
+            return annotated
+        if self.style and self.style.name in ['Junior Marshal', 'Senior Marshal']:
+            membership_expiration = self.person.user.membership_expiration
+            base_expiration = self.expiration
+            if membership_expiration:
+                base_expiration = min(base_expiration, membership_expiration)
+            if self.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+                background_expiration = self.person.user.background_check_expiration
+                if background_expiration:
+                    return min(base_expiration, background_expiration)
+            return base_expiration
+        return self.expiration
 
     class Meta:
         constraints = [

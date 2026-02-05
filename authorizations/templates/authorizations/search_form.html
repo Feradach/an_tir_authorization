@@ -23,16 +23,6 @@
                     </select>
                 </div>
                 <div class="col-md-6 mb-3">
-                    <label for="membership" class="form-label">Membership #:</label>
-                    <input type="text" class="form-control" id="membership" name="membership" value="{{ request.GET.membership|default:'' }}" placeholder="Enter membership number..." inputmode="numeric" pattern="\d*" maxlength="20" title="Only numeric characters allowed." oninvalid="this.setCustomValidity('Only numeric characters allowed.')" oninput="this.setCustomValidity('')">
-                </div>
-
-                <div class="col-md-6 mb-3">
-                    <label for="email" class="form-label">Email Address:</label>
-                    <input type="email" class="form-control" id="email" name="email" value="{{ request.GET.email|default:'' }}" placeholder="Enter email address...">
-                </div>
-
-                <div class="col-md-6 mb-3">
                     <label for="region" class="form-label">Region:</label>
                     <select id="region" name="region" class="choices-dropdown form-control">
                         <option value=""></option>
@@ -98,6 +88,21 @@
                         <option value="True" {% if request.GET.is_minor == "True" %}selected{% endif %}>Yes</option>
                         <option value="False" {% if request.GET.is_minor == "False" %}selected{% endif %}>No</option>
                     </select>
+                </div>
+                <div class="col-md-6 mb-3 d-flex align-items-end">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="is_current" name="is_current" value="1" {% if request.GET.is_current %}checked{% endif %}>
+                        <label class="form-check-label" for="is_current">Is Current</label>
+                    </div>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label for="membership" class="form-label">Membership #:</label>
+                    <input type="text" class="form-control" id="membership" name="membership" value="{{ request.GET.membership|default:'' }}" placeholder="Enter membership number..." inputmode="numeric" pattern="\d*" maxlength="20" title="Only numeric characters allowed." oninvalid="this.setCustomValidity('Only numeric characters allowed.')" oninput="this.setCustomValidity('')">
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="email" class="form-label">Email Address:</label>
+                    <input type="email" class="form-control" id="email" name="email" value="{{ request.GET.email|default:'' }}" placeholder="Enter email address...">
                 </div>
             </div>
 

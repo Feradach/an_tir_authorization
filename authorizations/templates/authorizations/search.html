@@ -48,7 +48,7 @@
                                     <li class="list-group-item">
                                         <strong>{{ auth.style.name }}</strong> ({{ auth.style.discipline.name }})
                                         <br>
-                                        <small>Expires: <span class="{% if auth.expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.expiration }}</span></small>
+                                        <small>Expires: <span class="{% if auth.effective_expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.effective_expiration }}</span></small>
                                         <br>
                                         <small>Marshal: {{ auth.marshal.sca_name|default:"N/A" }}</small>
                                     </li>
@@ -153,6 +153,10 @@
                             <th>
                                 <a class="sort" href="?sort=expiration&{{ request.GET.urlencode }}">Expiration</a>
                                 <form method="get" id="date_filter_form" class="mt-1">
+                                    <div class="form-check mb-1">
+                                        <input class="form-check-input" type="checkbox" id="is_current" name="is_current" value="1" {% if request.GET.is_current %}checked{% endif %}>
+                                        <label class="form-check-label" for="is_current">Is Current</label>
+                                    </div>
                                     <label for="start_date" class="form-label small d-block">After:</label>
                                     <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date|default:'' }}" class="form-control form-control-sm">
                                     
@@ -183,7 +187,7 @@
                             <td>{{ auth.style.discipline.name }}</td>
                             <td>{{ auth.style.name }}</td>
                             <td>{{ auth.marshal.sca_name }}</td>
-                            <td class="{% if auth.expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.expiration }}</td>
+                            <td class="{% if auth.effective_expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.effective_expiration }}</td>
                             <td>{{ auth.person.minor_status }}</td>
                         </tr>
                         {% empty %}
@@ -292,6 +296,7 @@
             if (dateFilterForm) {
                 const startDateInput = document.getElementById('start_date');
                 const endDateInput = document.getElementById('end_date');
+                const isCurrentInput = document.getElementById('is_current');
 
                 function submitDateFormIfValid() {
                     addQueryParamsToForm(dateFilterForm);
@@ -300,6 +305,9 @@
 
                 startDateInput.addEventListener('blur', submitDateFormIfValid);
                 endDateInput.addEventListener('blur', submitDateFormIfValid);
+                if (isCurrentInput) {
+                    isCurrentInput.addEventListener('change', submitDateFormIfValid);
+                }
             }
         });
     </script>

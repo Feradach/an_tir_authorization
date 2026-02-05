@@ -66,6 +66,20 @@
         </form><br>
     {% endif %}
 {% endif %}
+<p><strong>Membership Expiration:</strong>
+    {% if person.user.membership_expiration %}
+        {% if person.user.membership_expiration < today %}Expired{% else %}{{ person.user.membership_expiration }}{% endif %}
+    {% else %}
+        None
+    {% endif %}
+</p>
+<p><strong>Background Check Expiration:</strong>
+    {% if person.user.background_check_expiration %}
+        {% if person.user.background_check_expiration < today %}Expired{% else %}{{ person.user.background_check_expiration }}{% endif %}
+    {% else %}
+        None
+    {% endif %}
+</p>
 {% if auth_officer or request.user.id == person.user.id %}
     <p><a href="{% url 'user_account' user_id=person.id %}" class="btn btn-primary">View and Edit User Account</a></p>
 {% endif %}
@@ -83,6 +97,22 @@
                     </ul>
                     </p>
                     <p><strong>Earliest Expiration:</strong><span class="future-expiration"> {{ data.earliest_expiration }}</span></p>
+                    {% if data.marshal_renewal %}
+                        {% if auth_officer or request.user.id == person.user.id %}
+                            <p>
+                                <details class="d-inline">
+                                    <summary class="d-inline" style="cursor: pointer; list-style: none;">
+                                        [?]
+                                    </summary>
+                                    <span class="ms-1 small text-muted">
+                                        This is the expiration date of your marshal authorization. You may not perform the duties of a marshal unless both your marshal authorization and your membership are currently valid{% if data.marshal_renewal_requires_bg %}, and your background check is currently valid{% endif %}.
+                                    </span>
+                                </details>
+                                <strong>Marshal Renewal:</strong>
+                                <span class="past-expiration">{{ data.marshal_renewal }}</span>
+                            </p>
+                        {% endif %}
+                    {% endif %}
                     <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
                 </div>
             </div>

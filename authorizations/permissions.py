@@ -2,6 +2,7 @@ from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
+from typing import Optional
 
 from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
     Person, Discipline
@@ -29,10 +30,10 @@ def is_senior_marshal(user, discipline=None):
     if is_kingdom_earl_marshal(user):
         return True
 
-    query = Authorization.objects.filter(
+    query = Authorization.objects.with_effective_expiration().filter(
         person__user=user,
         style__name='Senior Marshal',
-        expiration__gte=date.today(),
+        effective_expiration_date__gte=date.today(),
         status__name = 'Active'
     )
 
@@ -232,85 +233,85 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Youth Rapier', status__name='Active').exists():
                 return False, 'A fighter must be authorized with single sword as their first youth rapier authorization.'
     
-    # Rule 4a: A Cut & Thrust fighter cannot have spear as their first authorization.
+    # Rule 5: A Cut & Thrust fighter cannot have spear as their first authorization.
     if style.discipline.name == 'Cut & Thrust' and style.name == 'Spear':
         if not all_authorizations.filter(style__discipline__name='Cut & Thrust', status__name='Active').exists():
             return False, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.'
 
-    # Rule 5: Rapier fighters must be at lest 14 years old
+    # Rule 6: Rapier fighters must be at lest 14 years old
     if style.discipline.name == 'Rapier Combat':
         if age < 14:
             return False, 'Must be at least 14 years old to become a rapier fighter.'
 
-    # Rule 6: Armored and Cut & Thrust fighters must be at least 16 years old
+    # Rule 7: Armored and Cut & Thrust fighters must be at least 16 years old
     if style.discipline.name in ['Armored', 'Cut & Thrust']:
         if age < 16:
             return False, f'Must be at least 16 years old to become authorized in {style.discipline.name} combat.'
 
-    # Rule 7: Senior Equestrian Ground Crew must be at least 16 years old
+    # Rule 8: Senior Equestrian Ground Crew must be at least 16 years old
     if style.name == 'Senior Ground Crew':
         if age < 16:
             return False, f'Must be at least 16 years old to become authorized as Senior Ground Crew.'
 
-    # Rule 8: Youth combatants must be at least 6 years old and minors.
+    # Rule 9: Youth combatants must be at least 6 years old and minors.
     if style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-        # Rule 8a: The exception is that marshals can be adults.
+        # Rule 9a: The exception is that marshals can be adults.
         if not style.name in ['Junior Marshal', 'Senior Marshal']:
             if age < 6:
                 return False, f'Must be at least 6 years old to become authorized in {style.discipline.name} combat.'
             if not existing_fighter.is_minor:
                 return False, f'Must be a minor to become authorized in {style.discipline.name} combat.'
 
-    # Rule 8a: Youth marshals must have a valid background check
+    # Rule 10: Youth marshals must have a valid background check
     if style.name in ['Junior Marshal', 'Senior Marshal'] and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
         if not existing_fighter.user.background_check_expiration or existing_fighter.user.background_check_expiration < date.today():
             return False, f'Must have a valid background check to become authorized as a youth marshal in {style.discipline.name} combat.'
 
-    # Rule 9: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew.
+    # Rule 11: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew.
     if style.name in ['General Riding', 'Mounted Gaming', 'Mounted Archery', 'Junior Ground Crew']:
         if age < 5:
             return False, f'Must be at least 5 years old to become authorized in {style.name}.'
 
-    # Rule 10: For equestrian, a person must be an adult to participate in Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting.
+    # Rule 12: For equestrian, a person must be an adult to participate in Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting.
     if style.name in ['Crest Combat', 'Mounted Heavy Combat', 'Driving', 'Foam-Tipped Jousting']:
         if existing_fighter.is_minor:
             return False, f'Must be an adult to become authorized in {style.name}.'
 
-    # Rule 11: Youth rapier marshals must already be Senior Rapier marshals
+    # Rule 13: Youth rapier marshals must already be Senior Rapier marshals
     if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
         if style.name == 'Junior Marshal' or style.name == 'Senior Marshal':
             return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
 
-    # Rule 12: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
+    # Rule 14: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':
         if not (all_authorizations.filter(style__name='Senior Ground Crew', status__name='Active').exists() and all_authorizations.filter(style__name='General Riding', status__name='Active').exists()):
             return False, 'Junior Equestrian marshal must have Senior Ground Crew and General Riding authorization.'
 
-    # Rule 13: An Equestrian Senior marshal must already have Junior Marshal and Mounted Gaming Authorizations.
+    # Rule 15: An Equestrian Senior marshal must already have Junior Marshal and Mounted Gaming Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Senior Marshal':
         if not (all_authorizations.filter(style__name='Junior Marshal', style__discipline__name='Equestrian', status__name='Active').exists() and all_authorizations.filter(style__name='Mounted Gaming', status__name='Active').exists()):
             return False, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.'
 
-    # Rule 14: In order to authorize someone in Mounted Archery, Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting,
+    # Rule 16: In order to authorize someone in Mounted Archery, Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting,
     # the Senior Marshal must have the same Authorizations.
     if style.name in ['Mounted Archery', 'Crest Combat', 'Mounted Heavy Combat', 'Driving', 'Foam-Tipped Jousting']:
         if not Authorization.objects.filter(person=marshal.person, style__name=style.name, style__discipline__name="Equestrian", status__name='Active').exists():
             return False, f'Must be authorized in {style.name} to authorize other participants.'
 
-    # Rule 15: Junior and Senior marshals must be current members.
+    # Rule 17: Junior and Senior marshals must be current members.
     if style.name in ['Junior Marshal', 'Senior Marshal']:
         if not membership_is_current(existing_fighter.user):
             return False, 'Must be a current member to be authorized as a marshal.'
 
-    # Rule 16: You cannot renew a revoked authorization.
+    # Rule 18: You cannot renew a revoked authorization.
     if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name='Revoked').exists():
         return False, 'Cannot renew a revoked authorization.'
 
-    # Rule 17: Cannot duplicate/renew a pending authorization.
+    # Rule 19: Cannot duplicate/renew a pending authorization.
     if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
         return False, 'Cannot renew a pending authorization.'
 
-    # Rule 18: Cannot make someone a junior marshal if they are already a senior marshal.
+    # Rule 20: Cannot make someone a junior marshal if they are already a senior marshal.
     if style.name == 'Junior Marshal':
         # If they already have an active senior marshal, they cannot be a junior marshal.
         if is_senior_marshal(existing_fighter.user, style.discipline.name):
@@ -322,21 +323,21 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
             if all_authorizations.filter(style__name='Senior Marshal', style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
                 return False, 'Cannot have a new junior marshal if a senior marshal is pending.'
 
-    # Rule 19: Cannot add a new senior marshal if there is a pending junior marshal.
+    # Rule 21: Cannot add a new senior marshal if there is a pending junior marshal.
     if style.name == 'Senior Marshal':
         if all_authorizations.filter(style__name='Junior Marshal', style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
             return False, 'Cannot have a new senior marshal if a junior marshal is pending.'
 
-    # Rule 20: Cannot make an authorization for yourself.
+    # Rule 22: Cannot make an authorization for yourself.
     if existing_fighter.user == marshal:
         return False, 'Cannot make an authorization for yourself.'
 
-    # Rule 21: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored combat, they can only be authorized by a regional marshal.
+    # Rule 23: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored combat, they can only be authorized by a regional marshal.
     if existing_fighter.is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored']:
         if not is_regional_marshal(marshal):
             return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored combat unless you are a regional marshal.'
 
-    # Rule 22: Adults cannot be authorized as youth armored or youth rapier fighters. They can be authorized as youth marshals.
+    # Rule 24: Adults cannot be authorized as youth armored or youth rapier fighters. They can be authorized as youth marshals.
     if not existing_fighter.is_minor and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
         if style.name != 'Junior Marshal' and style.name != 'Senior Marshal':
             return False, 'Adults cannot be authorized as youth armored or youth rapier fighters.'
@@ -347,6 +348,43 @@ def calculate_age(birthday):
     today = date.today()
     age = today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
     return age
+
+_CANADIAN_ABBREVIATIONS = {
+    'AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT',
+}
+_CANADIAN_NAMES = {
+    'Alberta', 'British Columbia', 'Manitoba', 'New Brunswick', 'Newfoundland and Labrador',
+    'Nova Scotia', 'Northwest Territories', 'Nunavut', 'Ontario', 'Prince Edward Island',
+    'Quebec', 'Saskatchewan', 'Yukon',
+}
+
+def _is_canadian(user: User) -> bool:
+    if user.country:
+        country = user.country.strip().lower()
+        if country in ['canada', 'ca']:
+            return True
+    if user.state_province:
+        province = user.state_province.strip()
+        if province in _CANADIAN_ABBREVIATIONS or province in _CANADIAN_NAMES:
+            return True
+        if province.upper() in _CANADIAN_ABBREVIATIONS:
+            return True
+        if province.title() in _CANADIAN_NAMES:
+            return True
+    return False
+
+def _adult_age_for_user(user: User) -> int:
+    return 19 if _is_canadian(user) else 18
+
+def calculate_authorization_expiration(person: Person, style: WeaponStyle, today: Optional[date] = None) -> date:
+    if today is None:
+        today = date.today()
+    base_years = 2 if style.discipline.name in ['Youth Armored', 'Youth Rapier'] else 4
+    base_expiration = today + relativedelta(years=base_years)
+    if person.is_minor and person.user.birthday:
+        adult_date = person.user.birthday + relativedelta(years=_adult_age_for_user(person.user))
+        return min(base_expiration, adult_date)
+    return base_expiration
 
 def approve_authorization(request):
     """Add a concurance to a pending marshal authorization."""
@@ -381,17 +419,8 @@ def approve_authorization(request):
                 return False, 'Marshal authorizations require a current membership.'
             authorization.status = active_status
             
-            # Rule 1a: If Youth Armored or Youth Rapier, set expiration the lesser of 2 years or when their background check expires.
-            if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-                two_years = date.today() + relativedelta(years=2)
-                if authorization.person.user.background_check_expiration:
-                    authorization.expiration = min(two_years, authorization.person.user.background_check_expiration)
-                else:
-                    authorization.expiration = two_years
-            
-            # Rule 1b: If not Youth Armored or Youth Rapier, set expiration to 4 years.
-            else:
-                authorization.expiration = date.today() + relativedelta(years=4)
+            # Rule 1a/1b: Set base expiration based on discipline and minor status.
+            authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
             authorization.save()
             # Ensure waiver does not trail authorization expiration
             user = authorization.person.user
@@ -407,17 +436,8 @@ def approve_authorization(request):
             if waiver_current(authorization.person.user):
                 authorization.status = active_status
                 
-                # Rule 1a: If Youth Armored or Youth Rapier, set expiration the lesser of 2 years or when their background check expires.
-                if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-                    two_years = date.today() + relativedelta(years=2)
-                    if authorization.person.user.background_check_expiration:
-                        authorization.expiration = min(two_years, authorization.person.user.background_check_expiration)
-                    else:
-                        authorization.expiration = two_years
-                
-                # Rule 1b: If not Youth Armored or Youth Rapier, set expiration to 4 years.
-                else:
-                    authorization.expiration = date.today() + relativedelta(years=4)
+                # Rule 1a/1b: Set base expiration based on discipline and minor status.
+                authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
                 authorization.save()
                 # Ensure waiver does not trail authorization expiration
                 user = authorization.person.user
@@ -485,7 +505,7 @@ def approve_authorization(request):
                 if not membership_is_current(authorization.person.user):
                     return False, 'Marshal authorizations require a current membership.'
                 authorization.status = active_status
-                authorization.expiration = date.today() + relativedelta(years=4)
+                authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
                 authorization.save()
                 # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
                 remove_junior_marshal(authorization)
@@ -498,7 +518,7 @@ def approve_authorization(request):
             else:
                 if waiver_current(authorization.person.user):
                     authorization.status = active_status
-                    authorization.expiration = date.today() + relativedelta(years=4)
+                    authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
                     authorization.save()
                     # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
                     remove_junior_marshal(authorization)
@@ -574,10 +594,10 @@ def appoint_branch_marshal(request):
             return False, 'Must be a senior marshal to be a regional marshal.'
 
     # This captures whether the user is a Junior or Senior marshal in the discipline.
-    marshal_status = Authorization.objects.filter(
+    marshal_status = Authorization.objects.with_effective_expiration().filter(
         person=person,
         style__discipline=discipline,
-        expiration__gte=date.today(),
+        effective_expiration_date__gte=date.today(),
         status__name = 'Active',
         style__name__in=['Senior Marshal', 'Junior Marshal']
     ).exists()
