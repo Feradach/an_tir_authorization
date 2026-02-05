@@ -36,6 +36,8 @@ from django.core.validators import RegexValidator
 import re
 import mistune
 import bleach
+from authorizations.security.events import log_security_event
+from authorizations.security.signals import security_event
 
 logger = logging.getLogger(__name__)
 FIGHTER_CARD_WATERMARK = ''
@@ -251,16 +253,44 @@ def login_view(request):
         # Attempt to sign user in
         username = request.POST['username']
         password = request.POST['password']
+        ip_address = get_client_ip(request)
+        user_agent = request.META.get("HTTP_USER_AGENT")
+
         user = authenticate(request, username=username, password=password)
 
         # Check if authentication successful
         if user is not None:
             login(request, user)
+
+            log_security_event(
+                "login_success",
+                username=user.username,
+                user_id=user.id,
+                ip=ip_address,
+                user_agent=user_agent
+            )
+
             if not user.has_logged_in:
+                
+                log_security_event(
+                    "forced_password_reset_required",
+                    username=user.username,
+                    user_id=user.id,
+                    ip=ip_address
+                )
+                
                 messages.warning(request, 'You must change your password when you first log into the system.')
                 return redirect('password_reset', user_id=user.id)
             return HttpResponseRedirect(reverse('index'))
         else:
+
+            log_security_event(
+                "login_failed",
+                attempted_username=username,
+                ip=ip_address,
+                user_agent=user_agent
+            )
+            
             messages.error(request, 'Invalid email and/or password.')
             return render(request, 'authorizations/login.html')
     else:
@@ -2240,6 +2270,13 @@ def changelog_view(request):
             break
 
     return render(request, 'changelog.html', {'changelog_html': changelog_html})
+
+def get_client_ip(request):
+    return request.META.get(
+        "HTTP_CF_CONNECTING_IP",
+        request.META.get("REMOTE_ADDR")
+    )
+
 
 # This is where the Forms are kept
 
