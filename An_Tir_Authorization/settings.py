@@ -23,12 +23,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 
-try:
-    from .local_settings import *
-except ImportError:
-    SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'default-development-key')
-    DEBUG = True
-    ALLOWED_HOSTS = []
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'default-development-key')
+DEBUG = True
+ALLOWED_HOSTS = []
 
 # Feature flags (default off unless overridden)
 def _env_truthy(name: str, default: str = '0') -> bool:
@@ -159,6 +156,19 @@ MESSAGE_TAGS = {
     message_constants.ERROR: 'danger',
 }
 
+try:
+    from .local_settings import *
+except ImportError:
+    try:
+        from .production_settings import *
+    except ImportError:
+        pass
+
+# Optional per-environment security events log path.
+# Set SECURITY_EVENTS_LOG_PATH in local_settings.py (Windows) or production_settings.py (Linux).
+if 'SECURITY_EVENTS_LOG_PATH' not in globals():
+    SECURITY_EVENTS_LOG_PATH = None
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -173,11 +183,6 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'simple',
         },
-        'security_events_file': {
-            'level': 'WARNING',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'tmp' / 'security_events.log',
-        },
     },
     'loggers': {
         'authorizations': {
@@ -186,7 +191,7 @@ LOGGING = {
             'propagate': False,
         },
         'security.events': {
-            'handlers': ['security_events_file'],
+            'handlers': ['console'],
             'level': 'WARNING',
             'propagate': False,
         },
@@ -195,13 +200,12 @@ LOGGING = {
         'handlers': ['console'],
         'level': 'WARNING',
     },
-
 }
 
-try:
-    from .local_settings import *
-except ImportError:
-    try:
-        from .production_settings import *
-    except ImportError:
-        pass
+if SECURITY_EVENTS_LOG_PATH:
+    LOGGING['handlers']['security_events_file'] = {
+        'level': 'WARNING',
+        'class': 'logging.FileHandler',
+        'filename': SECURITY_EVENTS_LOG_PATH,
+    }
+    LOGGING['loggers']['security.events']['handlers'] = ['security_events_file']

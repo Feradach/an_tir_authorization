@@ -29,6 +29,9 @@ AUTHZ_TEST_FEATURES = os.environ.get('AUTHZ_TEST_FEATURES', '0').strip().lower()
 
 SITE_URL = os.environ.get("SITE_URL")
 
+# Linux-compatible security events log file
+SECURITY_EVENTS_LOG_PATH = '/var/log/an_tir_authorizations/security_events.log'
+
 # Use PyMySQL as MySQLdb backend
 pymysql.install_as_MySQLdb()
 
@@ -121,6 +124,3 @@ ADMINS = [
     ('Don Reynolds', 'don.k.a.reynolds@outlook.com'),
 ]
 MANAGERS = ADMINS
-
-# Override base logging path for Linux server
-LOGGING['handlers']['security_events_file']['filename'] = '/var/log/an_tir_authorizations/security_events.log'
