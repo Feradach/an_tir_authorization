@@ -47,7 +47,7 @@ AUTH_USER_MODEL = 'authorizations.User'
 # Application definition
 
 INSTALLED_APPS = [
-    'authorizations',
+    'authorizations.apps.AuthConfig',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -173,6 +173,11 @@ LOGGING = {
             'class': 'logging.StreamHandler',
             'formatter': 'simple',
         },
+        'security_events_file': {
+            'level': 'WARNING',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'tmp' / 'security_events.log',
+        },
     },
     'loggers': {
         'authorizations': {
@@ -180,11 +185,17 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'security.events': {
+            'handlers': ['security_events_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
     },
     'root': {
         'handlers': ['console'],
         'level': 'WARNING',
     },
+
 }
 
 try:

@@ -1,4 +1,10 @@
-﻿## [0.1.2] - 2026-02-02
+﻿
+## [0.1.3] - 2026-02-04
+### Added
+- Added security logging.
+- Added server side stability features.
+
+## [0.1.2] - 2026-02-02
 ### Fixed
 - Changed dropdowns to be more readable.
 

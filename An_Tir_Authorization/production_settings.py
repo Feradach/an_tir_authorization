@@ -121,3 +121,6 @@ ADMINS = [
     ('Don Reynolds', 'don.k.a.reynolds@outlook.com'),
 ]
 MANAGERS = ADMINS
+
+# Override base logging path for Linux server
+LOGGING['handlers']['security_events_file']['filename'] = '/var/log/an_tir_authorizations/security_events.log'
