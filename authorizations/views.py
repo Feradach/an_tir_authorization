@@ -37,7 +37,6 @@ import re
 import mistune
 import bleach
 from authorizations.security.events import log_security_event
-from authorizations.security.signals import security_event
 
 logger = logging.getLogger(__name__)
 FIGHTER_CARD_WATERMARK = ''
