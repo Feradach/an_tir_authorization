@@ -16,20 +16,6 @@
     <p><strong>Branch:</strong> {{ person.branch.name }}</p>
     <p><strong>Minor Status:</strong> {{ person.minor_status }}</p>
     
-    {% if auth_officer %}
-    <div class="card mt-3 mb-3">
-        <h4>Officer Comments</h4>
-        <form method="post" action="">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="update_comments">
-            <div class="form-group">
-                <textarea name="comments" class="form-control" rows="3">{{ person.user.comment|default:"" }}</textarea>
-            </div>
-            <button type="submit" class="btn btn-primary mt-2">Update Comments</button>
-        </form>
-    </div>
-    {% endif %}
-    
 {% if branch_officer %}
     <h4>Officer Position</h4>
     <p><strong>Position:</strong> {{ branch_officer.branch.name }} {{ branch_officer.discipline.name }}</p>
@@ -114,6 +100,15 @@
                         {% endif %}
                     {% endif %}
                     <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
+                    {% if auth_officer %}
+                        <p><strong>Concurring Fighter:</strong>
+                            {% if data.concurring_fighter_name %}
+                                {{ data.concurring_fighter_name }}
+                            {% else %}
+                                Not required
+                            {% endif %}
+                        </p>
+                    {% endif %}
                 </div>
             </div>
         {% endfor %}
@@ -123,7 +118,7 @@
         <div class="row">
             {% for discipline, data in pending_authorization_list.items %}
                 <div class="col-md-3">
-                    {% if data.status == "Pending" %}
+                    {% if data.status == "Pending" or data.status == "Needs Concurrence" %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #ffefae">
                     {% elif data.status == "Needs Regional Approval" %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #89bed8">
@@ -143,34 +138,58 @@
                         <p><strong>Status:</strong> {{ data.status }}</p>
                         <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
                         {% if is_marshal and data.status == "Pending" %}
-                        <form method="post" action="">
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
+                            <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
+                            <input type="hidden" name="action_note" value="">
+                            {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
+                                <input type="hidden" name="pending_authorization_action" value="1">
+                            {% endif %}
+                            <button type="submit" class="btn btn-success">Approve</button>
+                        </form>
+                        {% endif %}
+                        {% if data.status == "Needs Concurrence" and data.can_concur %}
+                        <form method="post" action="">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="concur_authorization">
                             <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
                         {% if regional_marshal and data.status == "Needs Regional Approval" %}
-                        <form method="post" action="">
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
                             <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
+                            <input type="hidden" name="action_note" value="">
+                            {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
+                                <input type="hidden" name="pending_authorization_action" value="1">
+                            {% endif %}
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
                         {% if auth_officer and data.status == "Needs Kingdom Approval" %}
-                        <form method="post" action="">
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
                             <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
+                            <input type="hidden" name="action_note" value="">
+                            {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
+                                <input type="hidden" name="pending_authorization_action" value="1">
+                            {% endif %}
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
                         {% if regional_marshal and data.status == "Pending" or data.status == "Needs Regional Approval" %}
-                            <form method="post" action="">
+                            <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="reject_authorization">
                                 <input type="hidden" name="bad_authorization_id" value="{{ data.auth_id }}">
+                                <input type="hidden" name="action_note" value="">
+                                {% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
+                                    <input type="hidden" name="pending_authorization_action" value="1">
+                                {% endif %}
                                 <button type="submit" class="btn btn-danger">Reject</button>
                             </form>
                         {% endif %}
@@ -251,9 +270,12 @@
                 {% endfor %}
             </div>
         {% endif %}
-        <form method="post" id="new_authorization_form" action="">
+        <form method="post" id="new_authorization_form" action="" data-person-id="{{ person.id }}"{% if pending_note_required %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_form"{% endif %}>
             {% csrf_token %}
             <input type="hidden" name="action" value="add_authorization">
+            {% if pending_note_required %}
+                <input type="hidden" name="pending_authorization" value="1">
+            {% endif %}
             <h3>Add New Authorization</h3>
             {% if auth_officer %}
                 <div class="mb-3">
@@ -285,8 +307,22 @@
                 <!-- Cart items will be dynamically added here -->
             </div>
 
+            <input type="hidden" name="action_note" value="">
+
             <button type="submit" class="btn btn-primary mt-3">Submit</button>
         </form>
+        {% if pending_note_required %}
+        <form method="post" id="clear_pending_authorization_form" action="">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="clear_pending_authorization">
+        </form>
+        {% endif %}
+        {% if pending_authorization_action %}
+        <form method="post" id="clear_pending_authorization_action_form" action="">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="clear_pending_authorization_action">
+        </form>
+        {% endif %}
     {% endif %}
 </div>
 
@@ -318,6 +354,92 @@
     </div>
 </div>
 
+{% if can_manage_officer_comments %}
+<div class="card mt-3 mb-3">
+    <h4>Officer Comments</h4>
+    <form method="post" action="">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="update_comments">
+        <div class="form-group">
+            <textarea name="comments" class="form-control" rows="3" placeholder="Add an officer note..."></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary mt-2">Update Comments</button>
+    </form>
+    {% if officer_notes %}
+        <div class="table-responsive mt-3">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Submitted By</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for note in officer_notes %}
+                        <tr>
+                            <td>
+                                {% if note.created_by and note.created_by.person %}
+                                    {{ note.created_by.person.sca_name }}
+                                {% else %}
+                                    Unknown
+                                {% endif %}
+                            </td>
+                            <td>{{ note.get_note_type_display }}</td>
+                            <td>{{ note.created_at|date:"Y-m-d H:i" }}</td>
+                            <td>{{ note.note }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if can_view_notes %}
+<div class="card mt-3 mb-3">
+    <h4>Authorization Notes</h4>
+    {% if visible_notes %}
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>Submitted By</th>
+                        <th>Discipline</th>
+                        <th>Style</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for note in visible_notes %}
+                        <tr>
+                            <td>
+                                {% if note.created_by and note.created_by.person %}
+                                    {{ note.created_by.person.sca_name }}
+                                {% else %}
+                                    Unknown
+                                {% endif %}
+                            </td>
+                            <td>{{ note.authorization.style.discipline.name }}</td>
+                            <td>{{ note.authorization.style.name }}</td>
+                            <td>{{ note.get_action_display }}</td>
+                            <td>{{ note.created_at|date:"Y-m-d H:i" }}</td>
+                            <td>{{ note.note }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-muted mb-0">No notes are visible for this fighter.</p>
+    {% endif %}
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block script %}
@@ -330,7 +452,7 @@
         const disciplineSelect = document.getElementById('discipline-select');
         const stylesSelect = document.getElementById('weapon-styles-select');
         const cartContainer = document.getElementById('cart-container');
-        const form = document.querySelector('form');
+        const form = document.getElementById('new_authorization_form');
 
         if (!disciplineSelect || !stylesSelect || !cartContainer || !form) {
             return;
@@ -424,6 +546,7 @@
             cartItem.className = 'cart-item';
             cartItem.textContent = selectedStyle.textContent;
             cartItem.dataset.styleId = selectedStyle.value;
+            cartItem.dataset.styleName = selectedStyle.textContent.trim();
 
             // Add hidden input for submission
             const hiddenInput = document.createElement('input');
@@ -460,7 +583,10 @@
         // Combined form submission handler
         form.addEventListener('submit', function (event) {
             console.log('DEBUG: Form submitting...');
-            console.log('DEBUG: Current marshal_id value:', document.getElementById('marshal_id').value);
+            const marshalIdField = document.getElementById('marshal_id');
+            if (marshalIdField) {
+                console.log('DEBUG: Current marshal_id value:', marshalIdField.value);
+            }
 
             // Handle marshal selection if Choices.js is initialized
             if (choicesInstance) {
@@ -470,7 +596,9 @@
                     const selectedOption = authorizingMarshalSelect.querySelector(`option[value="${selectedValue}"]`);
                     if (selectedOption) {
                         const userId = selectedOption.dataset.userId;
-                        document.getElementById('marshal_id').value = userId;
+                        if (marshalIdField) {
+                            marshalIdField.value = userId;
+                        }
                         console.log('DEBUG: Setting marshal_id in form submit:', userId);
                     }
                 }
@@ -479,8 +607,18 @@
             // Validate weapon styles
             const action = form.querySelector('input[name="action"]').value;
             if (action === 'add_authorization') {
+                const pendingInput = form.querySelector('input[name="pending_authorization"]');
+                const isPending = pendingInput && pendingInput.value === '1';
+                const currentNote = (form.querySelector('input[name="action_note"]') || {}).value || '';
+                if (isPending && !currentNote.trim()) {
+                    event.preventDefault();
+                    if (window.requestNoteForForm) {
+                        window.requestNoteForForm(form, 'Marshal Promotion Note');
+                    }
+                    return;
+                }
                 const cartItems = cartContainer.querySelectorAll('.cart-item input[name="weapon_styles"]');
-                if (cartItems.length === 0) {
+                if (!isPending && cartItems.length === 0) {
                     event.preventDefault();
                     alert('Please add at least one weapon style to the cart.');
                     return;

@@ -86,7 +86,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--clear-comments",
             action="store_true",
-            help="Clear all User.comment values to remove production notes",
+            help="Clear all officer/user notes to remove production notes",
         )
 
     def handle(self, *args, **opts):
@@ -139,10 +139,10 @@ class Command(BaseCommand):
         @transaction.atomic
         def _apply():
             nonlocal updated_users, updated_auths, updated_memberships, updated_branches, cleared_comments
-            # Optionally clear all user comments up-front
+            # Optionally clear all user notes up-front
             if clear_comments:
-                from django.db.models import Q
-                cleared_comments = User.objects.exclude(Q(comment__isnull=True) | Q(comment__exact="")).update(comment="")
+                from authorizations.models import UserNote  # local import to avoid circulars
+                cleared_comments = UserNote.objects.all().delete()[0]
             from authorizations.models import Authorization, Person  # local import to avoid circulars
             # Build marshal user id set (Authorization.marshal points to Person pk == user_id)
             marshal_user_ids = set()
@@ -252,7 +252,6 @@ class Command(BaseCommand):
                         "phone_number",
                         "membership",
                         "membership_expiration",
-                        "comment",
                     ]
                 )
 
@@ -315,7 +314,7 @@ class Command(BaseCommand):
             if randomize_branches:
                 self.stdout.write(self.style.SUCCESS(f"Randomized person branches: {updated_branches}"))
             if clear_comments:
-                self.stdout.write(self.style.SUCCESS(f"Cleared user comments: {cleared_comments}"))
+                self.stdout.write(self.style.SUCCESS(f"Cleared user notes: {cleared_comments}"))
         else:
             # Dry run preview
             preview = min(limit or 5, 5)

@@ -102,6 +102,25 @@
 
         {% endblock %}
     </div>
+    <div class="modal fade" id="noteModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add Note</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <label for="noteModalInput" class="form-label">Note (required)</label>
+                    <textarea id="noteModalInput" class="form-control" rows="4" placeholder="Explain why you are taking this action."></textarea>
+                    <div class="text-danger mt-2 d-none" id="noteModalError">A note is required to submit this action.</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" data-note-submit="true">Submit</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -132,6 +151,163 @@
                     $(".hamburger").removeAttr("style").show();
                 }
             });
+        });
+    </script>
+    <script>
+        (function () {
+            const modalEl = document.getElementById('noteModal');
+            if (!modalEl || typeof bootstrap === 'undefined') {
+                return;
+            }
+            const modal = new bootstrap.Modal(modalEl);
+            const input = modalEl.querySelector('#noteModalInput');
+            const error = modalEl.querySelector('#noteModalError');
+            const submitBtn = modalEl.querySelector('[data-note-submit="true"]');
+            const dismissButtons = modalEl.querySelectorAll('[data-bs-dismiss="modal"]');
+            let pendingForm = null;
+
+            function resetModal() {
+                input.value = '';
+                error.classList.add('d-none');
+                modalEl.querySelector('.modal-title').textContent = 'Add Note';
+            }
+
+            modalEl.addEventListener('hidden.bs.modal', resetModal);
+
+            function requestNoteForForm(form, title) {
+                pendingForm = form;
+                if (title) {
+                    modalEl.querySelector('.modal-title').textContent = title;
+                }
+                modal.show();
+                setTimeout(() => input.focus(), 150);
+            }
+
+            function requestNoteForFormWithRetry(form, title) {
+                let attempts = 0;
+                const maxAttempts = 6;
+                const attemptDelayMs = 200;
+                const tryOpen = () => {
+                    attempts += 1;
+                    requestNoteForForm(form, title);
+                    const isVisible = modalEl.classList.contains('show');
+                    if (isVisible || attempts >= maxAttempts) {
+                        return;
+                    }
+                    setTimeout(tryOpen, attemptDelayMs);
+                };
+                tryOpen();
+            }
+
+            submitBtn.addEventListener('click', function () {
+                if (!pendingForm) {
+                    return;
+                }
+                const note = (input.value || '').trim();
+                if (!note) {
+                    error.classList.remove('d-none');
+                    return;
+                }
+                let hidden = pendingForm.querySelector('input[name="action_note"]');
+                if (!hidden) {
+                    hidden = document.createElement('input');
+                    hidden.type = 'hidden';
+                    hidden.name = 'action_note';
+                    pendingForm.appendChild(hidden);
+                }
+                hidden.value = note;
+                pendingForm.dataset.noteValidated = 'true';
+                modal.hide();
+                if (typeof pendingForm.requestSubmit === 'function') {
+                    pendingForm.requestSubmit();
+                } else {
+                    pendingForm.submit();
+                }
+            });
+
+            dismissButtons.forEach((button) => {
+                button.addEventListener('click', function () {
+                    if (!pendingForm) {
+                        return;
+                    }
+                    if (pendingForm.dataset.pendingNote !== '1') {
+                        return;
+                    }
+                    if (window.__clearPendingInFlight) {
+                        return;
+                    }
+                    const clearFormId = pendingForm.dataset.clearFormId || 'clear_pending_authorization_form';
+                    const clearForm = document.getElementById(clearFormId);
+                    if (!clearForm) {
+                        return;
+                    }
+                    window.__clearPendingInFlight = true;
+                    clearForm.submit();
+                });
+            });
+
+            document.addEventListener('submit', function (event) {
+                const form = event.target;
+                if (!form.classList.contains('note-required')) {
+                    return;
+                }
+                if (form.dataset.noteValidated === 'true') {
+                    form.dataset.noteValidated = 'false';
+                    return;
+                }
+                const existing = (form.querySelector('input[name="action_note"]') || {}).value || '';
+                if (existing.trim()) {
+                    return;
+                }
+                event.preventDefault();
+                const validateUrl = form.dataset.validateUrl;
+                if (validateUrl) {
+                    const csrfTokenInput = form.querySelector('input[name="csrfmiddlewaretoken"]');
+                    const csrfToken = csrfTokenInput ? csrfTokenInput.value : '';
+                    const formData = new FormData(form);
+                    fetch(validateUrl, {
+                        method: 'POST',
+                        headers: {
+                            'X-CSRFToken': csrfToken,
+                        },
+                        body: formData,
+                    })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (!data.ok) {
+                                alert(data.message || 'Action failed validation.');
+                                return;
+                            }
+                            requestNoteForForm(form);
+                        })
+                        .catch(() => {
+                            alert('Could not validate action. Please try again.');
+                        });
+                } else {
+                    requestNoteForForm(form);
+                }
+            });
+
+            window.requestNoteForForm = requestNoteForForm;
+            window.requestNoteForFormWithRetry = requestNoteForFormWithRetry;
+        })();
+    </script>
+    <script>
+        window.addEventListener('load', function () {
+            if (window.__noteModalAutoOpened) {
+                return;
+            }
+            const pendingForm = document.querySelector('form[data-pending-note="1"]');
+            if (!pendingForm) {
+                return;
+            }
+            const opener = window.requestNoteForFormWithRetry || window.requestNoteForForm;
+            if (!opener) {
+                return;
+            }
+            const title = pendingForm.dataset.noteTitle || 'Add Note';
+            window.__noteModalAutoOpened = true;
+            opener(pendingForm, title);
         });
     </script>
     {% block script %}

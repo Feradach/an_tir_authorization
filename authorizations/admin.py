@@ -8,6 +8,7 @@ from .models import (
     Person,
     Authorization,
     BranchMarshal,
+    AuthorizationNote,
 )
 
 # Register your models here.
@@ -19,3 +20,4 @@ admin.site.register(AuthorizationStatus)
 admin.site.register(Person)
 admin.site.register(Authorization)
 admin.site.register(BranchMarshal)
+admin.site.register(AuthorizationNote)

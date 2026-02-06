@@ -74,23 +74,38 @@
                         <td>{{ authorization.style.discipline.name }}</td>
                         <td>{{ authorization.style.name }}</td>
                         <td>{{ authorization.status.name }}</td>
-                        <td><form method="post" action="">
+                        <td><form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
                             <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
+                            <input type="hidden" name="action_note" value="">
+                            {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %}
+                                <input type="hidden" name="pending_authorization_action" value="1">
+                            {% endif %}
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                     {% if regional_marshal %}
-                        <form method="post" action="">
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                         {% csrf_token %}
                         <input type="hidden" name="action" value="reject_authorization">
                         <input type="hidden" name="bad_authorization_id" value="{{ authorization.id }}">
+                        <input type="hidden" name="action_note" value="">
+                        {% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == authorization.id %}
+                            <input type="hidden" name="pending_authorization_action" value="1">
+                        {% endif %}
                         <button type="submit" class="btn btn-danger">Reject</button>
                         </form></td>
                     {% endif %}
                     </tr>
                 {% endfor %}
             </table>
+    {% endif %}
+
+    {% if pending_authorization_action %}
+        <form method="post" id="clear_pending_authorization_action_form" action="">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="clear_pending_authorization_action">
+        </form>
     {% endif %}
 
 {% endblock %}

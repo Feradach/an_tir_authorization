@@ -21,8 +21,8 @@ from django.contrib.auth.decorators import login_required
 from django.urls import reverse
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current, calculate_authorization_expiration
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline
 from itertools import groupby
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName, PageMerge
@@ -37,6 +37,163 @@ import re
 import mistune
 import bleach
 from authorizations.security.events import log_security_event
+
+
+def _get_action_note(request, field_name='action_note'):
+    return (request.POST.get(field_name) or '').strip()
+
+
+def _get_pending_session(request, key, max_age_seconds=3600):
+    pending = request.session.get(key)
+    if not pending:
+        return None
+    created_at = pending.get('created_at')
+    if created_at:
+        try:
+            created_time = datetime.fromisoformat(created_at)
+            if datetime.utcnow() - created_time > timedelta(seconds=max_age_seconds):
+                del request.session[key]
+                request.session.modified = True
+                return None
+        except ValueError:
+            del request.session[key]
+            request.session.modified = True
+            return None
+    return pending
+
+
+def _can_concur_authorization(user, authorization: Authorization) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    if not hasattr(user, 'person'):
+        return False
+    if authorization.person.user_id == user.id:
+        return False
+    if authorization.marshal and authorization.marshal.user_id == user.id:
+        return False
+    return is_authorized_in_discipline(user, authorization.style.discipline)
+
+
+def _user_can_view_note(user, note) -> bool:
+    if not user or not user.is_authenticated:
+        return False
+    if is_kingdom_authorization_officer(user) or is_kingdom_earl_marshal(user):
+        return True
+
+    authorization = getattr(note, 'authorization', None)
+    if not authorization or not authorization.style or not authorization.person:
+        return False
+    discipline_name = authorization.style.discipline.name
+    if is_kingdom_marshal(user, discipline_name):
+        return True
+
+    branch = authorization.person.branch
+    region_name = None
+    if branch:
+        if branch.is_region():
+            region_name = branch.name
+        elif branch.region:
+            region_name = branch.region.name
+    if region_name:
+        if is_regional_marshal(user, discipline_name, region_name):
+            return True
+        if is_regional_marshal(user, 'Earl Marshal', region_name):
+            return True
+
+    return False
+
+
+@login_required
+def validate_authorization_rules(request):
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'message': 'Invalid request method.'}, status=405)
+
+    person_id = request.POST.get('person_id')
+    style_ids = request.POST.getlist('style_ids')
+    if not person_id or not style_ids:
+        return JsonResponse({'ok': False, 'message': 'Missing person or styles.'}, status=400)
+
+    authorizing_marshal = request.user
+    marshal_id = request.POST.get('marshal_id')
+    if marshal_id and is_kingdom_authorization_officer(request.user):
+        try:
+            authorizing_marshal = User.objects.get(id=marshal_id)
+        except User.DoesNotExist:
+            return JsonResponse({'ok': False, 'message': 'Selected authorizing marshal not found.'}, status=400)
+
+    person = get_object_or_404(Person, user_id=person_id)
+
+    for style_id in style_ids:
+        is_valid, mssg = authorization_follows_rules(
+            marshal=authorizing_marshal,
+            existing_fighter=person,
+            style_id=style_id,
+        )
+        if not is_valid:
+            return JsonResponse({'ok': False, 'message': mssg}, status=200)
+
+    return JsonResponse({'ok': True})
+
+
+@login_required
+def validate_authorization_action(request):
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'message': 'Invalid request method.'}, status=405)
+
+    action = request.POST.get('action')
+    authorization_id = request.POST.get('authorization_id') or request.POST.get('bad_authorization_id')
+    if not action or not authorization_id:
+        return JsonResponse({'ok': False, 'message': 'Missing action or authorization.'}, status=400)
+
+    try:
+        authorization = Authorization.objects.get(id=authorization_id)
+    except Authorization.DoesNotExist:
+        return JsonResponse({'ok': False, 'message': 'Authorization not found.'}, status=404)
+
+    if action == 'approve_authorization':
+        ok, msg = validate_approve_authorization(request.user, authorization)
+        return JsonResponse({'ok': ok, 'message': msg})
+    if action == 'reject_authorization':
+        ok, msg = validate_reject_authorization(request.user, authorization)
+        return JsonResponse({'ok': ok, 'message': msg})
+
+    return JsonResponse({'ok': False, 'message': 'Invalid action.'}, status=400)
+
+
+@login_required
+def validate_sanction_action(request):
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'message': 'Invalid request method.'}, status=405)
+
+    action = request.POST.get('action', 'issue_sanction')
+    if not is_kingdom_authorization_officer(request.user) and not is_kingdom_marshal(request.user, 'Earl Marshal'):
+        return JsonResponse({'ok': False, 'message': 'You do not have permission to perform this action.'}, status=403)
+
+    if action == 'lift_sanction':
+        authorization_id = request.POST.get('authorization_id')
+        if not authorization_id:
+            return JsonResponse({'ok': False, 'message': 'Missing authorization.'}, status=400)
+        exists = Authorization.objects.filter(id=authorization_id, status__name='Revoked').exists()
+        if not exists:
+            return JsonResponse({'ok': False, 'message': 'Could not find the specified sanction to lift.'})
+        return JsonResponse({'ok': True})
+
+    sanction_type = request.POST.get('sanction_type')
+    discipline_id = request.POST.get('discipline_id')
+    style_id = request.POST.get('style_id')
+    person_id = request.POST.get('person_id')
+    if not person_id:
+        return JsonResponse({'ok': False, 'message': 'Missing person.'}, status=400)
+    if sanction_type == 'discipline':
+        if not discipline_id:
+            return JsonResponse({'ok': False, 'message': 'Please select a discipline before sanctioning.'})
+        return JsonResponse({'ok': True})
+    if sanction_type == 'style':
+        if not style_id:
+            return JsonResponse({'ok': False, 'message': 'Please select a style before sanctioning.'})
+        return JsonResponse({'ok': True})
+
+    return JsonResponse({'ok': False, 'message': 'Invalid sanction type.'}, status=400)
 
 logger = logging.getLogger(__name__)
 FIGHTER_CARD_WATERMARK = ''
@@ -223,20 +380,84 @@ def index(request):
             return redirect('login')
 
         action = request.POST.get('action')
+        if action == 'clear_pending_authorization_action':
+            pending_key = 'pending_authorization_action'
+            if pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+            messages.info(request, 'Pending marshal promotion cleared.')
+            return redirect('index')
         if action == 'approve_authorization':
+            authorization_id = request.POST.get('authorization_id')
+            authorization = Authorization.objects.get(id=authorization_id)
+            pending_key = 'pending_authorization_action'
+            pending_action = _get_pending_session(request, pending_key)
+            is_pending_submit = bool(
+                pending_action
+                and pending_action.get('action') == 'approve_authorization'
+                and pending_action.get('authorization_id') == authorization.id
+            )
+            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            action_note = _get_action_note(request) if requires_note else ''
+            if requires_note and not action_note:
+                if is_pending_submit:
+                    messages.error(request, 'A note is required for marshal promotion actions.')
+                    return redirect('index')
+                ok, msg = validate_approve_authorization(request.user, authorization)
+                if not ok:
+                    messages.error(request, msg)
+                    return redirect('index')
+                request.session[pending_key] = {
+                    'action': 'approve_authorization',
+                    'authorization_id': authorization.id,
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion.')
+                return redirect('index')
             is_valid, mssg = approve_authorization(request)
             if not is_valid:
                 messages.error(request, mssg)
             else:
                 messages.success(request, mssg)
+            if is_pending_submit and pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
         elif action == 'reject_authorization':
-            # Check if the user has the authorization over this discipline
             authorization = Authorization.objects.get(id=request.POST['bad_authorization_id'])
+            pending_key = 'pending_authorization_action'
+            pending_action = _get_pending_session(request, pending_key)
+            is_pending_submit = bool(
+                pending_action
+                and pending_action.get('action') == 'reject_authorization'
+                and pending_action.get('authorization_id') == authorization.id
+            )
+            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            action_note = _get_action_note(request) if requires_note else ''
+            if requires_note and not action_note:
+                if is_pending_submit:
+                    messages.error(request, 'A note is required for marshal promotion actions.')
+                    return redirect('index')
+                ok, msg = validate_reject_authorization(request.user, authorization)
+                if not ok:
+                    messages.error(request, msg)
+                    return redirect('index')
+                request.session[pending_key] = {
+                    'action': 'reject_authorization',
+                    'authorization_id': authorization.id,
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion.')
+                return redirect('index')
             is_valid, mssg = reject_authorization(request, authorization)
             if not is_valid:
                 messages.error(request, mssg)
             else:
                 messages.success(request, mssg)
+            if is_pending_submit and pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
 
 
     base_context = {
@@ -248,6 +469,7 @@ def index(request):
         'auth_officer': auth_officer,
         'pending_authorizations': pending_authorizations,
         'all_people': all_people,
+        'pending_authorization_action': _get_pending_session(request, 'pending_authorization_action'),
     }
 
     # Include potential duplicate results for logged-in users
@@ -1008,6 +1230,9 @@ def fighter(request, person_id):
         messages.error(request, 'Person not found.')
         return redirect('search')
     user = person.user
+    auth_officer = is_kingdom_authorization_officer(request.user) if request.user.is_authenticated else False
+    earl_marshal = is_kingdom_earl_marshal(request.user) if request.user.is_authenticated else False
+    can_manage_officer_comments = auth_officer or earl_marshal
 
     # If there is a post, confirm that they are authenticated.
     if request.method == 'POST':
@@ -1017,22 +1242,73 @@ def fighter(request, person_id):
 
         action = request.POST.get('action')
         if action == 'add_authorization':
-            add_authorization(request, person_id)
+            return add_authorization(request, person_id)
+        elif action == 'clear_pending_authorization':
+            pending_key = f'pending_authorization_{person_id}'
+            if pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+            messages.info(request, 'Pending marshal promotion cleared.')
+            return redirect('fighter', person_id=person_id)
+        elif action == 'clear_pending_authorization_action':
+            pending_key = 'pending_authorization_action'
+            if pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+            messages.info(request, 'Pending marshal promotion cleared.')
+            return redirect('fighter', person_id=person_id)
         elif action == 'update_comments':
-            # Only allow auth officers to update comments
-            if not is_kingdom_authorization_officer(request.user):
+            if not can_manage_officer_comments:
                 messages.error(request, 'You do not have permission to update comments.')
             else:
-                user.comment = request.POST.get('comments', '')
-                user.save()
-                messages.success(request, 'Comments updated successfully.')
+                note_text = (request.POST.get('comments') or '').strip()
+                if not note_text:
+                    messages.error(request, 'Please enter a note before submitting.')
+                    return redirect('fighter', person_id=person_id)
+                UserNote.objects.create(
+                    person=person,
+                    created_by=request.user,
+                    note_type='officer_note',
+                    note=note_text,
+                )
+                messages.success(request, 'Officer note added successfully.')
                 return redirect('fighter', person_id=person_id)
         elif action == 'approve_authorization':
+            authorization_id = request.POST.get('authorization_id')
+            authorization = Authorization.objects.get(id=authorization_id)
+            pending_key = 'pending_authorization_action'
+            pending_action = _get_pending_session(request, pending_key)
+            is_pending_submit = bool(
+                pending_action
+                and pending_action.get('action') == 'approve_authorization'
+                and pending_action.get('authorization_id') == authorization.id
+            )
+            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            action_note = _get_action_note(request) if requires_note else ''
+            if requires_note and not action_note:
+                if is_pending_submit:
+                    messages.error(request, 'A note is required for marshal promotion actions.')
+                    return redirect('fighter', person_id=person_id)
+                ok, msg = validate_approve_authorization(request.user, authorization)
+                if not ok:
+                    messages.error(request, msg)
+                    return redirect('fighter', person_id=person_id)
+                request.session[pending_key] = {
+                    'action': 'approve_authorization',
+                    'authorization_id': authorization.id,
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion.')
+                return redirect('fighter', person_id=person_id)
             is_valid, mssg = approve_authorization(request)
             if not is_valid:
                 messages.error(request, mssg)
             else:
                 messages.success(request, mssg)
+            if is_pending_submit and pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
         elif action == 'appoint_branch_marshal':
             is_valid, mssg = appoint_branch_marshal(request)
             if not is_valid:
@@ -1043,22 +1319,125 @@ def fighter(request, person_id):
             # Check if the user has the authorization over this discipline
             auth_id = request.POST['bad_authorization_id']
             authorization = Authorization.objects.get(id=request.POST['bad_authorization_id'])
+            pending_key = 'pending_authorization_action'
+            pending_action = _get_pending_session(request, pending_key)
+            is_pending_submit = bool(
+                pending_action
+                and pending_action.get('action') == 'reject_authorization'
+                and pending_action.get('authorization_id') == authorization.id
+            )
+            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            action_note = _get_action_note(request) if requires_note else ''
+            if requires_note and not action_note:
+                if is_pending_submit:
+                    messages.error(request, 'A note is required for marshal promotion actions.')
+                    return redirect('fighter', person_id=person_id)
+                ok, msg = validate_reject_authorization(request.user, authorization)
+                if not ok:
+                    messages.error(request, msg)
+                    return redirect('fighter', person_id=person_id)
+                request.session[pending_key] = {
+                    'action': 'reject_authorization',
+                    'authorization_id': authorization.id,
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion.')
+                return redirect('fighter', person_id=person_id)
             is_valid, mssg = reject_authorization(request, authorization)
             if not is_valid:
                 messages.error(request, mssg)
             else:
                 messages.success(request, mssg)
+            if is_pending_submit and pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+        elif action == 'concur_authorization':
+            authorization_id = request.POST.get('authorization_id')
+            if not authorization_id:
+                messages.error(request, 'Missing authorization to concur.')
+                return redirect('fighter', person_id=person_id)
+            try:
+                authorization = Authorization.objects.select_related(
+                    'person__user',
+                    'style__discipline',
+                    'marshal__user',
+                ).get(id=authorization_id)
+            except Authorization.DoesNotExist:
+                messages.error(request, 'Authorization not found.')
+                return redirect('fighter', person_id=person_id)
+
+            if authorization.status.name != 'Needs Concurrence':
+                messages.error(request, 'Authorization is not awaiting concurrence.')
+                return redirect('fighter', person_id=person_id)
+
+            if not _can_concur_authorization(request.user, authorization):
+                messages.error(request, 'You do not have permission to concur with this authorization.')
+                return redirect('fighter', person_id=person_id)
+
+            pending_auths = Authorization.objects.select_related(
+                'style__discipline',
+            ).filter(
+                person=authorization.person,
+                style__discipline=authorization.style.discipline,
+                status__name='Needs Concurrence',
+            )
+
+            if pending_auths.filter(marshal__user=request.user).exists():
+                messages.error(request, 'You cannot concur with an authorization you proposed.')
+                return redirect('fighter', person_id=person_id)
+
+            if pending_auths.filter(style__name__in=['Junior Marshal', 'Senior Marshal']).exists():
+                messages.error(request, 'Marshal promotions do not use concurrence.')
+                return redirect('fighter', person_id=person_id)
+
+            try:
+                concurring_person = Person.objects.get(user=request.user)
+            except Person.DoesNotExist:
+                messages.error(request, 'Unable to find your fighter record.')
+                return redirect('fighter', person_id=person_id)
+
+            active_status = AuthorizationStatus.objects.get(name='Active')
+            pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
+            needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
+
+            def waiver_current(u):
+                return bool(u.waiver_expiration and u.waiver_expiration > date.today())
+
+            status_to_set = needs_kingdom_status if AUTHORIZATION_OFFICER_SIGN_OFF else (
+                active_status if waiver_current(authorization.person.user) else pending_waiver_status
+            )
+
+            new_expiration = calculate_authorization_expiration(authorization.person, authorization.style)
+            for pending in pending_auths:
+                pending.concurring_fighter = concurring_person
+                pending.expiration = calculate_authorization_expiration(pending.person, pending.style)
+                pending.status = status_to_set
+                pending.save()
+
+            if not AUTHORIZATION_OFFICER_SIGN_OFF and status_to_set == active_status:
+                if (not authorization.person.user.waiver_expiration) or (authorization.person.user.waiver_expiration < new_expiration):
+                    authorization.person.user.waiver_expiration = new_expiration
+                    authorization.person.user.save()
+
+            if AUTHORIZATION_OFFICER_SIGN_OFF:
+                messages.success(request, 'Concurrence recorded. Authorization submitted to Kingdom for approval.')
+            elif status_to_set == pending_waiver_status:
+                messages.success(request, 'Concurrence recorded. Authorization pending waiver.')
+            else:
+                messages.success(request, 'Concurrence recorded. Authorization approved.')
 
     # Get the lists of authorizations
     authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
+        'concurring_fighter',
     ).filter(person_id=person_id, status__name='Active', effective_expiration_date__gte=date.today()).order_by('style__discipline__name', 'effective_expiration_date', 'style__name')
 
     pending_authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
-    ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).order_by(
+    ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval', 'Needs Concurrence']).order_by(
         'style__discipline__name', 'effective_expiration_date', 'style__name')
 
     pending_waiver_list = Authorization.objects.with_effective_expiration().select_related(
@@ -1066,6 +1445,25 @@ def fighter(request, person_id):
         'style__discipline',
     ).filter(person_id=person_id, status__name='Pending Waiver').order_by(
         'style__discipline__name', 'effective_expiration_date', 'style__name')
+
+    can_view_notes = False
+    visible_notes = []
+    if request.user.is_authenticated:
+        can_view_notes = (
+            is_kingdom_authorization_officer(request.user)
+            or is_kingdom_earl_marshal(request.user)
+            or is_kingdom_marshal(request.user)
+            or is_regional_marshal(request.user)
+        )
+        if can_view_notes:
+            notes_qs = AuthorizationNote.objects.select_related(
+                'authorization__style__discipline',
+                'authorization__person__branch__region',
+                'created_by__person',
+            ).filter(authorization__person_id=person_id)
+            for note in notes_qs:
+                if _user_can_view_note(request.user, note):
+                    visible_notes.append(note)
 
     sanctions_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
@@ -1099,7 +1497,8 @@ def fighter(request, person_id):
             else:
                 fighter = True
             grouped_authorizations[discipline_name] = {
-                'marshal_name': auth.marshal.sca_name,
+                'marshal_name': auth.marshal.sca_name if auth.marshal else '',
+                'concurring_fighter_name': auth.concurring_fighter.sca_name if auth.concurring_fighter else '',
                 'earliest_expiration': auth.effective_expiration,
                 'marshal_renewal': marshal_renewal,
                 'marshal_renewal_requires_bg': marshal_renewal_requires_bg,
@@ -1108,7 +1507,8 @@ def fighter(request, person_id):
         else:
             if auth.effective_expiration < grouped_authorizations[discipline_name]['earliest_expiration']:
                 grouped_authorizations[discipline_name]['earliest_expiration'] = auth.effective_expiration
-                grouped_authorizations[discipline_name]['marshal_name'] = auth.marshal.sca_name
+                grouped_authorizations[discipline_name]['marshal_name'] = auth.marshal.sca_name if auth.marshal else ''
+                grouped_authorizations[discipline_name]['concurring_fighter_name'] = auth.concurring_fighter.sca_name if auth.concurring_fighter else ''
             if marshal_renewal:
                 current_renewal = grouped_authorizations[discipline_name].get('marshal_renewal')
                 if not current_renewal or marshal_renewal > current_renewal:
@@ -1123,17 +1523,19 @@ def fighter(request, person_id):
     for auth in pending_authorization_list:
         discipline_name = auth.style.discipline.name
         if discipline_name not in pending_authorizations:
+            can_concur = auth.status.name == 'Needs Concurrence' and _can_concur_authorization(request.user, auth)
             pending_authorizations[discipline_name] = {
                 'auth_id': auth.id,
-                'marshal_name': auth.marshal.sca_name,
+                'marshal_name': auth.marshal.sca_name if auth.marshal else '',
                 'earliest_expiration': auth.effective_expiration,
                 'styles': [auth.style.name],
-                'status': auth.status.name
+                'status': auth.status.name,
+                'can_concur': can_concur,
             }
         else:
             if auth.effective_expiration < pending_authorizations[discipline_name]['earliest_expiration']:
                 pending_authorizations[discipline_name]['earliest_expiration'] = auth.effective_expiration
-                pending_authorizations[discipline_name]['marshal_name'] = auth.marshal.sca_name
+                pending_authorizations[discipline_name]['marshal_name'] = auth.marshal.sca_name if auth.marshal else ''
             style_name = auth.style.name
             if style_name not in pending_authorizations[discipline_name]['styles']:
                 pending_authorizations[discipline_name]['styles'].append(style_name)
@@ -1211,8 +1613,38 @@ def fighter(request, person_id):
     # All branches except for type = other
     branch_choices = Branch.objects.exclude(type='Other').order_by('name')
     discipline_choices = Discipline.objects.all().order_by('name')
-    auth_officer = is_kingdom_authorization_officer(request.user)
     regional_marshal = is_regional_marshal(request.user)
+    pending_note_required = False
+    pending_key = f'pending_authorization_{person_id}'
+    pending = _get_pending_session(request, pending_key)
+    if pending and pending.get('person_id') == person_id:
+        pending_style_ids = pending.get('style_ids', [])
+        created_at = pending.get('created_at')
+        if created_at:
+            try:
+                created_time = datetime.fromisoformat(created_at)
+                if datetime.utcnow() - created_time > timedelta(hours=1):
+                    del request.session[pending_key]
+                    request.session.modified = True
+                    pending = None
+            except ValueError:
+                del request.session[pending_key]
+                request.session.modified = True
+                pending = None
+        if pending and pending_style_ids:
+            marshal_style_ids = set(
+                WeaponStyle.objects.filter(name__in=['Junior Marshal', 'Senior Marshal']).values_list('id', flat=True)
+            )
+            pending_note_required = any(int(style_id) in marshal_style_ids for style_id in pending_style_ids)
+    pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
+
+    officer_notes = []
+    if can_manage_officer_comments:
+        officer_notes = list(
+            UserNote.objects.select_related('created_by__person')
+            .filter(person=person, note_type='officer_note')
+            .order_by('-created_at')
+        )
 
     return render(
         request,
@@ -1227,6 +1659,8 @@ def fighter(request, person_id):
             'is_marshal': is_senior_marshal(request.user),
             'auth_form': CreateAuthorizationForm(user=request.user),
             'auth_officer': auth_officer,
+            'can_manage_officer_comments': can_manage_officer_comments,
+            'officer_notes': officer_notes,
             'branch_officer': branch_officer,
             'branch_choices': branch_choices,
             'discipline_choices': discipline_choices,
@@ -1234,6 +1668,10 @@ def fighter(request, person_id):
             'regional_marshal': regional_marshal,
             'all_people': Person.objects.all().order_by('sca_name'),
             'pending_waivers': pending_waivers,
+            'pending_note_required': pending_note_required,
+            'pending_authorization_action': pending_authorization_action,
+            'can_view_notes': can_view_notes,
+            'visible_notes': visible_notes,
             'today': date.today(),
         },
     )
@@ -1516,9 +1954,84 @@ def add_authorization(request, person_id):
             active_status = AuthorizationStatus.objects.get(name='Active')
             pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
             needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
-            sent_styles = request.POST.getlist('weapon_styles')
-            selected_styles = sorted(set(sent_styles))
+            needs_concurrence_status = AuthorizationStatus.objects.get(name='Needs Concurrence')
+            pending_key = f'pending_authorization_{person_id}'
+            is_pending_submit = request.POST.get('pending_authorization') == '1'
+            if is_pending_submit:
+                pending = _get_pending_session(request, pending_key)
+                if not pending:
+                    messages.error(request, 'Pending authorization not found. Please try again.')
+                    return redirect('fighter', person_id=person_id)
+                selected_styles = pending.get('style_ids', [])
+                if not selected_styles:
+                    messages.error(request, 'Pending authorization missing styles. Please try again.')
+                    return redirect('fighter', person_id=person_id)
+            else:
+                sent_styles = request.POST.getlist('weapon_styles')
+                selected_styles = sorted(set(sent_styles))
+            existing_authorizations = Authorization.objects.with_effective_expiration().filter(person=person)
+            existing_by_style = {int(auth.style_id): auth for auth in existing_authorizations}
+            marshal_style_ids = set(
+                WeaponStyle.objects.filter(name__in=['Junior Marshal', 'Senior Marshal']).values_list('id', flat=True)
+            )
+            def marshal_note_required(style_id):
+                style_id_int = int(style_id)
+                if style_id_int not in marshal_style_ids:
+                    return False
+                auth = existing_by_style.get(style_id_int)
+                if not auth:
+                    return True
+                status_name = auth.status.name if auth.status else None
+                if status_name and status_name != 'Active':
+                    return True
+                effective_expiration = getattr(auth, 'effective_expiration_date', None) or auth.effective_expiration
+                days_expired = (date.today() - effective_expiration).days
+                return days_expired > 365
 
+            concurrence_cache = {}
+
+            def requires_concurrence(style: WeaponStyle) -> bool:
+                if style.name in ['Junior Marshal', 'Senior Marshal']:
+                    return False
+                discipline_id = style.discipline_id
+                if discipline_id not in concurrence_cache:
+                    concurrence_cache[discipline_id] = authorization_requires_concurrence(person, style)
+                return concurrence_cache[discipline_id]
+
+            requires_note = any(marshal_note_required(style_id) for style_id in selected_styles)
+            action_note = _get_action_note(request) if requires_note else ''
+            if requires_note and not action_note:
+                if is_pending_submit:
+                    messages.error(request, 'A note is required when proposing a marshal promotion.')
+                    return redirect('fighter', person_id=person_id)
+                for style_id in selected_styles:
+                    is_valid, mssg = authorization_follows_rules(
+                        marshal=authorizing_marshal,
+                        existing_fighter=person,
+                        style_id=style_id,
+                    )
+                    if not is_valid:
+                        messages.error(request, mssg)
+                        return redirect('fighter', person_id=person_id)
+                request.session[pending_key] = {
+                    'person_id': person_id,
+                    'style_ids': selected_styles,
+                    'authorizing_marshal_id': authorizing_marshal.id,
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion.')
+                return redirect('fighter', person_id=person_id)
+
+            def record_note(authorization, action):
+                AuthorizationNote.objects.create(
+                    authorization=authorization,
+                    created_by=request.user,
+                    action=action,
+                    note=action_note,
+                )
+
+            clear_pending_on_exit = bool(is_pending_submit and action_note)
             try:
                 with transaction.atomic():
                     print(f"Debug: Starting authorization process for person {person_id}")
@@ -1526,9 +2039,20 @@ def add_authorization(request, person_id):
                     print(f"Debug: Authorizing marshal: {authorizing_marshal.person.sca_name}")
 
                     # Create or update authorizations
-                    existing_authorizations = Authorization.objects.filter(person=person)
                     current_styles = [int(auth.style_id) for auth in existing_authorizations]
                     print(f"Debug: Current authorizations: {current_styles}")
+                    if is_pending_submit:
+                        pending = _get_pending_session(request, pending_key)
+                        if not pending:
+                            messages.error(request, 'Pending authorization not found. Please try again.')
+                            return redirect('fighter', person_id=person_id)
+                        pending_marshal_id = pending.get('authorizing_marshal_id')
+                        if pending_marshal_id:
+                            try:
+                                authorizing_marshal = User.objects.get(id=pending_marshal_id)
+                            except User.DoesNotExist:
+                                messages.error(request, 'Selected authorizing marshal not found.')
+                                return redirect('fighter', person_id=person_id)
                     
                     for style_id in selected_styles:
                         print(f"\nDebug: Processing style {style_id}")
@@ -1548,7 +2072,8 @@ def add_authorization(request, person_id):
                                 # Check if this is a marshal authorization and if it has been expired for more than a year
                                 if update_auth.style.name in ['Senior Marshal', 'Junior Marshal']:
                                     days_expired = (date.today() - update_auth.effective_expiration).days
-                                    if days_expired > 365:  # More than one year expired
+                                    is_rejected = update_auth.status and update_auth.status.name == 'Rejected'
+                                    if is_rejected or days_expired > 365:  # Treat rejected like long-expired
                                         update_auth.status = AuthorizationStatus.objects.get(name='Pending')
                                         messages.success(request, f'Authorization for {update_auth.style.name} pending confirmation.')
                                     else:
@@ -1559,14 +2084,22 @@ def add_authorization(request, person_id):
                                         update_auth.status = active_status
                                         messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
                                 else:
-                                    update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
-                                    if update_auth.status == active_status:
-                                        messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                    if requires_concurrence(update_auth.style):
+                                        update_auth.status = needs_concurrence_status
+                                        update_auth.concurring_fighter = None
+                                        messages.success(request, f'Authorization for {update_auth.style.name} requires concurrence from another authorized fighter.')
                                     else:
-                                        messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
+                                        update_auth.concurring_fighter = None
+                                        update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
+                                        if update_auth.status == active_status:
+                                            messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                        else:
+                                            messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
                                 
                                 update_auth.expiration = calculate_authorization_expiration(person, update_auth.style)
                                 update_auth.save()
+                                if update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
+                                    record_note(update_auth, 'marshal_proposed')
                                 selected_styles.remove(style_id)
 
                             else:
@@ -1580,36 +2113,48 @@ def add_authorization(request, person_id):
                                         marshal=Person.objects.get(user=authorizing_marshal),
                                         status=AuthorizationStatus.objects.get(name='Pending'),
                                     )
+                                    record_note(new_auth, 'marshal_proposed')
                                     messages.success(request, f'Authorization for {style.name} pending confirmation.')
                                 else:
                                     expiration = calculate_authorization_expiration(person, style)
-                                    if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                    if requires_concurrence(style):
                                         new_auth = Authorization.objects.create(
                                             person=person,
                                             style=style,
                                             expiration=expiration,
                                             marshal=Person.objects.get(user=authorizing_marshal),
-                                            status=needs_kingdom_status,
+                                            status=needs_concurrence_status,
+                                            concurring_fighter=None,
                                         )
-                                        messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
+                                        messages.success(request, f'Authorization for {style.name} requires concurrence from another authorized fighter.')
                                     else:
-                                        status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
-                                        new_auth = Authorization.objects.create(
-                                            person=person,
-                                            style=style,
-                                            expiration=expiration,
-                                            marshal=Person.objects.get(user=authorizing_marshal),
-                                            status=status_to_set,
-                                        )
-                                        if status_to_set == active_status:
-                                            messages.success(request, f'Authorization for {style.name} created successfully!')
+                                        if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=expiration,
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=needs_kingdom_status,
+                                            )
+                                            messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                         else:
-                                            messages.success(request, f'Authorization for {style.name} pending waiver.')
-                                    # Only push waiver when the new auth is Active
-                                    if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
-                                        if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
-                                            person.user.waiver_expiration = expiration
-                                            person.user.save()
+                                            status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=expiration,
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=status_to_set,
+                                            )
+                                            if status_to_set == active_status:
+                                                messages.success(request, f'Authorization for {style.name} created successfully!')
+                                            else:
+                                                messages.success(request, f'Authorization for {style.name} pending waiver.')
+                                        # Only push waiver when the new auth is Active
+                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                            if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
+                                                person.user.waiver_expiration = expiration
+                                                person.user.save()
 
                         except Exception as e:
                             print(f"Error processing style {style_id}: {e}")
@@ -1623,6 +2168,10 @@ def add_authorization(request, person_id):
                 print(f"Transaction error: {e}")
                 messages.error(request, f'Error during authorization process: {str(e)}')
                 return redirect('fighter', person_id=person_id)
+            finally:
+                if clear_pending_on_exit and pending_key in request.session:
+                    del request.session[pending_key]
+                    request.session.modified = True
         else:
             messages.error(request, 'Please fix the errors below.')
             return redirect('fighter', person_id=person_id)
@@ -1950,8 +2499,21 @@ def sign_waiver(request, user_id):
 
 def reject_authorization(request, authorization):
     auth_discipline = authorization.style.discipline.name
+    requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+    action_note = _get_action_note(request) if requires_note else ''
+    if requires_note and not action_note:
+        return False, 'A note is required for marshal promotion actions.'
     if is_regional_marshal(request.user, auth_discipline):
-        authorization.delete()
+        rejected_status = AuthorizationStatus.objects.get(name='Rejected')
+        authorization.status = rejected_status
+        authorization.save()
+        if requires_note:
+            AuthorizationNote.objects.create(
+                authorization=authorization,
+                created_by=request.user,
+                action='marshal_rejected',
+                note=action_note,
+            )
         return True, 'Authorization rejected.'
     else:
         return False, 'You do not have authority to reject this authorization.'
@@ -1966,10 +2528,40 @@ def manage_sanctions(request):
     if request.method == 'POST':
         if not is_kingdom_authorization_officer(request.user) and not is_kingdom_marshal(request.user, 'Earl Marshal'):
             raise PermissionDenied
-        
+        return_url = request.POST.get('return_url')
+        if request.POST.get('action') == 'clear_pending_sanction_lift':
+            pending_key = 'pending_sanction_lift'
+            if pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+            messages.info(request, 'Pending sanction action cleared.')
+            return redirect(return_url or 'manage_sanctions')
+
         # We'll use the 'action' to make sure we're lifting a sanction.
         if request.POST.get('action') == 'lift_sanction':
             authorization_id = request.POST.get('authorization_id')
+            pending_key = 'pending_sanction_lift'
+            pending_action = _get_pending_session(request, pending_key)
+            is_pending_submit = bool(
+                pending_action
+                and str(pending_action.get('authorization_id')) == str(authorization_id)
+            )
+            action_note = _get_action_note(request)
+            if not action_note:
+                if is_pending_submit:
+                    messages.error(request, 'A note is required to lift a sanction.')
+                    return redirect('manage_sanctions')
+                exists = Authorization.objects.filter(id=authorization_id, status__name='Revoked').exists()
+                if not exists:
+                    messages.error(request, "Could not find the specified sanction to lift.")
+                    return redirect('manage_sanctions')
+                request.session[pending_key] = {
+                    'authorization_id': authorization_id,
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note to finalize lifting the sanction.')
+                return redirect(return_url or 'manage_sanctions')
             try:
                 authorization = Authorization.objects.get(id=authorization_id, status__name='Revoked')
                 # Instead of deleting, it's often better to change the status.
@@ -1978,12 +2570,21 @@ def manage_sanctions(request):
                 active_status = AuthorizationStatus.objects.get(name='Active')
                 authorization.status = active_status
                 authorization.save()
+                AuthorizationNote.objects.create(
+                    authorization=authorization,
+                    created_by=request.user,
+                    action='sanction_lifted',
+                    note=action_note,
+                )
                 messages.success(request, f"Sanction for {authorization.person.sca_name} has been lifted.")
             except Authorization.DoesNotExist:
                 messages.error(request, "Could not find the specified sanction to lift.")
+            if is_pending_submit and pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
         
         # Redirect after POST to prevent re-submission on refresh
-        return redirect('manage_sanctions')
+        return redirect(return_url or 'manage_sanctions')
 
     # --- Display Logic (for GET requests) ---
 
@@ -2045,6 +2646,7 @@ def manage_sanctions(request):
     context = {
         'page_obj': page_obj,
         'view_mode': view_mode,
+        'pending_sanction_lift': _get_pending_session(request, 'pending_sanction_lift'),
     }
     return render(request, 'authorizations/manage_sanctions.html', context)
 
@@ -2059,23 +2661,99 @@ def issue_sanctions(request, person_id):
     all_disciplines = Discipline.objects.all().exclude(name__in=['Earl Marshal', 'Authorization Officer'])
 
     discipline = None
+    styles = []
     discipline_name = request.GET.get('discipline')
-
     if discipline_name:
-        discipline = Discipline.objects.filter(name=discipline_name).first()
+        discipline = Discipline.objects.filter(id=discipline_name).first() or Discipline.objects.filter(name=discipline_name).first()
+        if discipline:
+            styles = WeaponStyle.objects.filter(discipline=discipline)
+
+    pending_key = f'pending_sanction_issue_{person_id}'
+    pending_sanction_issue = _get_pending_session(request, pending_key)
+    pending_style_id = None
+    if pending_sanction_issue:
+        discipline_id = pending_sanction_issue.get('discipline_id')
+        if discipline_id:
+            discipline = Discipline.objects.filter(id=discipline_id).first() or discipline
+            if discipline:
+                styles = WeaponStyle.objects.filter(discipline=discipline)
+        pending_style_id = pending_sanction_issue.get('style_id')
 
     if request.method == 'POST':
+        return_url = request.POST.get('return_url')
+        if request.POST.get('action') == 'clear_pending_sanction_issue':
+            if pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+            messages.info(request, 'Pending sanction action cleared.')
+            if return_url:
+                return redirect(return_url)
+            return redirect('issue_sanctions', person_id=person_id)
+
+        is_pending_submit = request.POST.get('pending_sanction_issue') == '1'
+        action_note = _get_action_note(request)
+        if not action_note:
+            if is_pending_submit:
+                messages.error(request, 'A note is required to issue a sanction.')
+                return redirect('issue_sanctions', person_id=person_id)
+            sanction_type = request.POST.get('sanction_type')
+            discipline_id = request.POST.get('discipline_id')
+            style_id = request.POST.get('style_id')
+            if sanction_type == 'discipline' and not discipline_id:
+                messages.error(request, 'Please select a discipline before sanctioning.')
+                if return_url:
+                    return redirect(return_url)
+                return redirect('issue_sanctions', person_id=person_id)
+            if sanction_type == 'style' and not style_id:
+                messages.error(request, 'Please select a style before sanctioning.')
+                if return_url:
+                    return redirect(return_url)
+                return redirect('issue_sanctions', person_id=person_id)
+            if sanction_type not in ['discipline', 'style']:
+                messages.error(request, 'Invalid sanction type')
+                if return_url:
+                    return redirect(return_url)
+                return redirect('issue_sanctions', person_id=person_id)
+            request.session[pending_key] = {
+                'person_id': person_id,
+                'sanction_type': sanction_type,
+                'discipline_id': discipline_id,
+                'style_id': style_id,
+                'created_at': datetime.utcnow().isoformat(),
+            }
+            request.session.modified = True
+            messages.info(request, 'Eligibility verified. Please add a note to finalize the sanction.')
+            if return_url:
+                return redirect(return_url)
+            return redirect('issue_sanctions', person_id=person_id)
+
+        if is_pending_submit and pending_sanction_issue:
+            post_data = request.POST.copy()
+            for field in ['sanction_type', 'discipline_id', 'style_id']:
+                if not post_data.get(field):
+                    post_data[field] = pending_sanction_issue.get(field) or ''
+            request.POST = post_data
+
         is_valid, mssg = create_sanction(request, person)
         if not is_valid:
             messages.error(request, mssg)
         else:
             messages.success(request, mssg)
+        if is_pending_submit and pending_key in request.session:
+            del request.session[pending_key]
+            request.session.modified = True
+        if return_url:
+            return redirect(return_url)
+        return redirect('issue_sanctions', person_id=person_id)
 
 
     return render(request, 'authorizations/issue_sanctions.html', {
         'person': person,
         'all_disciplines': all_disciplines,
-        'discipline': discipline
+        'discipline': discipline,
+        'styles': styles,
+        'pending_sanction_issue': pending_sanction_issue,
+        'pending_style_id': pending_style_id,
     })
 
 
@@ -2084,6 +2762,9 @@ def create_sanction(request, person):
     sanction_type = request.POST.get('sanction_type')
     discipline_id = request.POST.get('discipline_id')
     style_id = request.POST.get('style_id')
+    action_note = _get_action_note(request)
+    if not action_note:
+        return False, 'A note is required to issue a sanction.'
 
     if sanction_type == 'discipline':
         if not discipline_id:
@@ -2102,8 +2783,18 @@ def create_sanction(request, person):
                 authorization.save()
             else:
                 # If it doesn't, create a new authorization.
-                Authorization.objects.create(person=person, style=style, expiration=date.today(),
-                                             status=AuthorizationStatus.objects.get(name='Revoked'))
+                authorization = Authorization.objects.create(
+                    person=person,
+                    style=style,
+                    expiration=date.today(),
+                    status=AuthorizationStatus.objects.get(name='Revoked'),
+                )
+            AuthorizationNote.objects.create(
+                authorization=authorization,
+                created_by=request.user,
+                action='sanction_issued',
+                note=action_note,
+            )
 
         return True, f'Sanction issued for discipline {discipline.name}'
 
@@ -2122,8 +2813,18 @@ def create_sanction(request, person):
             authorization.save()
         else:
             # If it doesn't, create a new authorization.
-            Authorization.objects.create(person=person, style=style, expiration=date.today(),
-                                         status=AuthorizationStatus.objects.get(name='Revoked'))
+            authorization = Authorization.objects.create(
+                person=person,
+                style=style,
+                expiration=date.today(),
+                status=AuthorizationStatus.objects.get(name='Revoked'),
+            )
+        AuthorizationNote.objects.create(
+            authorization=authorization,
+            created_by=request.user,
+            action='sanction_issued',
+            note=action_note,
+        )
         return True, f'Sanction issued for style {style.name}'
 
     else:
@@ -2285,7 +2986,7 @@ class CreatePersonForm(forms.Form):
     ]
     email = forms.EmailField(label='Email', required=True)
     honeypot = forms.CharField(
-        label='Leave this field blank',
+        label='Website',
         required=False,
         widget=forms.TextInput(attrs={
             'autocomplete': 'off',

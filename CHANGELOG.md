@@ -3,6 +3,9 @@
 - Changed how marshal expirations are calculated. They will now track the actual marshal expiration, the membership expiration, and the background check (for youth marshals) and dynamically display the earliest number. The public page will now show the earliest expiration date. This allows marshals to better manage their various expiration dates.
 - Youth combat expirations cannot be valid past their age of majority (18 for US, 19 for Canada).
 - Added ability to limit search by "is current". This overrides the date range filter.
+- Added requirement to enter a note when promoting a marshal or sanctioning a fighter.
+- Added requirement to have a second authorized person concur with the first authorization someone receives in a discipline.
+- Added ability for marshal officers to see notes on fighters.
 
 ## [0.1.3] - 2026-02-04
 ### Added

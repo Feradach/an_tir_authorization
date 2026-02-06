@@ -27,22 +27,35 @@
         <select id="style" name="style" class="choices-dropdown">
             <option value="">Select Style</option>
             {% for option in styles %}
-                <option value="{{ option.id }}" {% if request.GET.style == option.id|stringformat:"s" %}selected{% endif %}>
+                <option value="{{ option.id }}" {% if request.GET.style == option.id|stringformat:"s" or pending_style_id == option.id|stringformat:"s" %}selected{% endif %}>
                     {{ option }}
                 </option>
             {% endfor %}
         </select>
     </form>
 </p>
-<form method="post">
+<form method="post"{% if pending_sanction_issue %} data-pending-note="1" data-note-title="Sanction Note" data-clear-form-id="clear_pending_sanction_issue_form"{% endif %}>
     {% csrf_token %}
-    <input type="hidden" id="sanction_type" name="sanction_type" value="">
-    <input type="hidden" id="discipline_id" name="discipline_id" value="">
-    <input type="hidden" id="style_id" name="style_id" value="">
+    <input type="hidden" id="sanction_type" name="sanction_type" value="{% if pending_sanction_issue %}{{ pending_sanction_issue.sanction_type }}{% endif %}">
+    <input type="hidden" id="discipline_id" name="discipline_id" value="{% if pending_sanction_issue %}{{ pending_sanction_issue.discipline_id }}{% endif %}">
+    <input type="hidden" id="style_id" name="style_id" value="{% if pending_sanction_issue %}{{ pending_sanction_issue.style_id }}{% endif %}">
+    <input type="hidden" id="person_id" name="person_id" value="{{ person.id }}">
+    <input type="hidden" name="action_note" value="">
+    <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+    {% if pending_sanction_issue %}
+        <input type="hidden" name="pending_sanction_issue" value="1">
+    {% endif %}
 
     <button type="submit" id="sanctionDiscipline" class="btn btn-danger">Sanction by Discipline</button>
     <button type="submit" id="sanctionStyle" class="btn btn-warning">Sanction by Style</button>
 </form>
+{% if pending_sanction_issue %}
+<form method="post" id="clear_pending_sanction_issue_form" action="">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="clear_pending_sanction_issue">
+    <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+</form>
+{% endif %}
 
 {% endblock %}
 

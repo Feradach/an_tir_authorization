@@ -58,7 +58,6 @@ class User(AbstractUser):
     has_logged_in = models.BooleanField(default=False)
     waiver_expiration = models.DateField(null=True, blank=True)
     background_check_expiration = models.DateField(null=True, blank=True)
-    comment = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey('self', null=True, blank=True,
@@ -303,6 +302,14 @@ class Authorization(models.Model):
     style = models.ForeignKey(WeaponStyle, on_delete=models.SET_NULL, null=True, db_index=True)
     status = models.ForeignKey(AuthorizationStatus, on_delete=models.SET_NULL, null=True, default=1)
     marshal = models.ForeignKey(Person, on_delete=models.SET_NULL, null=True, related_name='marshal', db_index=True)
+    concurring_fighter = models.ForeignKey(
+        Person,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='concurrences',
+        db_index=True,
+    )
     expiration = models.DateField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -361,4 +368,62 @@ class BranchMarshal(models.Model):
     class Meta:
         verbose_name = 'branch marshal'
         verbose_name_plural = 'branch marshals'
+
+
+AUTHORIZATION_NOTE_ACTION_CHOICES = [
+    ('marshal_proposed', 'Marshal proposed'),
+    ('marshal_concurred', 'Marshal concurred'),
+    ('marshal_approved', 'Marshal approved'),
+    ('marshal_rejected', 'Marshal rejected'),
+    ('sanction_issued', 'Sanction issued'),
+    ('sanction_lifted', 'Sanction lifted'),
+]
+
+USER_NOTE_TYPE_CHOICES = [
+    ('officer_note', 'Officer note'),
+]
+
+
+class AuthorizationNote(models.Model):
+    """Immutable notes attached to authorization actions."""
+    authorization = models.ForeignKey(Authorization, on_delete=models.CASCADE, related_name='notes')
+    created_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, related_name='authorization_notes_created')
+    action = models.CharField(max_length=50, choices=AUTHORIZATION_NOTE_ACTION_CHOICES)
+    note = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'authorization note'
+        verbose_name_plural = 'authorization notes'
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            raise ValidationError('Authorization notes cannot be updated.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Authorization notes cannot be deleted.')
+
+
+class UserNote(models.Model):
+    """Immutable notes attached to a user/person (e.g., officer notes)."""
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='user_notes')
+    created_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, related_name='user_notes_created')
+    note_type = models.CharField(max_length=50, choices=USER_NOTE_TYPE_CHOICES, default='officer_note')
+    note = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'user note'
+        verbose_name_plural = 'user notes'
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            raise ValidationError('User notes cannot be updated.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('User notes cannot be deleted.')
 

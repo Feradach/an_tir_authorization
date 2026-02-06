@@ -706,7 +706,7 @@ class AddAuthorizationViewTest(TestCase):
         response = add_authorization(request, person_id=self.south_person.user_id)
         self.assertTrue(response)
         message_list = [msg.message for msg in messages.get_messages(request)]
-        self.assertIn('Authorization for Weapon & Shield created successfully!', message_list)
+        self.assertIn('Authorization for Weapon & Shield requires concurrence from another authorized fighter.', message_list)
         self.assertTrue(
             Authorization.objects.filter(person=self.south_person, style=self.style_shield_armored).exists())
 

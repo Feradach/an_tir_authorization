@@ -1,11 +1,11 @@
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from django.contrib.auth.decorators import login_required
-from django.db.models import Q
+from django.db.models import Q, Max
 from typing import Optional
 
 from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
-    Person, Discipline
+    Person, Discipline, AuthorizationNote
 
 # Variable to determine whether we need to have the Authorization officer sign off on all authorizations. Uses status "Needs Kingdom Approval.
 AUTHORIZATION_OFFICER_SIGN_OFF = False
@@ -191,7 +191,7 @@ def waiver_signed(user):
         waiver_signed = True
     return waiver_signed
 
-def authorization_follows_rules(marshal, existing_fighter, style_id):
+def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_fighter: Optional[User] = None):
     """Will need marshal, fighter, style.
     marshal needs to come in as a User. Existing_fighter comes in as a Person. Style_id comes in as a number.
     All of the rules rely on the spelling of the disciplines and weapon styles in the database.
@@ -308,7 +308,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
         return False, 'Cannot renew a revoked authorization.'
 
     # Rule 19: Cannot duplicate/renew a pending authorization.
-    if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
+    if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval', 'Needs Concurrence']).exists():
         return False, 'Cannot renew a pending authorization.'
 
     # Rule 20: Cannot make someone a junior marshal if they are already a senior marshal.
@@ -341,6 +341,9 @@ def authorization_follows_rules(marshal, existing_fighter, style_id):
     if not existing_fighter.is_minor and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
         if style.name != 'Junior Marshal' and style.name != 'Senior Marshal':
             return False, 'Adults cannot be authorized as youth armored or youth rapier fighters.'
+
+    # Rule 25: New or significantly lapsed authorizations require a second concurrence.
+    # This rule is enforced by setting the authorization status outside this validator.
 
     return True, 'Authorization follows all rules.'
 
@@ -386,8 +389,47 @@ def calculate_authorization_expiration(person: Person, style: WeaponStyle, today
         return min(base_expiration, adult_date)
     return base_expiration
 
+def is_authorized_in_discipline(user: User, discipline) -> bool:
+    if not user or not hasattr(user, 'person'):
+        return False
+    discipline_name = discipline.name if hasattr(discipline, 'name') else discipline
+    return Authorization.objects.with_effective_expiration().filter(
+        person__user=user,
+        style__discipline__name=discipline_name,
+        effective_expiration_date__gte=date.today(),
+        status__name='Active',
+    ).exists()
+
+def authorization_requires_concurrence(person: Person, style: WeaponStyle, today: Optional[date] = None) -> bool:
+    if today is None:
+        today = date.today()
+    if style.name in ['Junior Marshal', 'Senior Marshal']:
+        return False
+    cutoff = today - relativedelta(years=1)
+    max_effective = Authorization.objects.with_effective_expiration().filter(
+        person=person,
+        style__discipline=style.discipline,
+        status__name='Active',
+    ).aggregate(Max('effective_expiration_date'))['effective_expiration_date__max']
+    if not max_effective:
+        return True
+    return max_effective < cutoff
+
 def approve_authorization(request):
     """Add a concurance to a pending marshal authorization."""
+    def get_action_note():
+        return (request.POST.get('action_note') or '').strip()
+
+    def record_note(authorization, action, note):
+        if not requires_note:
+            return
+        AuthorizationNote.objects.create(
+            authorization=authorization,
+            created_by=request.user,
+            action=action,
+            note=note,
+        )
+
     def remove_junior_marshal(authorization):
         discipline = authorization.style.discipline.name
         try:
@@ -401,6 +443,10 @@ def approve_authorization(request):
     authorization = Authorization.objects.get(id=request.POST['authorization_id'])
     auth_region = authorization.person.branch.name if authorization.person.branch.is_region() else None
     discipline = authorization.style.discipline.name
+    requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+    note = get_action_note() if requires_note else ''
+    if requires_note and not note:
+        return False, 'A note is required for marshal promotion actions.'
 
     active_status = AuthorizationStatus.objects.get(name='Active')
     regional_status = AuthorizationStatus.objects.get(name='Needs Regional Approval')
@@ -431,6 +477,7 @@ def approve_authorization(request):
             # Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
             if authorization.style.name == 'Senior Marshal':
                 remove_junior_marshal(authorization)
+            record_note(authorization, 'marshal_approved', note)
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
         else:
             if waiver_current(authorization.person.user):
@@ -448,6 +495,7 @@ def approve_authorization(request):
                 # Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
                 if authorization.style.name == 'Senior Marshal':
                     remove_junior_marshal(authorization)
+                record_note(authorization, 'marshal_approved', note)
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
             else:
                 authorization.status = pending_waiver_status
@@ -470,6 +518,7 @@ def approve_authorization(request):
                 return False, 'Marshal authorizations require a current membership.'
             authorization.status = regional_status
             authorization.save()
+            record_note(authorization, 'marshal_concurred', note)
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for regional approval!'
         
         # Rule 4a: If a junior marshal is approved it becomes active (or pending waiver).
@@ -477,12 +526,14 @@ def approve_authorization(request):
             if AUTHORIZATION_OFFICER_SIGN_OFF:
                 authorization.status = kingdom_status
                 authorization.save()
+                record_note(authorization, 'marshal_concurred', note)
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
             else:
                 if not membership_is_current(authorization.person.user):
                     return False, 'Marshal authorizations require a current membership.'
                 authorization.status = active_status
                 authorization.save()
+                record_note(authorization, 'marshal_concurred', note)
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored can approve Missile).
@@ -499,6 +550,7 @@ def approve_authorization(request):
         if AUTHORIZATION_OFFICER_SIGN_OFF:
             authorization.status = kingdom_status
             authorization.save()
+            record_note(authorization, 'marshal_approved', note)
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
         else:
             if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
@@ -514,6 +566,7 @@ def approve_authorization(request):
                 if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
                     user.waiver_expiration = authorization.expiration
                     user.save()
+                record_note(authorization, 'marshal_approved', note)
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
             else:
                 if waiver_current(authorization.person.user):
@@ -535,6 +588,64 @@ def approve_authorization(request):
 
     else:
         return False, 'Authorization status not valid for confirmation.'
+
+
+def validate_approve_authorization(marshal: User, authorization: Authorization):
+    """Validate approval rules without persisting changes."""
+    auth_region = authorization.person.branch.name if authorization.person.branch.is_region() else None
+    discipline = authorization.style.discipline.name
+
+    def waiver_current(u: User):
+        return bool(u.waiver_expiration and u.waiver_expiration > date.today())
+
+    if is_kingdom_authorization_officer(marshal):
+        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+        return True, 'OK'
+
+    if authorization.status.name == 'Pending':
+        if not is_senior_marshal(marshal, discipline):
+            return False, 'You must be a senior marshal in this discipline to approve this authorization.'
+        if authorization.marshal.user == marshal:
+            return False, 'You cannot concur with your own authorization.'
+        if authorization.style.name == 'Senior Marshal':
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+        if authorization.style.name == 'Junior Marshal':
+            if AUTHORIZATION_OFFICER_SIGN_OFF:
+                return True, 'OK'
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+        return True, 'OK'
+
+    if authorization.status.name == 'Needs Regional Approval':
+        if not is_regional_marshal(marshal, region=auth_region):
+            return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
+        if authorization.style.discipline.name == 'Missile':
+            if not is_regional_marshal(marshal, 'Missile', auth_region) and not is_regional_marshal(marshal, 'Armored', auth_region):
+                return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
+        else:
+            if not is_regional_marshal(marshal, discipline, auth_region):
+                return False, 'You must be a regional marshal in this discipline to approve this authorization.'
+        if AUTHORIZATION_OFFICER_SIGN_OFF:
+            return True, 'OK'
+        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+            return True, 'OK'
+        if waiver_current(authorization.person.user):
+            return True, 'OK'
+        return True, 'OK'
+
+    return False, 'Authorization status not valid for confirmation.'
+
+
+def validate_reject_authorization(marshal: User, authorization: Authorization):
+    auth_discipline = authorization.style.discipline.name
+    if is_regional_marshal(marshal, auth_discipline):
+        return True, 'OK'
+    return False, 'You do not have authority to reject this authorization.'
 
 @login_required
 def appoint_branch_marshal(request):
