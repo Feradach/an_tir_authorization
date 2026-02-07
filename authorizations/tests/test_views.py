@@ -1,975 +1,963 @@
-from datetime import date
-from django.contrib import messages
-from django.contrib.messages.storage.cookie import CookieStorage
+
+from datetime import date, timedelta
+from unittest.mock import patch
+
 from dateutil.relativedelta import relativedelta
-from django.core.exceptions import PermissionDenied
-from django.test import TestCase, RequestFactory
+from django.contrib.messages import get_messages
+from django.core.cache import cache
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from authorizations.models import User, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
-from authorizations.permissions import is_kingdom_authorization_officer
-from authorizations.views import add_authorization, appoint_branch_marshal
+from authorizations.models import (
+    Authorization,
+    AuthorizationNote,
+    AuthorizationStatus,
+    Branch,
+    BranchMarshal,
+    Discipline,
+    Person,
+    User,
+    WeaponStyle,
+)
 
-"""
-Tests:
-Index:
-Which pending authorizations are returned based on the user role?
 
-fighter:
-Can view a fighter
-only see current authorizations
-see current and old pending authorizations
-see current and old need regional approval
-see current and old need kingdom approval
-see current and old sanctions
-
-add_fighter:
-Can add a fighter that follows the rules
-- Add maximum user
-- Add minimum user
-- Minor must have a birthday
-- Membership number must be unique
-- Membership expiration and number must be both present or both absent
-- User creation rejected if authorization violates rules
-- User creation approved if authorization follows rules
-
-add_authorization:
-- marshal authorizations are set to pending
-- new authorization can be added if it follows the rules
-- existing authorization can be updated if it follows the rules
-
-my_account:
-- Can see self
-- Can't see others
-- Can see children
-- auth officer can see all
-- Can update user information
-
-branch_marshal:
-- Can add a branch marshal
-- Cannot add a junior marshal as a regional marshal
-- Can add a junior marshal as a local branch marshal
-- Cannot add someone who doesn't have a marshal in the same discipline
-- Cannot add someone who is already a branch marshal
-"""
-# Create your tests here.
-class IndexViewTest(TestCase):
-    """
-    Test the Index page
-    Which pending authorizations are returned based on the user role?
-    """
-
+class ViewTestBase(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_sm = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
-        cls.branch_tr = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.branch_sm)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.branch_tr)
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.discipline_rapier = Discipline.objects.create(name='Rapier')
-        cls.discipline_archery = Discipline.objects.create(name='Archery')
-        cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_rapier)
-        cls.style_sm_archery = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_archery)
-        cls.style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_equestrian)
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
         cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Pending Waiver')
+        cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
+        cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
+        cls.status_rejected = AuthorizationStatus.objects.create(name='Rejected')
 
-        cls.south_user = User.objects.create_user(username='southernduane@hotmail.com', password='eGqNMC2D', membership='68907108', membership_expiration=date.today() + relativedelta(years=1))
-        cls.north_user = User.objects.create_user(username='northernduane@hotmail.com', password='eGqNMC2D', membership='68907106', membership_expiration=date.today() + relativedelta(years=1))
-        cls.south_person = Person.objects.create(user=cls.south_user, sca_name='Ysabeau de la Mar', branch=cls.branch_gd, is_minor=False)
-        cls.north_person = Person.objects.create(user=cls.north_user, sca_name='Francis du Pont', branch=cls.branch_lg, is_minor=False)
-
-        cls.marshal_user = User.objects.create_user(username='targetmarshal@gmail.com', password='eGqNMC2D', membership='68920107', membership_expiration=date.today() + relativedelta(years=1))
-        cls.marshal_person = Person.objects.create(user=cls.marshal_user, sca_name='Theodric of the White Hart', branch=cls.branch_gd, is_minor=False)
-        cls.auth_sm_armored_target = Authorization.objects.create(person=cls.marshal_person,
-                                                              style=cls.style_sm_armored,
-                                                              status=cls.status_active,
-                                                              expiration=date.today() + relativedelta(years=1))
-
-
-    def test_anonymous_view(self):
-
-        # POSITIVE: See all people
-        # NEGATIVE: Don't see authorizations
-        response = self.client.get(reverse('index'))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/index.html')
-        self.assertIn('all_people', response.context)
-        self.assertNotIn('pending_authorizations', response.context)
-
-
-    def test_marshal_view(self):
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_armored,
-                                                             status=self.status_pending,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        # NEGATIVE: Don't see authorizations
-        self.client.login(username='targetmarshal@gmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('index'))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/index.html')
-        self.assertNotIn(auth_sm_armored_south, response.context['pending_authorizations'])
-
-
-    def test_branch_marshal_view(self):
-        branch_marshal_gd = BranchMarshal.objects.create(person=self.marshal_person, branch=self.branch_gd, discipline=self.discipline_armored, start_date=date.today() - relativedelta(years=1), end_date=date.today() + relativedelta(years=1))
-
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_armored,
-                                                       status=self.status_pending,
-                                                       expiration=date.today() + relativedelta(years=1))
-        auth_sm_rapier_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_rapier,
-                                                      status=self.status_pending,
-                                                      expiration=date.today() + relativedelta(years=1))
-        auth_sm_armored_north = Authorization.objects.create(person=self.north_person, style=self.style_sm_armored,
-                                                       status=self.status_pending,
-                                                       expiration=date.today() + relativedelta(years=1))
-
-        user_frank = User.objects.create_user(username='frankduane@hotmail.com', password='eGqNMC2D', membership='68908809', membership_expiration=date.today() + relativedelta(years=1))
-        person_frank = Person.objects.create(user=user_frank, sca_name='Francis du Pont', branch=self.branch_gd, is_minor=False)
-
-        auth_sm_armored_frank = Authorization.objects.create(person=person_frank, style=self.style_sm_armored,
-                                                             status=self.status_regional,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_claudia = User.objects.create_user(username='claudia@hotmail.com', password='eGqNMC2D',
-                                                membership='68544809',
-                                                membership_expiration=date.today() + relativedelta(years=1))
-        person_claudia = Person.objects.create(user=user_claudia, sca_name='Claudia', branch=self.branch_sm,
-                                               is_minor=False)
-
-        auth_sm_armored_claudia = Authorization.objects.create(person=person_claudia, style=self.style_sm_armored,
-                                                               status=self.status_kingdom,
-                                                               expiration=date.today() + relativedelta(years=1))
-
-        self.client.login(username='targetmarshal@gmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('index'))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/index.html')
-
-        # POSITIVE: See pending in your branch
-        self.assertIn(auth_sm_armored_south, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending in other branches
-        self.assertNotIn(auth_sm_armored_north, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending in other disciplines
-        self.assertNotIn(auth_sm_rapier_south, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see regional approvals
-        self.assertNotIn(auth_sm_armored_frank, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see kingdom approvals
-        self.assertNotIn(auth_sm_armored_claudia, response.context['pending_authorizations'])
-
-
-
-    def test_regional_marshal_view(self):
-        branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', region=self.region_summits)
-
-        branch_marshal_sm = BranchMarshal.objects.create(person=self.marshal_person, branch=self.branch_sm, discipline=self.discipline_armored, start_date=date.today() - relativedelta(years=1), end_date=date.today() + relativedelta(years=1))
-
-
-        user_sara = User.objects.create_user(username='sara@hotmail.com', password='eGqNMC2D', membership='68908809', membership_expiration=date.today() + relativedelta(years=1))
-        person_sara = Person.objects.create(user=user_sara, sca_name='Sara', branch=branch_mh, is_minor=False)
-        auth_sm_armored_sara = Authorization.objects.create(person=person_sara, style=self.style_sm_armored,
-                                                             status=self.status_regional,
-                                                             expiration=date.today() + relativedelta(years=1))
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_armored,
-                                                             status=self.status_regional,
-                                                             expiration=date.today() + relativedelta(years=1))
-        auth_sm_rapier_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_rapier,
-                                                             status=self.status_regional,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        auth_sm_armored_north = Authorization.objects.create(person=self.north_person, style=self.style_sm_armored,
-                                                             status=self.status_regional,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_frank = User.objects.create_user(username='frankduane@hotmail.com', password='eGqNMC2D',
-                                              membership='6890912121',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        person_frank = Person.objects.create(user=user_frank, sca_name='Francis du Pont', branch=self.branch_gd,
-                                             is_minor=False)
-
-        auth_sm_armored_frank = Authorization.objects.create(person=person_frank, style=self.style_sm_armored,
-                                                             status=self.status_pending,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_claudia = User.objects.create_user(username='claudia@hotmail.com', password='eGqNMC2D',
-                                              membership='68544809',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        person_claudia = Person.objects.create(user=user_claudia, sca_name='Claudia', branch=self.branch_sm, is_minor=False)
-
-        auth_sm_armored_claudia = Authorization.objects.create(person=person_claudia, style=self.style_sm_armored,
-                                                             status=self.status_kingdom,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-
-        # POSITIVE: See regional approvals in your region.
-        # NEGATIVE: Don't see pending or kingdom approvals.
-        # NEGATIVE: Don't see regional outside your region.
-        self.client.login(username='targetmarshal@gmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('index'))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/index.html')
-
-        # POSITIVE: See pending in your region
-        self.assertIn(auth_sm_armored_south, response.context['pending_authorizations'])
-        self.assertIn(auth_sm_armored_sara, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending in other disciplines
-        self.assertNotIn(auth_sm_rapier_south, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending in other region
-        self.assertNotIn(auth_sm_armored_north, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending approvals
-        self.assertNotIn(auth_sm_armored_frank, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see kingdom approvals
-        self.assertNotIn(auth_sm_armored_claudia, response.context['pending_authorizations'])
-
-    def test_kingdom_marshal_view(self):
-        branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', type='Shire', region=self.branch_sm)
-
-        branch_marshal_an_tir = BranchMarshal.objects.create(person=self.marshal_person, branch=self.branch_an_tir,
-                                                         discipline=self.discipline_armored,
-                                                         start_date=date.today() - relativedelta(years=1),
-                                                         end_date=date.today() + relativedelta(years=1))
-
-
-
-        user_sara = User.objects.create_user(username='sara@hotmail.com', password='eGqNMC2D', membership='68908809',
-                                             membership_expiration=date.today() + relativedelta(years=1))
-        person_sara = Person.objects.create(user=user_sara, sca_name='Sara', branch=branch_mh, is_minor=False)
-        auth_sm_armored_sara = Authorization.objects.create(person=person_sara, style=self.style_sm_armored,
-                                                            status=self.status_regional,
-                                                            expiration=date.today() + relativedelta(years=1))
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_armored,
-                                                             status=self.status_regional,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        auth_sm_armored_north = Authorization.objects.create(person=self.north_person, style=self.style_sm_armored,
-                                                             status=self.status_regional,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_frank = User.objects.create_user(username='frankduane@hotmail.com', password='eGqNMC2D',
-                                              membership='6890912121',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        person_frank = Person.objects.create(user=user_frank, sca_name='Francis du Pont', branch=self.branch_gd,
-                                             is_minor=False)
-
-        auth_sm_armored_frank = Authorization.objects.create(person=person_frank, style=self.style_sm_armored,
-                                                             status=self.status_pending,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_claudia = User.objects.create_user(username='claudia@hotmail.com', password='eGqNMC2D',
-                                                membership='68544809',
-                                                membership_expiration=date.today() + relativedelta(years=1))
-        person_claudia = Person.objects.create(user=user_claudia, sca_name='Claudia', branch=self.branch_sm,
-                                               is_minor=False)
-
-        auth_sm_armored_claudia = Authorization.objects.create(person=person_claudia, style=self.style_sm_armored,
-                                                               status=self.status_kingdom,
-                                                               expiration=date.today() + relativedelta(years=1))
-
-        auth_sm_rapier_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_rapier,
-                                                            status=self.status_regional,
-                                                            expiration=date.today() + relativedelta(years=1))
-
-        # POSITIVE: See regional approvals in your discipline.
-        # NEGATIVE: Don't see pending or kingdom approvals
-        self.client.login(username='targetmarshal@gmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('index'))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/index.html')
-
-        # POSITIVE: See pending in your discipline
-        self.assertIn(auth_sm_armored_south, response.context['pending_authorizations'])
-        self.assertIn(auth_sm_armored_sara, response.context['pending_authorizations'])
-        self.assertIn(auth_sm_armored_north, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending in other disciplines
-        self.assertNotIn(auth_sm_rapier_south, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending approvals
-        self.assertNotIn(auth_sm_armored_frank, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see kingdom approvals
-        self.assertNotIn(auth_sm_armored_claudia, response.context['pending_authorizations'])
-
-    def test_auth_officer_view(self):
-        branch_mh = Branch.objects.create(name='Shire of MyrtleHolt', type='Shire', region=self.branch_sm)
-        discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
-
-        branch_marshal_an_tir = BranchMarshal.objects.create(person=self.marshal_person, branch=self.branch_an_tir,
-                                                             discipline=discipline_auth_officer,
-                                                             start_date=date.today() - relativedelta(years=1),
-                                                             end_date=date.today() + relativedelta(years=1))
-
-        user_sara = User.objects.create_user(username='sara@hotmail.com', password='eGqNMC2D', membership='68908809',
-                                             membership_expiration=date.today() + relativedelta(years=1))
-        person_sara = Person.objects.create(user=user_sara, sca_name='Sara', branch=branch_mh, is_minor=False)
-        auth_sm_armored_sara = Authorization.objects.create(person=person_sara, style=self.style_sm_armored,
-                                                            status=self.status_kingdom,
-                                                            expiration=date.today() + relativedelta(years=1))
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_armored,
-                                                             status=self.status_kingdom,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        auth_sm_armored_north = Authorization.objects.create(person=self.north_person, style=self.style_sm_armored,
-                                                             status=self.status_kingdom,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_frank = User.objects.create_user(username='frankduane@hotmail.com', password='eGqNMC2D',
-                                              membership='6890912121',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        person_frank = Person.objects.create(user=user_frank, sca_name='Francis du Pont', branch=self.branch_gd,
-                                             is_minor=False)
-
-        auth_sm_armored_frank = Authorization.objects.create(person=person_frank, style=self.style_sm_armored,
-                                                             status=self.status_pending,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_claudia = User.objects.create_user(username='claudia@hotmail.com', password='eGqNMC2D',
-                                                membership='68544809',
-                                                membership_expiration=date.today() + relativedelta(years=1))
-        person_claudia = Person.objects.create(user=user_claudia, sca_name='Claudia', branch=self.branch_sm,
-                                               is_minor=False)
-
-        auth_sm_armored_claudia = Authorization.objects.create(person=person_claudia, style=self.style_sm_armored,
-                                                               status=self.status_regional,
-                                                               expiration=date.today() + relativedelta(years=1))
-
-        auth_sm_rapier_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_rapier,
-                                                            status=self.status_kingdom,
-                                                            expiration=date.today() + relativedelta(years=1))
-
-
-        # POSITIVE: See kingdom approvals
-        # NEGATIVE: Don't see pending or regional approvals
-        self.assertTrue(is_kingdom_authorization_officer(self.marshal_person.user))
-
-
-
-        self.client.login(username='targetmarshal@gmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('index'))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/index.html')
-
-        # POSITIVE: See kingdom approvals from all disciplines
-        self.assertIn(auth_sm_armored_south, response.context['pending_authorizations'])
-        self.assertIn(auth_sm_armored_sara, response.context['pending_authorizations'])
-        self.assertIn(auth_sm_rapier_south, response.context['pending_authorizations'])
-        self.assertIn(auth_sm_armored_north, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see pending approvals
-        self.assertNotIn(auth_sm_armored_frank, response.context['pending_authorizations'])
-
-        # NEGATIVE: Don't see regional approvals
-        self.assertNotIn(auth_sm_armored_claudia, response.context['pending_authorizations'])
-
-
-class FighterViewTest(TestCase):
-    """
-    Test the Fighter page
-    Can view a fighter
-    only see current authorizations
-    see current and old pending authorizations
-    see current and old need regional approval
-    see current and old need kingdom approval
-    see current and old sanctions
-    """
-
-    @classmethod
-    def setUpTestData(cls):
         cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
         cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
         cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
         cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        cls.branch_other = Branch.objects.create(name='Special Other', type='Other', region=cls.region_summits)
+
         cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.discipline_rapier = Discipline.objects.create(name='Rapier')
-        cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
+        cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
+        cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
+        cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
+
         cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_shield_armored = WeaponStyle.objects.create(name='Weapon & Shield', discipline=cls.discipline_armored)
-        cls.style_two_armored = WeaponStyle.objects.create(name='Two-Handed', discipline=cls.discipline_armored)
-        cls.style_spear_armored = WeaponStyle.objects.create(name='Spear', discipline=cls.discipline_armored)
-        cls.style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_rapier)
+        cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
+        cls.style_weapon_armored = WeaponStyle.objects.create(name='Weapon & Shield', discipline=cls.discipline_armored)
         cls.style_single_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=cls.discipline_rapier)
-        cls.style_offensive_rapier = WeaponStyle.objects.create(name='Sword & Offensive Secondary', discipline=cls.discipline_rapier)
-        cls.style_defensive_rapier = WeaponStyle.objects.create(name='Sword & Defensive Secondary', discipline=cls.discipline_rapier)
-        cls.style_two_rapier = WeaponStyle.objects.create(name='Two-Handed', discipline=cls.discipline_rapier)
-        cls.style_spear_rapier = WeaponStyle.objects.create(name='Spear', discipline=cls.discipline_rapier)
-        cls.style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal',
-                                                             discipline=cls.discipline_equestrian)
-        cls.south_user = User.objects.create_user(username='southernduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907108',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.north_user = User.objects.create_user(username='northernduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907106',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.south_person = Person.objects.create(user=cls.south_user, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_gd, is_minor=False)
-        cls.north_person = Person.objects.create(user=cls.north_user, sca_name='Francis du Pont', branch=cls.branch_lg,
-                                                 is_minor=False)
+        cls.style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_armored)
+        cls.style_jm_youth_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_youth_armored)
 
-        # current auths
-        cls.auth_sm_armored_south = Authorization.objects.create(person=cls.south_person, style=cls.style_sm_armored,
-                                                             status=cls.status_active,
-                                                             expiration=date.today() + relativedelta(years=1), marshal=cls.north_person)
-        cls.auth_shield_armored_south = Authorization.objects.create(person=cls.south_person, style=cls.style_shield_armored,
-                                                                 status=cls.status_active,
-                                                                 expiration=date.today() + relativedelta(years=1), marshal=cls.north_person)
+    def setUp(self):
+        cache.clear()
+        self._membership_seed = 200000
 
-        #expired auths
-        cls.auth_two_armored_south = Authorization.objects.create(person=cls.south_person, style=cls.style_two_armored,
-                                                             status=cls.status_active,
-                                                             expiration=date.today() - relativedelta(years=1), marshal=cls.north_person)
+    def _next_membership(self):
+        self._membership_seed += 1
+        return str(self._membership_seed)
 
+    def make_person(
+        self,
+        username,
+        sca_name,
+        *,
+        branch=None,
+        membership='auto',
+        membership_expiration='auto',
+        is_minor=False,
+        birthday=None,
+        parent=None,
+        email=None,
+        background_check_expiration=None,
+        waiver_expiration=None,
+        password='StrongPass!123',
+    ):
+        if membership == 'auto':
+            membership = self._next_membership()
+        if membership_expiration == 'auto':
+            membership_expiration = date.today() + relativedelta(years=1)
 
-        # pending auths
-        cls.auth_spear_armored_south = Authorization.objects.create(person=cls.south_person, style=cls.style_spear_armored,
-                                                                status=cls.status_pending,
-                                                                expiration=date.today() + relativedelta(years=1), marshal=cls.north_person)
-        cls.auth_sm_rapier_south = Authorization.objects.create(person=cls.south_person, style=cls.style_sm_rapier,
-                                                            status=cls.status_pending,
-                                                            expiration=date.today() - relativedelta(years=1), marshal=cls.north_person)
+        user = User.objects.create_user(
+            username=username,
+            password=password,
+            email=email or f'{username}@example.com',
+            first_name=sca_name.split()[0],
+            last_name='Tester',
+            membership=membership,
+            membership_expiration=membership_expiration,
+            birthday=birthday,
+            state_province='Oregon',
+            country='United States',
+            background_check_expiration=background_check_expiration,
+            waiver_expiration=waiver_expiration,
+        )
+        person = Person.objects.create(
+            user=user,
+            sca_name=sca_name,
+            branch=branch or self.branch_gd,
+            is_minor=is_minor,
+            parent=parent,
+        )
+        return user, person
 
+    def grant_authorization(self, person, style, *, status=None, expiration=None, marshal=None):
+        return Authorization.objects.create(
+            person=person,
+            style=style,
+            status=status or self.status_active,
+            expiration=expiration or (date.today() + relativedelta(years=1)),
+            marshal=marshal or person,
+        )
 
-        # regional auths
-        cls.auth_single_rapier_south = Authorization.objects.create(person=cls.south_person, style=cls.style_single_rapier,
-                                                                status=cls.status_regional,
-                                                                expiration=date.today() + relativedelta(years=1), marshal=cls.north_person)
-        cls.auth_offensive_rapier_south = Authorization.objects.create(person=cls.south_person, style=cls.style_offensive_rapier,
-                                                                  status=cls.status_regional,
-                                                                  expiration=date.today() - relativedelta(years=1), marshal=cls.north_person)
+    def appoint(self, person, branch, discipline, *, end_date=None):
+        return BranchMarshal.objects.create(
+            person=person,
+            branch=branch,
+            discipline=discipline,
+            start_date=date.today() - timedelta(days=1),
+            end_date=end_date or (date.today() + relativedelta(years=1)),
+        )
 
+    def messages_for(self, response):
+        return [m.message for m in get_messages(response.wsgi_request)]
 
-        # kingdom auths
-        cls.auth_defensive_rapier_south = Authorization.objects.create(person=cls.south_person, style=cls.style_defensive_rapier,
-                                                                   status=cls.status_kingdom,
-                                                                   expiration=date.today() + relativedelta(years=1), marshal=cls.north_person)
-        cls.auth_two_rapier_south = Authorization.objects.create(person=cls.south_person, style=cls.style_two_rapier,
-                                                            status=cls.status_kingdom,
-                                                            expiration=date.today() - relativedelta(years=1), marshal=cls.north_person)
+    def date_value(self, maybe_date):
+        return maybe_date.isoformat() if maybe_date else ''
 
-
-        # revoked auths
-        cls.auth_spear_rapier_south = Authorization.objects.create(person=cls.south_person, style=cls.style_spear_rapier,
-                                                               status=cls.status_revoked,
-                                                               expiration=date.today() + relativedelta(years=1), marshal=cls.north_person)
-        cls.auth_sm_equestrian_south = Authorization.objects.create(person=cls.south_person, style=cls.style_sm_equestrian,
-                                                                status=cls.status_revoked,
-                                                                expiration=date.today() - relativedelta(years=1), marshal=cls.north_person)
-
-        # other person auths
-        cls.auth_sm_armored_north = Authorization.objects.create(person=cls.north_person, style=cls.style_sm_equestrian,
-                                                             status=cls.status_active,
-                                                             expiration=date.today() + relativedelta(years=1), marshal=cls.north_person)
-
-
-    def test_view_fighter_page(self):
-        fighter_id = self.south_person.user_id
-        response = self.client.get(reverse('fighter', args=[fighter_id]))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/fighter.html')
-
-        active_armored_styles = response.context['authorization_list'].get('Armored', {}).get('styles', [])
-        pending_armored_styles = response.context['pending_authorization_list'].get('Armored', {}).get('styles', [])
-        pending_rapier_styles = response.context['pending_authorization_list'].get('Rapier', {}).get('styles', [])
-        active_equestrian_styles = response.context['authorization_list'].get('Equestrian', {}).get('styles', [])
-        revoked_rapier_styles = response.context['sanctions'].get('Rapier', {}).get('styles', [])
-        revoked_equestrian_styles = response.context['sanctions'].get('Equestrian', {}).get('styles', [])
-
-        # current auths
-        self.assertIn('Senior Marshal', active_armored_styles)
-        self.assertIn('Weapon & Shield', active_armored_styles)
-
-        # expired auths
-        self.assertNotIn('Two-Handed', active_armored_styles)
-
-        # pending auths
-        self.assertIn('Spear', pending_armored_styles)
-        self.assertIn('Senior Marshal', pending_rapier_styles)
-
-
-        # regional auths
-        self.assertIn('Single Sword', pending_rapier_styles)
-        self.assertIn('Sword & Offensive Secondary', pending_rapier_styles)
-
-        # kingdom auths
-        self.assertIn('Sword & Defensive Secondary', pending_rapier_styles)
-        self.assertIn('Two-Handed', pending_rapier_styles)
-
-        # revoked auths
-        self.assertIn('Spear', revoked_rapier_styles)
-        self.assertIn('Senior Marshal', revoked_equestrian_styles)
-
-        # other person auths
-        self.assertNotIn('Senior Marshal', active_equestrian_styles)
-
-class AddFighterViewTest(TestCase):
-    """
-    Test the Add Fighter page
-    Can add a fighter that follows the rules
-        - Add maximum user
-        - Add minimum user
-        - Minor must have a birthday
-        - Membership number must be unique
-        - Membership expiration and number must be both present or both absent
-        - User creation rejected if authorization violates rules
-        - User creation approved if authorization follows rules
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
-        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_shield_armored = WeaponStyle.objects.create(name='Weapon & Shield', discipline=cls.discipline_armored)
-
-        cls.marshal_user = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                            membership='31913662',
-                                            membership_expiration=date.today() + relativedelta(years=1))
-        cls.marshal_person = Person.objects.create(user=cls.marshal_user, sca_name='Theodric of the White Hart',
-                                           branch=cls.branch_gd,
-                                           is_minor=False)
-
-        cls.south_user = User.objects.create_user(username='southernduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907108',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.south_person = Person.objects.create(user=cls.south_user, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_gd, is_minor=False)
-
-        cls.auth_sm_armored_south = Authorization.objects.create(person=cls.marshal_person, style=cls.style_sm_armored,
-                                                             status=cls.status_active,
-                                                             expiration=date.today() + relativedelta(years=1), marshal=cls.south_person)
-
-    def test_view_add_fighter_page(self):
-        # NEGATIVE: Non-marshal cannot view
-        self.client.login(username='southernduane@hotmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('add_fighter'))
-        self.assertEqual(response.status_code, 403)
-
-        # POSITIVE: Marshal can view
-        self.client.login(username='kristinadavis@gmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('add_fighter'))
-        self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/new_fighter.html')
-
-        # POST data
-        post_data = {
-            'email': 'newfighter@example.com',
-            'username': 'newfighter',
-            'password': '654654ERERE',
-            'first_name': 'John',
-            'last_name': 'Doe',
-            'membership': '123456',
-            'membership_expiration': '2100-01-01',
+    def registration_payload(self, username='new_user', email='new_user@example.com', **overrides):
+        payload = {
+            'honeypot': '',
+            'email': email,
+            'username': username,
+            'first_name': 'New',
+            'last_name': 'User',
+            'membership': self._next_membership(),
+            'membership_expiration': self.date_value(date.today() + relativedelta(years=1)),
             'address': '123 Main St',
-            'city': 'Testville',
+            'address2': '',
+            'city': 'Portland',
             'state_province': 'Oregon',
-            'postal_code': '12345',
+            'postal_code': '97201',
             'country': 'United States',
-            'birthday': '2000-01-01',
-            'sca_name': 'Fighter Test',
-            'branch': self.branch_gd.id,
-            'is_minor': False,
-            'weapon_styles': [self.style_shield_armored.id],
+            'phone_number': '5035551212',
+            'birthday': '',
+            'sca_name': 'New User of An Tir',
+            'title': '',
+            'new_title': '',
+            'new_title_rank': '',
+            'branch': str(self.branch_gd.id),
+            'is_minor': '',
+            'parent_id': '',
+            'background_check_expiration': '',
         }
+        payload.update(overrides)
+        return payload
 
-        # Send the POST request
-        response = self.client.post(reverse('add_fighter'), post_data, follow=True)
-        self.assertEqual(response.status_code, 200)
-
-        # POSITIVE: User, person, and authorization were created
-        self.assertTrue(User.objects.filter(username='newfighter').exists())
-        self.assertTrue(Person.objects.filter(sca_name='Fighter Test').exists())
-        self.assertTrue(
-            Authorization.objects.filter(person__sca_name='Fighter Test', style=self.style_shield_armored).exists())
-        self.assertContains(response, 'User and person created successfully')
-
-        # NEGATIVE: Authorization breaks rules, no user created
-        post_data = {
-            'email': 'badfighter@example.com',
-            'username': 'badfighter',
-            'password': '654654ERERE',
-            'first_name': 'Jane',
-            'last_name': 'Doe',
-            'address': '123 Main St',
-            'city': 'Testville',
-            'state_province': 'Oregon',
-            'postal_code': '12345',
-            'country': 'United States',
-            'branch': self.branch_gd.id,
-            'is_minor': False,
-            'weapon_styles': [self.style_sm_armored.id],
+    def account_update_payload(self, user, person, **overrides):
+        payload = {
+            'honeypot': '',
+            'email': user.email,
+            'username': user.username,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'membership': user.membership or '',
+            'membership_expiration': self.date_value(user.membership_expiration),
+            'address': user.address or '123 Main St',
+            'address2': user.address2 or '',
+            'city': user.city or 'Portland',
+            'state_province': user.state_province or 'Oregon',
+            'postal_code': user.postal_code or '97201',
+            'country': user.country or 'United States',
+            'phone_number': user.phone_number or '5035551212',
+            'birthday': self.date_value(user.birthday),
+            'sca_name': person.sca_name,
+            'title': str(person.title_id) if person.title_id else '',
+            'new_title': '',
+            'new_title_rank': '',
+            'branch': str(person.branch_id),
+            'is_minor': 'on' if person.is_minor else '',
+            'parent_id': str(person.parent_id) if person.parent_id else '',
+            'background_check_expiration': self.date_value(user.background_check_expiration),
         }
-
-        response = self.client.post(reverse('add_fighter'), post_data, follow=True)
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Error during creation: Must be a current member to be authorized as a marshal.')
-        self.assertFalse(User.objects.filter(username='badfighter').exists())
+        payload.update(overrides)
+        return payload
 
 
-class AddAuthorizationViewTest(TestCase):
-    """
-    Test the Add Authorization page
-    - marshal authorizations are set to pending
-    - new authorization can be added if it follows the rules
-    - existing authorization can be updated if it follows the rules
-    """
+class IndexViewTests(ViewTestBase):
+    def test_unique_name_redirects_to_fighter_page(self):
+        unique_user, _ = self.make_person('unique_index_user', 'Unique Fighter')
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
-        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        response = self.client.get(reverse('index'), {'sca_name': 'Unique Fighter'})
 
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_shield_armored = WeaponStyle.objects.create(name='Weapon & Shield', discipline=cls.discipline_armored)
-
-        cls.marshal_user = User.objects.create_user(username='targetmarshal@gmail.com', password='eGqNMC2D',
-                                                    membership='68920107',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.marshal_person = Person.objects.create(user=cls.marshal_user, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_gd, is_minor=False)
-
-        cls.auth_sm_armored_marshal = Authorization.objects.create(person=cls.marshal_person, style=cls.style_sm_armored,
-                                                                   status=cls.status_active,
-                                                                   expiration=date.today() + relativedelta(years=1),
-                                                                   marshal=cls.marshal_person)
-
-        cls.south_user = User.objects.create_user(username='southernduane@hotmail.com', password='eGqNMC2D')
-        cls.south_person = Person.objects.create(user=cls.south_user, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_gd, is_minor=False)
-
-    def test_add_authorization(self):
-        factory = RequestFactory()
-
-        # NEGATIVE: Non-marshal cannot view
-        # POST data:
-        post_data = {'weapon_styles': [self.style_shield_armored.id, self.style_sm_armored.id]}
-        request = factory.post('/fake-path/', post_data)
-        request.user = self.south_user
-        setattr(request, '_messages', CookieStorage(request))
-        with self.assertRaises(PermissionDenied):
-            add_authorization(request, person_id=self.marshal_person.user_id)
-
-
-        # POSITIVE: Marshal can view
-        request.user = self.marshal_user
-        setattr(request, '_messages', CookieStorage(request))
-        response = add_authorization(request, person_id=self.south_person.user_id)
-
-        # NEGATIVE: Authorization breaks rules, no user created
-        self.assertFalse(response)
-        message_list = [msg.message for msg in messages.get_messages(request)]
-        self.assertIn('Error during creation: Must be a current member to be authorized as a marshal.', message_list)
-        self.assertFalse(Authorization.objects.filter(person=self.south_person, style=self.style_shield_armored).exists())
-
-
-        # POSITIVE: Authorization created
-        #POST data:
-        post_data = {'weapon_styles': [self.style_shield_armored.id]}
-        request = factory.post('/fake-path/', post_data)
-        request.user = self.marshal_user
-        setattr(request, '_messages', CookieStorage(request))
-        response = add_authorization(request, person_id=self.south_person.user_id)
-        self.assertTrue(response)
-        message_list = [msg.message for msg in messages.get_messages(request)]
-        self.assertIn('Authorization for Weapon & Shield requires concurrence from another authorized fighter.', message_list)
-        self.assertTrue(
-            Authorization.objects.filter(person=self.south_person, style=self.style_shield_armored).exists())
-
-
-
-class MyAccountViewTest(TestCase):
-    """
-    Test the My Account page
-    - Can see self
-    - Can't see others
-    - Can see children
-    - auth officer can see all
-    - Can update user information
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
-        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
-        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.discipline_auth = Discipline.objects.create(name='Authorization Officer')
-
-        cls.marshal_user = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.marshal_person = Person.objects.create(user=cls.marshal_user, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_gd,
-                                                   is_minor=False)
-
-        cls.south_user = User.objects.create_user(username='southernduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907108',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.south_person = Person.objects.create(user=cls.south_user, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_gd, is_minor=False)
-
-        cls.north_user = User.objects.create_user(username='northernduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907106',
-                                                  membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=15))
-        cls.north_person = Person.objects.create(user=cls.north_user, sca_name='Francis du Pont',
-                                                 branch=cls.branch_gd, is_minor=True, parent=cls.south_person)
-
-        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.branch_an_tir, person=cls.marshal_person,
-                                                               discipline=cls.discipline_auth,
-                                                               start_date=date.today() - relativedelta(years=1),
-                                                               end_date=date.today() + relativedelta(years=1))
-
-        cls.branch_auth_officer_marshal = BranchMarshal.objects.create(person=cls.marshal_person, branch=cls.branch_an_tir,
-                                                                   start_date=date.today() - relativedelta(years=1),
-                                                                   end_date=date.today() + relativedelta(years=1))
-
-
-    def test_view_my_account(self):
-        # NEGATIVE: Anonymous can't see
-        response = self.client.get(reverse('user_account', args=[self.south_user.id]))
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': unique_user.id}))
 
-        # POSITIVE: Can see self
-        self.client.login(username='southernduane@hotmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('user_account', args=[self.south_user.id]))
+    def test_duplicate_name_renders_match_table_for_anonymous_user(self):
+        self.make_person('dup_index_1', 'Duplicate Fighter')
+        self.make_person('dup_index_2', 'Duplicate Fighter')
+
+        response = self.client.get(reverse('index'), {'sca_name': 'Duplicate Fighter'})
+
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/user_account.html')
+        self.assertTemplateUsed(response, 'authorizations/index.html')
+        self.assertEqual(response.context['name_matches'].count(), 2)
 
-        # NEGATIVE: Can't see others
-        self.client.login(username='southernduane@hotmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('user_account', args=[self.marshal_user.id]))
-        self.assertEqual(response.status_code, 403)
+    def test_duplicate_name_renders_match_table_for_authenticated_user(self):
+        viewer_user, _ = self.make_person('index_viewer', 'Index Viewer')
+        self.make_person('dup_index_auth_1', 'Duplicate Auth Fighter')
+        self.make_person('dup_index_auth_2', 'Duplicate Auth Fighter')
 
-        # POSITIVE: Can see children
-        self.client.login(username='southernduane@hotmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('user_account', args=[self.north_user.id]))
+        self.client.login(username=viewer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'), {'sca_name': 'Duplicate Auth Fighter'})
+
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/user_account.html')
+        self.assertTemplateUsed(response, 'authorizations/index.html')
+        self.assertEqual(response.context['name_matches'].count(), 2)
 
-        # POSITIVE: Auth Officer can see all
-        self.client.login(username='kristinadavis@gmail.com', password='eGqNMC2D')
-        response = self.client.get(reverse('user_account', args=[self.south_user.id]))
+
+class SearchViewTests(ViewTestBase):
+    def test_goal_search_renders_search_form(self):
+        response = self.client.get(reverse('search'), {'goal': 'search'})
+
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, 'authorizations/user_account.html')
+        self.assertTemplateUsed(response, 'authorizations/search_form.html')
+
+    def test_membership_filter_in_table_view(self):
+        _, fighter_a = self.make_person('search_table_a', 'Search Table A', membership='1111111111')
+        _, fighter_b = self.make_person('search_table_b', 'Search Table B', membership='2222222222')
+        auth_a = self.grant_authorization(fighter_a, self.style_weapon_armored, status=self.status_active)
+        self.grant_authorization(fighter_b, self.style_weapon_armored, status=self.status_active)
+
+        response = self.client.get(reverse('search'), {'membership': '1111111111'})
+
+        self.assertEqual(response.status_code, 200)
+        page_ids = [auth.id for auth in response.context['page_obj'].object_list]
+        self.assertEqual(page_ids, [auth_a.id])
+
+    def test_membership_filter_in_card_view(self):
+        _, fighter_a = self.make_person('search_card_a', 'Search Card A', membership='3333333333')
+        _, fighter_b = self.make_person('search_card_b', 'Search Card B', membership='4444444444')
+        self.grant_authorization(fighter_a, self.style_weapon_armored, status=self.status_active)
+        self.grant_authorization(fighter_b, self.style_weapon_armored, status=self.status_active)
+
+        response = self.client.get(reverse('search'), {'membership': '3333333333', 'view': 'card'})
+
+        self.assertEqual(response.status_code, 200)
+        people = list(response.context['page_obj'].object_list)
+        self.assertEqual(len(people), 1)
+        self.assertEqual(people[0].sca_name, 'Search Card A')
+        self.assertTrue(hasattr(people[0], 'filtered_authorizations'))
+        self.assertEqual(len(people[0].filtered_authorizations), 1)
+
+    def test_start_date_filter_uses_effective_expiration_for_youth_marshal(self):
+        _, marshal_person = self.make_person('search_date_marshal', 'Search Date Marshal')
+        _, youth_person = self.make_person(
+            'search_date_youth',
+            'Search Date Youth',
+            background_check_expiration=date.today() + timedelta(days=15),
+            membership_expiration=date.today() + relativedelta(years=2),
+        )
+        _, normal_person = self.make_person('search_date_normal', 'Search Date Normal')
+
+        youth_auth = self.grant_authorization(
+            youth_person,
+            self.style_sm_youth_armored,
+            status=self.status_active,
+            expiration=date.today() + relativedelta(years=2),
+            marshal=marshal_person,
+        )
+        normal_auth = self.grant_authorization(
+            normal_person,
+            self.style_weapon_armored,
+            status=self.status_active,
+            expiration=date.today() + timedelta(days=120),
+            marshal=marshal_person,
+        )
+
+        response = self.client.get(
+            reverse('search'),
+            {'start_date': (date.today() + timedelta(days=60)).isoformat()},
+        )
+
+        page_ids = [auth.id for auth in response.context['page_obj'].object_list]
+        self.assertIn(normal_auth.id, page_ids)
+        self.assertNotIn(youth_auth.id, page_ids)
+
+    def test_sort_expiration_uses_effective_expiration_annotation(self):
+        _, marshal_person = self.make_person('search_sort_marshal', 'Search Sort Marshal')
+        _, youth_person = self.make_person(
+            'search_sort_youth',
+            'Search Sort Youth',
+            background_check_expiration=date.today() + timedelta(days=10),
+            membership_expiration=date.today() + relativedelta(years=2),
+        )
+        _, normal_person = self.make_person('search_sort_normal', 'Search Sort Normal')
+
+        youth_auth = self.grant_authorization(
+            youth_person,
+            self.style_sm_youth_armored,
+            status=self.status_active,
+            expiration=date.today() + relativedelta(years=2),
+            marshal=marshal_person,
+        )
+        self.grant_authorization(
+            normal_person,
+            self.style_weapon_armored,
+            status=self.status_active,
+            expiration=date.today() + timedelta(days=20),
+            marshal=marshal_person,
+        )
+
+        response = self.client.get(reverse('search'), {'sort': 'expiration'})
+
+        first_auth = response.context['page_obj'].object_list[0]
+        self.assertEqual(first_auth.id, youth_auth.id)
+
+    def test_invalid_start_date_reports_error_message(self):
+        response = self.client.get(reverse('search'), {'start_date': 'not-a-date'}, follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        messages = self.messages_for(response)
+        self.assertIn('Start date must be in YYYY-MM-DD format.', messages)
+
+    def test_search_form_membership_input_attributes(self):
+        response = self.client.get(reverse('search'), {'goal': 'search'})
+        content = response.content.decode('utf-8')
+
+        self.assertIn('id="membership"', content)
+        self.assertIn('type="text"', content)
+        self.assertIn('maxlength="20"', content)
+
+class RegisterViewTests(ViewTestBase):
+    def test_register_get_renders_template(self):
+        response = self.client.get(reverse('register'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'authorizations/register.html')
+
+    @patch('authorizations.views.send_mail')
+    def test_register_post_creates_user_and_person(self, mock_send_mail):
+        payload = self.registration_payload(username='register_ok', email='register_ok@example.com')
+
+        response = self.client.post(reverse('register'), payload)
+
+        created_user = User.objects.get(username='register_ok')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': created_user.id}))
+        self.assertFalse(created_user.is_active)
+        self.assertTrue(Person.objects.filter(user=created_user).exists())
+        mock_send_mail.assert_called_once()
+
+    def test_register_minor_requires_birthday(self):
+        payload = self.registration_payload(
+            username='register_minor',
+            email='register_minor@example.com',
+            is_minor='on',
+            birthday='',
+            membership='',
+            membership_expiration='',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'A birthday must be provided for minors.')
+        self.assertFalse(User.objects.filter(username='register_minor').exists())
+
+    def test_register_requires_membership_and_expiration_together(self):
+        payload = self.registration_payload(
+            username='register_membership_pair',
+            email='register_membership_pair@example.com',
+            membership='1234567',
+            membership_expiration='',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Must have both a membership number and expiration or neither.')
+
+    def test_register_rejects_duplicate_membership(self):
+        self.make_person('register_existing_member', 'Register Existing Member', membership='9999999999')
+        payload = self.registration_payload(
+            username='register_duplicate_member',
+            email='register_duplicate_member@example.com',
+            membership='9999999999',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'A user with this membership number already exists.')
+
+    @override_settings(AUTHZ_TEST_FEATURES=True)
+    def test_background_check_field_renders_when_feature_enabled(self):
+        response = self.client.get(reverse('register'))
+
+        self.assertContains(response, 'name="background_check_expiration"')
+
+    @override_settings(AUTHZ_TEST_FEATURES=False)
+    def test_background_check_field_hidden_when_feature_disabled(self):
+        response = self.client.get(reverse('register'))
+
+        self.assertNotContains(response, 'name="background_check_expiration"')
 
 
-class BranchMarshalViewTest(TestCase):
-    """
-    Test the Appoint Branch Marshal function
-    - Can add a branch marshal
-    - Cannot add a junior marshal as a regional marshal
-    - Can add a junior marshal as a local branch marshal
-    - Cannot add someone who doesn't have a marshal in the same discipline
-    - Cannot add someone who is already a branch marshal
-    """
-
+class UserAccountViewTests(ViewTestBase):
     @classmethod
     def setUpTestData(cls):
-        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_sm = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
-        cls.branch_tr = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
-        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.branch_sm)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.discipline_auth = Discipline.objects.create(name='Authorization Officer')
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
+        super().setUpTestData()
+        cls.owner_user = User.objects.create_user(
+            username='account_owner',
+            password='StrongPass!123',
+            email='owner@example.com',
+            first_name='Owner',
+            last_name='User',
+            membership='5555555555',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.owner_person = Person.objects.create(
+            user=cls.owner_user,
+            sca_name='Owner of Account',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
 
-        cls.marshal_user = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.marshal_person = Person.objects.create(user=cls.marshal_user, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_gd,
-                                                   is_minor=False)
+        cls.child_user = User.objects.create_user(
+            username='account_child',
+            password='StrongPass!123',
+            email='child@example.com',
+            first_name='Child',
+            last_name='User',
+            membership='6666666666',
+            membership_expiration=date.today() + relativedelta(years=1),
+            birthday=date.today() - relativedelta(years=15),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.child_person = Person.objects.create(
+            user=cls.child_user,
+            sca_name='Child of Owner',
+            branch=cls.branch_gd,
+            is_minor=True,
+            parent=cls.owner_person,
+        )
 
-        cls.south_user = User.objects.create_user(username='southernduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907108',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.south_person = Person.objects.create(user=cls.south_user, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_gd, is_minor=False)
+        cls.other_user = User.objects.create_user(
+            username='account_other',
+            password='StrongPass!123',
+            email='other@example.com',
+            first_name='Other',
+            last_name='User',
+            membership='7777777777',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.other_person = Person.objects.create(
+            user=cls.other_user,
+            sca_name='Other User',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
 
-        cls.north_user = User.objects.create_user(username='northernduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907106',
-                                                  membership_expiration=date.today() + relativedelta(years=1),
-                                                  birthday=date.today() - relativedelta(years=15))
-        cls.north_person = Person.objects.create(user=cls.north_user, sca_name='Francis du Pont',
-                                                 branch=cls.branch_gd, is_minor=True, parent=cls.south_person)
+        cls.ao_user = User.objects.create_user(
+            username='account_ao',
+            password='StrongPass!123',
+            email='ao@example.com',
+            first_name='Auth',
+            last_name='Officer',
+            membership='8888888888',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.ao_person = Person.objects.create(
+            user=cls.ao_user,
+            sca_name='Authorization Officer',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.ao_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_auth_officer,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
 
-        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.branch_an_tir, person=cls.marshal_person,
-                                                               discipline=cls.discipline_auth,
-                                                               start_date=date.today() - relativedelta(years=1),
-                                                               end_date=date.today() + relativedelta(years=1))
+    def test_owner_can_view_own_account(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
 
-        cls.branch_auth_officer_marshal = BranchMarshal.objects.create(person=cls.marshal_person,
-                                                                       branch=cls.branch_an_tir,
-                                                                       start_date=date.today() - relativedelta(years=1),
-                                                                       end_date=date.today() + relativedelta(years=1))
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
 
-    def test_view_branch_marshal(self):
-        factory = RequestFactory()
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'authorizations/user_account.html')
 
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_armored,
-                                                                     status=self.status_active,
-                                                                     expiration=date.today() + relativedelta(years=1),
-                                                                     marshal=self.marshal_person)
+    def test_parent_can_view_minor_child_account(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
 
-        auth_sm_armored_north = Authorization.objects.create(person=self.north_person, style=self.style_sm_armored,
-                                                               status=self.status_active,
-                                                               expiration=date.today() + relativedelta(years=1),
-                                                               marshal=self.marshal_person)
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.child_user.id}))
 
-        branch_summits_armored_marshal = BranchMarshal.objects.create(person=self.south_person,
-                                                                       branch=self.branch_summits,
-                                                                       discipline=self.discipline_armored,
-                                                                       start_date=date.today() - relativedelta(years=1),
-                                                                       end_date=date.today() + relativedelta(years=1))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'authorizations/user_account.html')
 
-        # NEGATIVE: Non-marshal auth officer cannot view
-        # POST data:
-        post_data = {
-            'person': self.north_person.sca_name,
-            'branch': self.branch_gd.name,
-            'discipline': self.discipline_armored.name,
-            'start_date': date.today(),
-        }
-        request = factory.post('/fake-path/', post_data)
-        request.user = self.south_user
-        result, message = appoint_branch_marshal(request)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Only the authorization officer can appoint branch marshals.')
-        self.assertFalse(BranchMarshal.objects.filter(person=self.north_person, branch=self.branch_gd).exists())
+    def test_non_owner_non_parent_non_ao_is_forbidden(self):
+        self.client.login(username=self.other_user.username, password='StrongPass!123')
 
-        # POSITIVE: Authorization officer can view and add a branch marshal
-        request.user = self.marshal_user
-        result, message = appoint_branch_marshal(request)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Branch marshal appointed.')
-        self.assertTrue(BranchMarshal.objects.filter(person=self.north_person, branch=self.branch_gd).exists())
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
 
-    def test_junior_branch_marshal(self):
-        factory = RequestFactory()
+        self.assertEqual(response.status_code, 403)
 
-        style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_armored)
+    def test_authorization_officer_can_view_any_account(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
 
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=style_jm_armored,
-                                                                     status=self.status_active,
-                                                                     expiration=date.today() + relativedelta(years=1),
-                                                                     marshal=self.marshal_person)
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'authorizations/user_account.html')
+
+    def test_non_ao_cannot_modify_background_check_expiration(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            background_check_expiration=(date.today() + relativedelta(years=2)).isoformat(),
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(self.owner_user.background_check_expiration)
+
+    def test_ao_can_modify_background_check_expiration(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        bg_date = date.today() + relativedelta(years=2)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            background_check_expiration=bg_date.isoformat(),
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.background_check_expiration, bg_date)
+
+    @override_settings(AUTHZ_TEST_FEATURES=False)
+    def test_self_set_regional_is_blocked_when_testing_disabled(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'self_set_regional',
+                'branch_id': str(self.region_summits.id),
+                'discipline_id': str(self.discipline_armored.id),
+            },
+            follow=True,
+        )
+
+        messages = self.messages_for(response)
+        self.assertIn('Testing is not enabled; cannot set self as marshal officer.', messages)
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.owner_person,
+                branch=self.region_summits,
+                discipline=self.discipline_armored,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_self_set_regional_requires_current_membership(self):
+        self.owner_user.membership = None
+        self.owner_user.membership_expiration = None
+        self.owner_user.save()
+        self.grant_authorization(self.owner_person, self.style_sm_armored, status=self.status_active)
+
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'self_set_regional',
+                'branch_id': str(self.region_summits.id),
+                'discipline_id': str(self.discipline_armored.id),
+            },
+            follow=True,
+        )
+
+        messages = self.messages_for(response)
+        self.assertIn('A current SCA membership (with valid expiration) is required.', messages)
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.owner_person,
+                branch=self.region_summits,
+                discipline=self.discipline_armored,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_self_set_regional_local_branch_allows_junior_or_senior(self):
+        self.grant_authorization(self.owner_person, self.style_jm_armored, status=self.status_active)
+
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'self_set_regional',
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=self.owner_person,
+                branch=self.branch_gd,
+                discipline=self.discipline_armored,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_self_set_regional_region_branch_requires_senior(self):
+        self.grant_authorization(self.owner_person, self.style_jm_armored, status=self.status_active)
+
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'self_set_regional',
+                'branch_id': str(self.region_summits.id),
+                'discipline_id': str(self.discipline_armored.id),
+            },
+            follow=True,
+        )
+
+        messages = self.messages_for(response)
+        self.assertIn('You must hold an active Senior Marshal in Armored.', messages)
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.owner_person,
+                branch=self.region_summits,
+                discipline=self.discipline_armored,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+class WaiverWorkflowTests(ViewTestBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.owner_user = User.objects.create_user(
+            username='waiver_owner',
+            password='StrongPass!123',
+            email='waiver_owner@example.com',
+            first_name='Waiver',
+            last_name='Owner',
+            membership=None,
+            membership_expiration=None,
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.owner_person = Person.objects.create(
+            user=cls.owner_user,
+            sca_name='Waiver Owner',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+
+        cls.other_user = User.objects.create_user(
+            username='waiver_other',
+            password='StrongPass!123',
+            email='waiver_other@example.com',
+            first_name='Waiver',
+            last_name='Other',
+            membership=None,
+            membership_expiration=None,
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.other_person = Person.objects.create(
+            user=cls.other_user,
+            sca_name='Waiver Other',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+
+        cls.ao_user = User.objects.create_user(
+            username='waiver_ao',
+            password='StrongPass!123',
+            email='waiver_ao@example.com',
+            first_name='Waiver',
+            last_name='AO',
+            membership='9090909090',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.ao_person = Person.objects.create(
+            user=cls.ao_user,
+            sca_name='Waiver AO',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.ao_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_auth_officer,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+
+    def test_owner_can_view_waiver_page(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'authorizations/waiver.html')
+
+    def test_authorization_officer_cannot_view_other_users_waiver_page(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+
+        response = self.client.get(
+            reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        messages = self.messages_for(response)
+        self.assertIn('You can only sign a waiver for your own account.', messages)
+
+    def test_non_owner_non_ao_cannot_sign_waiver_for_other_user(self):
+        self.client.login(username=self.other_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        messages = self.messages_for(response)
+        self.assertIn('You can only sign a waiver for your own account.', messages)
+
+    def test_ao_signing_pending_waiver_activates_authorizations_and_sets_latest_expiration(self):
+        exp_one = date.today() + timedelta(days=30)
+        exp_two = date.today() + timedelta(days=90)
+        auth_one = Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_weapon_armored,
+            status=self.status_pending_waiver,
+            expiration=exp_one,
+            marshal=self.ao_person,
+        )
+        auth_two = Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_single_rapier,
+            status=self.status_pending_waiver,
+            expiration=exp_two,
+            marshal=self.ao_person,
+        )
+
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        response = self.client.post(reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}), follow=True)
+
+        self.owner_user.refresh_from_db()
+        auth_one.refresh_from_db()
+        auth_two.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(auth_one.status, self.status_active)
+        self.assertEqual(auth_two.status, self.status_active)
+        self.assertEqual(self.owner_user.waiver_expiration, exp_two)
+
+    def test_owner_signing_without_pending_sets_one_year_waiver(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.post(reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}), follow=True)
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.waiver_expiration, date.today() + relativedelta(years=1))
 
 
-        # NEGATIVE: Junior marshal cannot be a regional marshal
-        post_data = {
-            'person': self.south_person.sca_name,
-            'branch': self.branch_summits.name,
-            'discipline': self.discipline_armored.name,
-            'start_date': date.today(),
-        }
-        request = factory.post('/fake-path/', post_data)
-        request.user = self.marshal_user
-        result, message = appoint_branch_marshal(request)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be a senior marshal to be a regional marshal.')
-        self.assertFalse(BranchMarshal.objects.filter(person=self.south_person, branch=self.branch_summits).exists())
+class SanctionsWorkflowTests(ViewTestBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.target_user = User.objects.create_user(
+            username='sanction_target',
+            password='StrongPass!123',
+            email='sanction_target@example.com',
+            first_name='Sanction',
+            last_name='Target',
+            membership='5151515151',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.target_person = Person.objects.create(
+            user=cls.target_user,
+            sca_name='Sanction Target',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
 
-        # POSITIVE: Junior marshal can be a local branch marshal
-        post_data = {
-            'person': self.south_person.sca_name,
-            'branch': self.branch_gd.name,
-            'discipline': self.discipline_armored.name,
-            'start_date': date.today(),
-        }
-        request = factory.post('/fake-path/', post_data)
-        request.user = self.marshal_user
-        result, message = appoint_branch_marshal(request)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Branch marshal appointed.')
-        self.assertTrue(BranchMarshal.objects.filter(person=self.south_person, branch=self.branch_gd).exists())
+        cls.normal_user = User.objects.create_user(
+            username='sanction_normal',
+            password='StrongPass!123',
+            email='sanction_normal@example.com',
+            first_name='Normal',
+            last_name='User',
+            membership='5252525252',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.normal_person = Person.objects.create(
+            user=cls.normal_user,
+            sca_name='Sanction Normal',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
 
-    def test_right_discipline_branch_marshal(self):
-        factory = RequestFactory()
+        cls.ao_user = User.objects.create_user(
+            username='sanction_ao',
+            password='StrongPass!123',
+            email='sanction_ao@example.com',
+            first_name='AO',
+            last_name='User',
+            membership='5353535353',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.ao_person = Person.objects.create(
+            user=cls.ao_user,
+            sca_name='Sanction AO',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.ao_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_auth_officer,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
 
-        discipline_rapier = Discipline.objects.create(name='Rapier')
-        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_rapier)
+    def test_issue_sanctions_requires_authorization_officer_or_earl_marshal(self):
+        self.client.login(username=self.normal_user.username, password='StrongPass!123')
 
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=style_sm_rapier,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(years=1),
-                                                             marshal=self.marshal_person)
+        response = self.client.get(reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}))
 
-        # NEGATIVE: Can't add someone who doesn't have a marshal in the same discipline
-        post_data = {
-            'person': self.south_person.sca_name,
-            'branch': self.branch_summits.name,
-            'discipline': self.discipline_armored,
-            'start_date': date.today(),
-        }
-        request = factory.post('/fake-path/', post_data)
-        request.user = self.marshal_user
-        result, message = appoint_branch_marshal(request)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be a marshal in the discipline to be a branch marshal.')
-        self.assertFalse(BranchMarshal.objects.filter(person=self.south_person, branch=self.branch_summits).exists())
+        self.assertEqual(response.status_code, 403)
 
-    def test_no_double_branch_marshal(self):
-        factory = RequestFactory()
+    def test_issue_style_sanction_creates_revoked_authorization_and_note(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
 
-        auth_sm_armored_south = Authorization.objects.create(person=self.south_person, style=self.style_sm_armored,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(years=1),
-                                                             marshal=self.marshal_person)
+        response = self.client.post(
+            reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}),
+            {
+                'sanction_type': 'style',
+                'style_id': str(self.style_weapon_armored.id),
+                'action_note': 'Issued at kingdom event',
+            },
+            follow=True,
+        )
 
-        branch_summits_armored_marshal = BranchMarshal.objects.create(person=self.south_person,
-                                                                       branch=self.branch_summits,
-                                                                       discipline=self.discipline_armored,
-                                                                       start_date=date.today() - relativedelta(years=1),
-                                                                       end_date=date.today() + relativedelta(years=1))
+        self.assertEqual(response.status_code, 200)
+        auth = Authorization.objects.get(person=self.target_person, style=self.style_weapon_armored)
+        self.assertEqual(auth.status, self.status_revoked)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=auth,
+                action='sanction_issued',
+                created_by=self.ao_user,
+            ).exists()
+        )
 
-        # NEGATIVE: Can't add someone who doesn't have a marshal in the same discipline
-        post_data = {
-            'person': self.south_person.sca_name,
-            'branch': self.branch_gd.name,
-            'discipline': self.discipline_armored,
-            'start_date': date.today(),
-        }
-        request = factory.post('/fake-path/', post_data)
-        request.user = self.marshal_user
-        result, message = appoint_branch_marshal(request)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Can only serve as one branch marshal position at a time.')
-        self.assertFalse(BranchMarshal.objects.filter(person=self.south_person, branch=self.branch_gd).exists())
+    def test_manage_sanctions_lift_two_step_flow_requires_note(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        revoked_auth = Authorization.objects.create(
+            person=self.target_person,
+            style=self.style_weapon_armored,
+            status=self.status_revoked,
+            expiration=date.today(),
+            marshal=self.ao_person,
+        )
+
+        first_response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'lift_sanction',
+                'authorization_id': str(revoked_auth.id),
+            },
+            follow=True,
+        )
+
+        self.assertIn('pending_sanction_lift', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize lifting the sanction.',
+            self.messages_for(first_response),
+        )
+
+        second_response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'lift_sanction',
+                'authorization_id': str(revoked_auth.id),
+                'action_note': 'Sanction lifted after review',
+            },
+            follow=True,
+        )
+
+        revoked_auth.refresh_from_db()
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(revoked_auth.status, self.status_active)
+        self.assertNotIn('pending_sanction_lift', self.client.session)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=revoked_auth,
+                action='sanction_lifted',
+                created_by=self.ao_user,
+            ).exists()
+        )
+
+
+class ApiStylesViewTests(ViewTestBase):
+    def test_get_weapon_styles_returns_only_matching_discipline(self):
+        extra_discipline = Discipline.objects.create(name='Extra Discipline')
+        extra_style = WeaponStyle.objects.create(name='Extra Style', discipline=extra_discipline)
+
+        response = self.client.get(reverse('get_weapon_styles', kwargs={'discipline_id': self.discipline_armored.id}))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        style_names = {item['name'] for item in payload['styles']}
+        self.assertIn(self.style_weapon_armored.name, style_names)
+        self.assertNotIn(extra_style.name, style_names)
+
+    def test_get_weapon_styles_with_invalid_discipline_returns_empty_list(self):
+        response = self.client.get(reverse('get_weapon_styles', kwargs={'discipline_id': 999999}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'styles': []})

@@ -1,1539 +1,732 @@
 from datetime import date, timedelta
+
 from dateutil.relativedelta import relativedelta
-from django.test import TestCase, RequestFactory
-from win32com.client.gencache import clsidToTypelib
+from django.test import RequestFactory, TestCase
 
-from authorizations.models import User, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, Authorization, BranchMarshal
-from authorizations.permissions import authorization_follows_rules, approve_authorization, calculate_age
-from authorizations.views import branch_marshals
+from authorizations.models import (
+    Authorization,
+    AuthorizationNote,
+    AuthorizationStatus,
+    Branch,
+    BranchMarshal,
+    Discipline,
+    Person,
+    User,
+    WeaponStyle,
+)
+from authorizations.permissions import (
+    appoint_branch_marshal,
+    approve_authorization,
+    authorization_follows_rules,
+    authorization_requires_concurrence,
+    calculate_authorization_expiration,
+    is_kingdom_authorization_officer,
+    is_kingdom_marshal,
+    is_regional_marshal,
+    is_senior_marshal,
+    membership_is_current,
+)
 
-"""
-Tests:
-authorization_follows_rules
-	- Rule 1: A senior marshal in a discipline can authorize any person in a weapon style for that discipline
-	- Rule 2: A junior marshal must be at least 16 years old
-        - Rule 2a: Archery and Thrown junior marshals must be adults
-    - Rule 3: A senior marshal must be an adult
-    - Rule 4: A Rapier, Cut & Thrust or Youth Rapier fighter must have single sword as their first weapon authorization
-    - Rule 5: Rapier fighters must be at lest 14 years old
-    - Rule 6: Armored fighters, Cut & Thrust fighters, and Senior Equestrian Ground Crew must be at least 16 years old
-    - Rule 7: Senior Equestrian Ground Crew must be at least 16 years old
-    - Rule 8: Youth combatants must be at least 6 years old and minors.
-        - Rule 8a: The exception is that marshals can be adults.
-    - Rule 9: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew.
-    - Rule 10: For equestrian, a person must be an adult to participate in Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting.
-    - Rule 11: Youth rapier marshals must already be Senior Rapier marshals
-    - Rule 12: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
-    - Rule 13: An Equestrian Senior marshal must already have Junior Marshal and Mounted Gaming Authorizations.
-    - Rule 14: In order to authorize someone in Mounted Archery, Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting, the Senior Marshal must have the same Authorizations.
-    - Rule 15: Junior and Senior marshals must be current members.
-    - Rule 16: You cannot renew a revoked authorization.
-    - Rule 17: Cannot duplicate/renew a pending authorization.
-    - Rule 18: If someone has an active senior marshal, they cannot be made a junior marshal.
-		- Rule 18a: If they have a pending senior marshal they cannot get a new junior marshal. They can renew an existing junior marshal.
-    - Rule 19: Cannot add a new senior marshal if there is a pending junior marshal.
-    - Rule 20: Cannot make an authorization for yourself.
-    
-approve_authorization
-    - Rule 1: Kingdom authorization officer can approve any marshal by themselves.
-        - Rule 1b: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-    - Rule 2: must be a senior marshal in the discipline to approve.
-    - Rule 3: Cannot concur with an authorization you proposed.
-    - Rule 4: If a pending authorization for Senior marshal is approved, it then goes to the region for approval.
-        - Rule 4a: If a junior marshal is approved it becomes active.
-        - Rule 4b: If a junior marshal for Youth combat is approved it goes to the Kingdom authorization officer for confirmation.
-    - Rule 5: If the authorization is out for regional approval, you need to be a regional marshal to approve it.
-        - Rule 5a: If the region approves a Youth Combat Senior marshal, it goes to the Kingdom authorization officer for confirmation.
-        - Rule 5b: If the regional marshal approves a non-youth senior marshal, it becomes active.
-        - Rule 5c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-"""
-# Create your tests here.
-class Rule1_20Test(TestCase):
-    """
-    Rule 1: A senior marshal in a discipline can authorize any person in a weapon style for that discipline.
-    Rule 20: Cannot make an authorization for yourself.
-    """
 
+class AuthorizationTestBase(TestCase):
     @classmethod
     def setUpTestData(cls):
-        # Setting up test data like this is going to be necessary as adding the database is an expensive operation.
-        cls.user_marshal = User.objects.create_user(username='samanueke@hotmail.com', password='eGqNMC2D', membership='100',
-                                          membership_expiration=date.today() + relativedelta(years=1))
-        cls.user_adult = User.objects.create_user(username='Frank_Smith@samplemail.com', password='eGqNMC2D',
-                                          membership='4687335',
-                                          membership_expiration=date.today() + relativedelta(years=1))
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.discipline_rapier = Discipline.objects.create(name='Rapier')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_jm_rapier = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_rapier)
-        cls.style_two_handed_armored = WeaponStyle.objects.create(name='Two-Handed', discipline=cls.discipline_armored)
-        cls.style_single_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=cls.discipline_rapier)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Fargo the Bold', branch=cls.branch_tp, is_minor=False)
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Cedric the Bold', branch=cls.branch_tp, is_minor=False)
-        cls.auth_1 = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_armored, status=cls.status_active,
-                                          expiration=date.today() + relativedelta(years=1))
-        cls.auth_2 = Authorization.objects.create(person=cls.person_marshal, style=cls.style_jm_rapier, status=cls.status_active,
-                                          expiration=date.today() + relativedelta(years=1))
-
-
-    def test_senior_marshal_can_authorize(self):
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult, self.style_two_handed_armored.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-
-    def test_senior_marshal_cannot_authorize_different_discipline(self):
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult, self.style_single_rapier.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must have a current Rapier senior marshal.')
-
-    def test_senior_marshal_cannot_authorize_self(self):
-        result, message = authorization_follows_rules(self.user_marshal, self.person_marshal, self.style_two_handed_armored.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Cannot make an authorization for yourself.')
-
-    def test_can_give_senior_if_have_junior(self):
-        style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_armored)
-        Authorization.objects.create(person=self.person_adult, style=style_jm_armored, status=self.status_active,
-                                          expiration=date.today() + relativedelta(years=1))
-
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult, self.style_sm_armored.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-
-class AgeTest(TestCase):
-    """Test age limitations on authorizations.
-    This covers rules 2, 3, 5, 6, 7, 8, 9, and 10
-    """
-    @classmethod
-    def setUpTestData(cls):
-        # Shared Setup
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
+        # Statuses
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                membership='31913662',
-                                                membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                               branch=cls.branch_tp,
-                                               is_minor=False)
-
-    def test_rule_2(self):
-        """Rule 2: A junior marshal must be at least 16 years old"""
-        # Data for the test
-        discipline_armored = Discipline.objects.create(name='Armored')
-        style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_armored)
-        style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=discipline_armored)
-        auth_sm_armor_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_armored,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                              membership='68907107',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        user_14yo = User.objects.create_user(username='edwin97@yahoo.com', password='eGqNMC2D', membership='51566283',
-                                             membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=14) - timedelta(days=10))
-
-        person_adult = Person.objects.create(user=user_adult, sca_name='Ysabeau de la Mar', branch=self.branch_tp,
-                                             is_minor=False)
-        person_14yo = Person.objects.create(user=user_14yo, sca_name='Jocelyn the Bright', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_adult as a junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, person_adult, 2)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_14yo as a junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, person_14yo, 2)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be at least 16 years old to become a junior marshal.')
-
-    def test_rule_2a(self):
-        """Rule 2a: Archery and Thrown junior marshals must be adults"""
-        # Data for the test
-        discipline_archery = Discipline.objects.create(name='Archery')
-        style_jm_archery = WeaponStyle.objects.create(name='Junior Marshal', discipline=discipline_archery)
-        style_sm_archery = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_archery)
-        auth_jm_armor_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_archery,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                              membership='68907107',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        user_17yo = User.objects.create_user(username='leonardgarcia@galloway.com', password='eGqNMC2D',
-                                             membership='17111275', membership_expiration=date.today() + relativedelta(years=1),
-                                             birthday=date.today() - relativedelta(years=17) - timedelta(days=10))
-
-        person_adult = Person.objects.create(user=user_adult, sca_name='Ysabeau de la Mar', branch=self.branch_tp,
-                                             is_minor=False)
-        person_17yo = Person.objects.create(user=user_17yo, sca_name='Torvald Shieldbreaker', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_adult as an archery junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, person_adult, 1)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_17yo as an archery junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, person_17yo, 1)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be an adult to become an archery or thrown weapon junior marshal.')
-
-    def test_rule_3(self):
-        """Rule 3: A senior marshal must be an adult"""
-        # Data for the test
-        discipline_armored = Discipline.objects.create(name='Armored')
-        style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_armored)
-        auth_sm_armor_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_armored,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(years=1))
-
-        user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                              membership='68907107',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        user_17yo = User.objects.create_user(username='leonardgarcia@galloway.com', password='eGqNMC2D',
-                                             membership='17111275', membership_expiration=date.today() + relativedelta(years=1),
-                                             birthday=date.today() - relativedelta(years=17) - timedelta(days=10))
-
-        person_adult = Person.objects.create(user=user_adult, sca_name='Ysabeau de la Mar', branch=self.branch_tp,
-                                             is_minor=False)
-        person_17yo = Person.objects.create(user=user_17yo, sca_name='Torvald Shieldbreaker', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_adult as a senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, person_adult, 1)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_17yo as a senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, person_17yo, 1)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be an adult to become a senior marshal.')
-
-    def test_rule_5(self):
-        """Rule 5: Rapier fighters must be at lest 14 years old"""
-        # Data for the test
-        discipline_rapier = Discipline.objects.create(name='Rapier')
-
-        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_rapier)
-        style_single_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=discipline_rapier)
-
-        user_12yo = User.objects.create_user(username='charleschase@parker.com', password='eGqNMC2D',
-                                             membership='79100861',
-                                             membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=12) - timedelta(days=10))
-
-        user_14yo = User.objects.create_user(username='edwin97@yahoo.com', password='eGqNMC2D', membership='51566283',
-                                             membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=14) - timedelta(days=10))
-
-        person_12yo = Person.objects.create(user=user_12yo, sca_name='Avelina Greencloak', branch=self.branch_tp,
-                                            is_minor=True)
-        person_14yo = Person.objects.create(user=user_14yo, sca_name='Jocelyn the Bright', branch=self.branch_tp,
-                                            is_minor=True)
-
-        auth_sm_rapier_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_rapier,
-                                                              status=self.status_active,
-                                                              expiration=date.today() + relativedelta(years=1))
-        # Do the test
-        # POSITIVE: approve person_14yo as a rapier fighter
-        result, message = authorization_follows_rules(self.user_marshal, person_14yo, 2)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_12yo as a rapier fighter
-        result, message = authorization_follows_rules(self.user_marshal, person_12yo, 2)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be at least 14 years old to become a rapier fighter.')
-
-
-    def test_rule_6(self):
-        """Rule 6: Armored and Cut & Thrust fighters must be at least 16 years old"""
-        # Data for the test
-        discipline_armored = Discipline.objects.create(name='Armored')
-        style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_armored)
-        auth_sm_armor_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_armored,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(years=1))
-        style_longsword_armored = WeaponStyle.objects.create(name='Two-Handed',
-                                                             discipline=discipline_armored)
-
-        user_14yo = User.objects.create_user(username='edwin97@yahoo.com', password='eGqNMC2D',
-                                             membership='51566283',
-                                             membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=14) - timedelta(days=10))
-
-        user_17yo = User.objects.create_user(username='leonardgarcia@galloway.com', password='eGqNMC2D',
-                                             membership='17111275', membership_expiration=date.today() + relativedelta(years=1),
-                                             birthday=date.today() - relativedelta(years=17) - timedelta(days=10))
-
-        person_14yo = Person.objects.create(user=user_14yo, sca_name='Jocelyn the Bright', branch=self.branch_tp,
-                                            is_minor=True)
-        person_17yo = Person.objects.create(user=user_17yo, sca_name='Torvald Shieldbreaker', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_17yo as an armored fighter
-        result, message = authorization_follows_rules(self.user_marshal, person_17yo, 2)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_14yo as an armored fighter
-        result, message = authorization_follows_rules(self.user_marshal, person_14yo, 2)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be at least 16 years old to become authorized in Armored combat.')
-
-
-    def test_rule_7(self):
-        """Rule 7: Senior Equestrian Ground Crew must be at least 16 years old"""
-        # Data for the test
-        discipline_equestrian = Discipline.objects.create(name='Equestrian')
-        style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal',
-                                                         discipline=discipline_equestrian)
-        style_snr_ground_equestrian = WeaponStyle.objects.create(name='Senior Ground Crew',
-                                                                 discipline=discipline_equestrian)
-        auth_sm_equestrian_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_equestrian,
-                                                                  status=self.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-
-        user_14yo = User.objects.create_user(username='edwin97@yahoo.com', password='eGqNMC2D', membership='51566283',
-                                             membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=14) - timedelta(days=10))
-        person_14yo = Person.objects.create(user=user_14yo, sca_name='Jocelyn the Bright', branch=self.branch_tp,
-                                            is_minor=True)
-
-        user_17yo = User.objects.create_user(username='leonardgarcia@galloway.com', password='eGqNMC2D',
-                                             membership='17111275', membership_expiration=date.today() + relativedelta(years=1),
-                                             birthday=date.today() - relativedelta(years=17) - timedelta(days=10))
-        person_17yo = Person.objects.create(user=user_17yo, sca_name='Torvald Shieldbreaker', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_17yo as an equestrian ground crew
-        style_id = WeaponStyle.objects.get(name='Senior Ground Crew').id
-        result, message = authorization_follows_rules(self.user_marshal, person_17yo, style_id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_14yo as an equestrian ground crew
-        self.assertEqual(calculate_age(person_14yo.user.birthday), 14)
-        result, message = authorization_follows_rules(self.user_marshal, person_14yo, style_id)
-        # new_authorization = Authorization.objects.get(person=person_14yo)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be at least 16 years old to become authorized as Senior Ground Crew.')
-
-    def test_rule_8(self):
-        """Rule 8: Youth combatants must be at least 6 years old and minors."""
-        # Data for the test
-        discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
-        style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal',
-                                                            discipline=discipline_youth_armored)
-        style_two_handed_youth_armored = WeaponStyle.objects.create(name='Two-Handed',
-                                                            discipline=discipline_youth_armored)
-
-        user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                              membership='68907107',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-
-        auth_sm_youth_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_youth_armored,
-                                                                  status=self.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-
-        user_3yo = User.objects.create_user(username='cwhite@yahoo.com', password='eGqNMC2D', membership='56149296',
-                                            membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=3) - timedelta(days=10))
-
-        user_12yo = User.objects.create_user(username='charleschase@parker.com', password='eGqNMC2D',
-                                             membership='79100861',
-                                             membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=12) - timedelta(days=10))
-
-        person_adult = Person.objects.create(user=user_adult, sca_name='Ysabeau de la Mar', branch=self.branch_tp,
-                                             is_minor=False)
-        person_3yo = Person.objects.create(user=user_3yo, sca_name='Tancred', branch=self.branch_tp, is_minor=True)
-        person_12yo = Person.objects.create(user=user_12yo, sca_name='Avelina Greencloak', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_12yo as a youth armored fighter
-        result, message = authorization_follows_rules(self.user_marshal, person_12yo, style_two_handed_youth_armored.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_3yo as a youth armored fighter
-        result, message = authorization_follows_rules(self.user_marshal, person_3yo, style_two_handed_youth_armored.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be at least 6 years old to become authorized in Youth Armored combat.')
-        # NEGATIVE: do not approve person_adult as a youth armored fighter
-        result, message = authorization_follows_rules(self.user_marshal, person_adult, style_two_handed_youth_armored.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be a minor to become authorized in Youth Armored combat.')
-
-    def test_rule_9(self):
-        """Rule 9: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew."""
-        # Data for the test
-        discipline_equestrian = Discipline.objects.create(name='Equestrian')
-        style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal',
-                                                         discipline=discipline_equestrian)
-        style_riding_equestrian = WeaponStyle.objects.create(name='General Riding',
-                                                             discipline=discipline_equestrian)
-        auth_sm_equestrian_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_equestrian,
-                                                                  status=self.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-
-        user_3yo = User.objects.create_user(username='cwhite@yahoo.com', password='eGqNMC2D', membership='56149296',
-                                            membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=3) - timedelta(days=10))
-
-        user_12yo = User.objects.create_user(username='charleschase@parker.com', password='eGqNMC2D',
-                                             membership='79100861',
-                                             membership_expiration=date.today() + relativedelta(years=1), birthday=date.today() - relativedelta(years=12) - timedelta(days=10))
-
-        person_3yo = Person.objects.create(user=user_3yo, sca_name='Tancred', branch=self.branch_tp, is_minor=True)
-        person_12yo = Person.objects.create(user=user_12yo, sca_name='Avelina Greencloak', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_12yo as an equestrian general rider
-        result, message = authorization_follows_rules(self.user_marshal, person_12yo, 2)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_3yo as an equestrian general rider
-        result, message = authorization_follows_rules(self.user_marshal, person_3yo, 2)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be at least 5 years old to become authorized in General Riding.')
-
-    def test_rule_10(self):
-        """Rule 10: For equestrian, a person must be an adult to participate in Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting."""
-        # Data for the test
-        discipline_equestrian = Discipline.objects.create(name='Equestrian')
-        style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal',
-                                                         discipline=discipline_equestrian)
-        style_crest_combat_equestrian = WeaponStyle.objects.create(name='Crest Combat',
-                                                                   discipline=discipline_equestrian)
-        auth_sm_equestrian_marshal = Authorization.objects.create(person=self.person_marshal, style=style_sm_equestrian,
-                                                                  status=self.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-        auth_sm_equestrian_marshal = Authorization.objects.create(person=self.person_marshal, style=style_crest_combat_equestrian,
-                                                                  status=self.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-
-        user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                              membership='68907107',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        user_17yo = User.objects.create_user(username='leonardgarcia@galloway.com', password='eGqNMC2D',
-                                             membership='17111275', membership_expiration=date.today() + relativedelta(years=1),
-                                             birthday=date.today() - relativedelta(years=17) - timedelta(days=10))
-
-        person_adult = Person.objects.create(user=user_adult, sca_name='Ysabeau de la Mar', branch=self.branch_tp,
-                                             is_minor=False)
-        person_17yo = Person.objects.create(user=user_17yo, sca_name='Torvald Shieldbreaker', branch=self.branch_tp,
-                                            is_minor=True)
-
-        # Do the test
-        # POSITIVE: approve person_adult as an equestrian crest combatant
-        result, message = authorization_follows_rules(self.user_marshal, person_adult, 2)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-        # NEGATIVE: do not approve person_17yo as an equestrian crest combatant
-        result, message = authorization_follows_rules(self.user_marshal, person_17yo, 2)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be an adult to become authorized in Crest Combat.')
-
-
-class Rule4Test(TestCase):
-    """Rule 4: A Rapier, Cut & Thrust or Youth Rapier fighter must have single sword as their first weapon authorization"""
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                              membership='68907107',
-                                              membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar', branch=cls.branch_tp,
-                                                 is_minor=False)
-
-        cls.discipline_rapier = Discipline.objects.create(name='Rapier')
-        cls.style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_rapier)
-        cls.style_single_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=cls.discipline_rapier)
-        cls.style_two_handed_rapier = WeaponStyle.objects.create(name='Two-Handed Sword', discipline=cls.discipline_rapier)
-
-        cls.auth_sm_rapier_marshal = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_rapier,
-                                                                  status=cls.status_active, expiration=date.today() + relativedelta(years=1))
-
-    def test_single_sword_first(self):
-        # Do the test
-        # NEGATIVE: do not approve person_adult for two-handed sword
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult, self.style_two_handed_rapier.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'A fighter must be authorized with single sword as their first rapier authorization.')
-        # POSITIVE: approve person_adult for single sword
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult, self.style_single_rapier.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-    def test_senior_marshal_exception(self):
-        # Do the test
-        # POSITIVE: approve person_adult for senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult, self.style_sm_rapier.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-
-class Rule11Test(TestCase):
-    """Rule 11: Youth rapier marshals must already be Senior Rapier marshals"""
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
-        cls.discipline_rapier = Discipline.objects.create(name='Rapier')
-        cls.discipline_youth_rapier = Discipline.objects.create(name='Youth Rapier')
-        cls.style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_rapier)
-        cls.style_sm_youth_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_rapier)
-
-        auth_sm_rapier_marshal = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_youth_rapier,
-                                                              status=cls.status_active,
-                                                              expiration=date.today() + relativedelta(years=1))
-
-    def test_senior_marshal_first(self):
-        # Do the test
-        # NEGATIVE: do not approve person_adult for youth rapier marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_sm_youth_rapier.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be a senior rapier marshal to become a youth rapier marshal.')
-        # MODIFICATION: add adult rapier marshal to person_adult
-        auth_sm_rapier_adult = Authorization.objects.create(person=self.person_adult, style=self.style_sm_rapier,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(years=1))
-        # POSITIVE: approve person_adult for youth rapier marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_sm_youth_rapier.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-
-class RuleEquestrianAuthsTest(TestCase):
-    """
-    Rule 12: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
-    Rule 13: An Equestrian Senior marshal must already have Junior Marshal and Mounted Gaming Authorizations.
-    Rule 14: In order to authorize someone in Mounted Archery, Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting, the Senior Marshal must have the same Authorizations.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-        cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
-
-        cls.style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_equestrian)
-        cls.auth_sm_equestrian_marshal = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_equestrian,
-                                                                  status=cls.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-
-    def test_make_eq_junior(self):
-        style_sr_ground_crew = WeaponStyle.objects.create(name='Senior Ground Crew', discipline=self.discipline_equestrian)
-        style_riding = WeaponStyle.objects.create(name='General Riding', discipline=self.discipline_equestrian)
-        style_jm_equestrian = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_equestrian)
-
-
-        # Do the test
-        # NEGATIVE: do not approve person_adult for junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      style_jm_equestrian.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Junior Equestrian marshal must have Senior Ground Crew and General Riding authorization.')
-        # MODIFICATION: add senior ground crew to person_adult
-        auth_sr_ground_crew_adult = Authorization.objects.create(person=self.person_adult, style=style_sr_ground_crew,
-                                                                  status=self.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-        # NEGATIVE: do not approve person_adult for junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      style_jm_equestrian.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Junior Equestrian marshal must have Senior Ground Crew and General Riding authorization.')
-
-        # MODIFICATION: add general riding to person_adult
-        auth_riding_adult = Authorization.objects.create(person=self.person_adult, style=style_riding,
-                                                         status=self.status_active,
-                                                         expiration=date.today() + relativedelta(years=1))
-        # POSITIVE: approve person_adult for junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      style_jm_equestrian.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-    def test_make_eq_senior(self):
-        style_riding = WeaponStyle.objects.create(name='Mounted Gaming', discipline=self.discipline_equestrian)
-        style_jm_equestrian = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_equestrian)
-
-        # Do the test
-        # NEGATIVE: do not approve person_adult for senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_sm_equestrian.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.')
-        # MODIFICATION: add junior marshal to person_adult
-        auth_jm_equestrian_adult = Authorization.objects.create(person=self.person_adult, style=style_jm_equestrian,
-                                                                 status=self.status_active,
-                                                                 expiration=date.today() + relativedelta(years=1))
-        # NEGATIVE: do not approve person_adult for senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_sm_equestrian.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.')
-
-        # MODIFICATION: add mounted gaming to person_adult
-        auth_riding_adult = Authorization.objects.create(person=self.person_adult, style=style_riding,
-                                                         status=self.status_active,
-                                                         expiration=date.today() + relativedelta(years=1))
-        # POSITIVE: approve person_adult for senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_sm_equestrian.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-    def test_make_eq_mounted_heavy(self):
-        style_mounted_heavy = WeaponStyle.objects.create(name='Mounted Heavy Combat', discipline=self.discipline_equestrian)
-
-        # Do the test
-        # NEGATIVE: do not approve person_adult for Mounted Heavy Combat
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      style_mounted_heavy.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be authorized in Mounted Heavy Combat to authorize other participants.')
-
-        # MODIFICATION: add Mounted Heavy Combat to person_marshal
-        auth_mounted_heavy_marshal = Authorization.objects.create(person=self.person_marshal, style=style_mounted_heavy,
-                                                                  status=self.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-        # POSITIVE: approve person_adult for Mounted Heavy Combat
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      style_mounted_heavy.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-
-class Rule15Test(TestCase):
-    """Rule 15:Junior and Senior marshals must be current members."""
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_member = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='6890710',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_member = Person.objects.create(user=cls.user_member, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
-        cls.user_non_member = User.objects.create_user(username='sandersdua@hotmail.com', password='eGqNMC2D')
-        cls.person_non_member = Person.objects.create(user=cls.user_non_member, sca_name='Ysabeau de la Mar',
-                                                  branch=cls.branch_tp,
-                                                  is_minor=False)
-
-        cls.user_old_member = User.objects.create_user(username='sandere@hotmail.com', password='eGqNMC2D',
-                                                       membership='68907',
-                                                       membership_expiration=date.today() - relativedelta(years=1))
-        cls.person_old_member = Person.objects.create(user=cls.user_old_member, sca_name='Ysabeau de la Mar',
-                                                      branch=cls.branch_tp,
-                                                      is_minor=False)
-
-        cls.discipline_archery = Discipline.objects.create(name='Archery')
-        cls.style_sm_archery = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_archery)
-
-        cls.auth_sm_archery_marshal = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_archery,
-                                                                  status=cls.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-
-    def test_must_be_member(self):
-        # Do the test
-        # NEGATIVE: do not approve person_non_member for senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_non_member,
-                                                      self.style_sm_archery.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be a current member to be authorized as a marshal.')
-        # NEGATIVE: do not approve person_old_member for senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_old_member,
-                                                      self.style_sm_archery.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Must be a current member to be authorized as a marshal.')
-        # POSITIVE: approve person_member for senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_member,
-                                                      self.style_sm_archery.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-
-class Rule16Test(TestCase):
-    """
-    Rule 16: You cannot renew a revoked authorization.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
+        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
+        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Pending Waiver')
+        cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
+        cls.status_rejected = AuthorizationStatus.objects.create(name='Rejected')
 
-        cls.user_member = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                   membership='68907107',
-                                                   membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_member = Person.objects.create(user=cls.user_member, sca_name='Ysabeau de la Mar',
-                                                  branch=cls.branch_tp,
-                                                  is_minor=False)
+        # Branches
+        cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
+        cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
+        cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
 
-        cls.discipline_archery = Discipline.objects.create(name='Archery')
-        cls.style_sm_archery = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_archery)
-
-
-        cls.auth_sm_archery_marshal = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_archery,
-                                                                  status=cls.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-        cls.auth_sm_archery_marshal = Authorization.objects.create(person=cls.person_member,
-                                                                   style=cls.style_sm_archery,
-                                                                   status=cls.status_revoked,
-                                                                   expiration=date.today() - timedelta(days=10))
-
-    def test_revoked_auth(self):
-        # Do the test
-        # NEGATIVE: do not renew senior marshal authorization for person_member
-        result, message = authorization_follows_rules(self.user_marshal, self.person_member,
-                                                      self.style_sm_archery.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Cannot renew a revoked authorization.')
-
-
-class RulePendingTest(TestCase):
-    """
-    Rule 17: Cannot duplicate/renew a pending authorization.
-    Rule 18: If someone has an active senior marshal, they cannot be made a junior marshal.
-		Rule 18a: If they have a pending senior marshal they cannot get a new junior marshal. They can renew an existing junior marshal.
-    Rule 19: Cannot add a new senior marshal if there is a pending junior marshal.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
-        cls.discipline_missile = Discipline.objects.create(name='Missile')
-        cls.style_sm_missile = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_missile)
-        cls.style_jm_missile = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_missile)
-
-        cls.auth_sm_missile_marshal = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_missile,
-                                                                  status=cls.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-
-    def test_no_renew_pending(self):
-        auth_sm_missile_marshal = Authorization.objects.create(person=self.person_adult,
-                                                                   style=self.style_sm_missile,
-                                                                   status=self.status_pending,
-                                                                   expiration=date.today() + relativedelta(years=1))
-
-        # Do the test
-        # NEGATIVE: cannot renew pending senior authorization
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_sm_missile.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Cannot renew a pending authorization.')
-        # NEGATIVE: cannot add new junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_jm_missile.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Cannot have a new junior marshal if a senior marshal is pending.')
-
-    def test_no_junior_after_senior(self):
-        auth_sm_missile_marshal = Authorization.objects.create(person=self.person_adult,
-                                                               style=self.style_sm_missile,
-                                                               status=self.status_active,
-                                                               expiration=date.today() + relativedelta(years=1))
-
-        # Do the test
-        # NEGATIVE: cannot add junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_jm_missile.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Cannot make someone a junior marshal if they are already a senior marshal.')
-
-    def test_yes_renew_junior_with_pending_senior(self):
-        auth_sm_missile_marshal = Authorization.objects.create(person=self.person_adult,
-                                                               style=self.style_sm_missile,
-                                                               status=self.status_pending,
-                                                               expiration=date.today() + relativedelta(years=1))
-        auth_jm_missile_marshal = Authorization.objects.create(person=self.person_adult,
-                                                               style=self.style_jm_missile,
-                                                               status=self.status_active,
-                                                               expiration=date.today() + relativedelta(years=1))
-
-        # Do the test
-        # POSITIVE: can renew junior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.style_jm_missile.id)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Authorization follows all rules.')
-
-    def test_no_new_senior_with_pending_junior(self):
-        auth_jm_missile_marshal = Authorization.objects.create(person=self.person_adult,
-                                                               style=self.style_jm_missile,
-                                                               status=self.status_pending,
-                                                               expiration=date.today() + relativedelta(years=1))
-
-        # Do the test
-        # NEGATIVE: cannot add new senior marshal
-        result, message = authorization_follows_rules(self.user_marshal, self.person_adult,
-                                                      self.auth_sm_missile_marshal.id)
-        self.assertFalse(result)
-        self.assertEqual(message, 'Cannot have a new senior marshal if a junior marshal is pending.')
-
-class ApprovalTestRule1(TestCase):
-    """
-    Rule 1: Kingdom authorization officer can approve any marshal by themselves.
-    Rule 1a: If Youth Armored or Youth Rapier, set expiration to 2 years.
-    Rule 1b: If not Youth Armored or Youth Rapier, set expiration to 4 years.
-    Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
+        # Disciplines
         cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
-
-        cls.branch_auth_officer = BranchMarshal.objects.create(branch=cls.region_an_tir, person=cls.person_marshal,
-                                                               discipline=cls.discipline_auth_officer,
-                                                               start_date=date.today() - relativedelta(years=1),
-                                                               end_date=date.today() + relativedelta(years=1))
-        cls.auth_adult_jm_armored = Authorization.objects.create(person=cls.person_adult,
-                                                                 style=cls.style_jm_armored,
-                                                                 status=cls.status_active,
-                                                                 expiration=date.today() + relativedelta(years=1), marshal=cls.person_marshal)
-        cls.auth_adult_sm_armored = Authorization.objects.create(person=cls.person_adult,
-                                                                   style=cls.style_sm_armored,
-                                                                   status=cls.status_pending,
-                                                                   expiration=date.today() + relativedelta(years=1), marshal=cls.person_marshal)
-
-    def setUp(self):
-        self.factory = RequestFactory()
-
-    def test_kingdom_marshal_approve_senior_expire_junior_delete(self):
-        # Prepare request
-        post_data = {'authorization_id': str(self.auth_adult_sm_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # DATA CHECK: check that junior marshal is present.
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=self.style_jm_armored).exists())
-        # POSITIVE: approve person_adult as a senior marshal.
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Armored Senior Marshal authorization approved!')
-        # POSITIVE: confirm that senior marshal is approved for four years.
-        self.assertEqual(Authorization.objects.get(person=self.person_adult, style=self.style_sm_armored).expiration,date.today() + relativedelta(years=4))
-        # POSITIVE: confirm junior marshal is deleted.
-        self.assertFalse(Authorization.objects.filter(person=self.person_adult, style=self.style_jm_armored).exists())
-
-
-    def test_kingdom_marshal_approve_senior_expire_junior_delete(self):
-        discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
-        style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal',
-                                                            discipline=discipline_youth_armored)
-        auth_adult_jm_youth_armored = Authorization.objects.create(person=self.person_adult,
-                                                                   style=style_sm_youth_armored,
-                                                                   status=self.status_pending,
-                                                                   expiration=date.today() + relativedelta(
-                                                                       years=1), marshal=self.person_marshal)
-        # Prepare request
-        post_data = {'authorization_id': str(auth_adult_jm_youth_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # POSITIVE: check that youth marshal is approved for two years.
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Youth Armored Senior Marshal authorization approved!')
-        self.assertEqual(Authorization.objects.get(person=self.person_adult, style=style_sm_youth_armored).expiration,
-                         date.today() + relativedelta(years=2))
-
-
-class ApprovalTestRule2(TestCase):
-    """
-    Rule 2: must be a senior marshal in the discipline to approve.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_other_marshal = User.objects.create_user(username='martindavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_other_marshal = Person.objects.create(user=cls.user_other_marshal, sca_name='Cedric Diggory',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.discipline_rapier = Discipline.objects.create(name='Rapier')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_rapier)
-        cls.style_jm_rapier = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_rapier)
-
-
-        cls.auth_marshal_sm_armored = Authorization.objects.create(person=cls.person_marshal, style=cls.style_sm_armored,
-                                                                  status=cls.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-        cls.auth_other_marshal_sm_rapier = Authorization.objects.create(person=cls.person_other_marshal, style=cls.style_sm_rapier,
-                                                                  status=cls.status_active,
-                                                                  expiration=date.today() + relativedelta(years=1))
-        cls.auth_adult_jm_rapier = Authorization.objects.create(person=cls.person_adult,
-                                                                 style=cls.style_jm_rapier,
-                                                                 status=cls.status_pending,
-                                                                 expiration=date.today() + relativedelta(years=1), marshal=cls.person_other_marshal)
-
-    def setUp(self):
-        self.factory = RequestFactory()
-
-    def test_case(self):
-        # Prepare request
-        post_data = {'authorization_id': str(self.auth_adult_jm_rapier.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # NEGATIVE: person_marshal cannot approve person_adult as a rapier junior marshal.
-        result, message = approve_authorization(request)
-        self.assertFalse(result)
-        self.assertEqual(message, 'You must be a senior marshal in this discipline to approve this authorization.')
-
-
-class ApprovalTestRule3(TestCase):
-    """
-    Rule 3: Cannot concur with an authorization you proposed.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_other_marshal = User.objects.create_user(username='martindavis@gmail.com', password='eGqNMC2D',
-                                                          membership='31913',
-                                                          membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_other_marshal = Person.objects.create(user=cls.user_other_marshal, sca_name='Cedric Diggory',
-                                                         branch=cls.branch_tp,
-                                                         is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-        cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
-
-        cls.auth_marshal_sm_armored = Authorization.objects.create(person=cls.person_marshal,
-                                                                   style=cls.style_sm_armored,
-                                                                   status=cls.status_active,
-                                                                   expiration=date.today() + relativedelta(years=1))
-        cls.auth_other_marshal_sm_armored = Authorization.objects.create(person=cls.person_other_marshal,
-                                                                        style=cls.style_sm_armored,
-                                                                        status=cls.status_active,
-                                                                        expiration=date.today() + relativedelta(years=1))
-        cls.auth_adult_jm_armored = Authorization.objects.create(person=cls.person_adult,
-                                                                style=cls.style_jm_armored,
-                                                                status=cls.status_pending,
-                                                                expiration=date.today() + relativedelta(years=1), marshal=cls.person_marshal)
-
-    def setUp(self):
-        self.factory = RequestFactory()
-
-    def test_case(self):
-        # Prepare request
-        post_data = {'authorization_id': str(self.auth_adult_jm_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # NEGATIVE: person_marshal cannot confirm adult junior marshal
-        result, message = approve_authorization(request)
-        self.assertFalse(result)
-        self.assertEqual(message, 'You cannot concur with your own authorization.')
-
-        # Prepare request
-        post_data = {'authorization_id': str(self.auth_adult_jm_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_other_marshal
-
-        # POSITIVE: other_marshal can confirm adult junior marshal
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Armored Junior Marshal authorization approved!')
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=self.style_jm_armored, status=self.status_active).exists())
-
-
-class ApprovalTestRule4(TestCase):
-    """
-    Rule 4: If a pending authorization for Senior marshal is approved, it then goes to the region for approval.
-    Rule 4a: If a junior marshal is approved it becomes active.
-    Rule 4b: If a junior marshal for Youth combat is approved it goes to the Kingdom authorization officer for confirmation.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_other_marshal = User.objects.create_user(username='martindavis@gmail.com', password='eGqNMC2D',
-                                                          membership='31913',
-                                                          membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_other_marshal = Person.objects.create(user=cls.user_other_marshal, sca_name='Cedric Diggory',
-                                                         branch=cls.branch_tp,
-                                                         is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
-
-        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
-
-        cls.auth_marshal_sm_armored = Authorization.objects.create(person=cls.person_marshal,
-                                                                   style=cls.style_sm_armored,
-                                                                   status=cls.status_active,
-                                                                   expiration=date.today() + relativedelta(years=1))
-
-        cls.auth_other_marshal_sm_armored = Authorization.objects.create(person=cls.person_other_marshal,
-                                                                   style=cls.style_sm_armored,
-                                                                   status=cls.status_active,
-                                                                   expiration=date.today() + relativedelta(years=1))
-
-    def setUp(self):
-        self.factory = RequestFactory()
-
-    def test_pending_senior_to_region(self):
-        auth_adult_sm_armored = Authorization.objects.create(person=self.person_adult,
-                                                                               style=self.style_sm_armored,
-                                                                               status=self.status_pending,
-                                                                               expiration=date.today() + relativedelta(
-                                                                                   years=1), marshal=self.person_other_marshal)
-
-        # Prepare request
-        post_data = {'authorization_id': str(auth_adult_sm_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # POSITIVE: Senior marshal becomes needs region approval
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Armored Senior Marshal authorization ready for regional approval!')
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=self.style_sm_armored, status=self.status_regional).exists())
-
-    def test_pending_youth_junior_to_kingdom(self):
-        discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
-        style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal',
-                                                                discipline=discipline_youth_armored)
-        style_jm_youth_armored = WeaponStyle.objects.create(name='Junior Marshal',
-                                                            discipline=discipline_youth_armored)
-        auth_adult_jm_youth_armored = Authorization.objects.create(person=self.person_adult,
-                                                             style=style_jm_youth_armored,
-                                                             status=self.status_pending,
-                                                             expiration=date.today() + relativedelta(
-                                                                 years=1), marshal=self.person_other_marshal)
-        auth_other_marshal_sm_youth_armored = Authorization.objects.create(person=self.person_other_marshal,
-                                                                               style=style_sm_youth_armored,
-                                                                               status=self.status_active,
-                                                                               expiration=date.today() + relativedelta(
-                                                                                   years=1))
-        auth_marshal_sm_youth_armored = Authorization.objects.create(person=self.person_marshal,
-                                                                         style=style_sm_youth_armored,
-                                                                         status=self.status_active,
-                                                                         expiration=date.today() + relativedelta(
-                                                                             years=1))
-
-        # Prepare request
-        post_data = {'authorization_id': str(auth_adult_jm_youth_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # POSITIVE: Junior marshal becomes needs kingdom approval
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message, 'Youth Armored Junior Marshal authorization ready for kingdom to confirm background check!')
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=style_jm_youth_armored,
-                                                     status=self.status_kingdom).exists())
-
-
-class ApprovalTestRule5(TestCase):
-    """
-    Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored can approve Missile).
-    Rule 5a: If the region approves a Youth Combat Senior marshal, it goes to the Kingdom authorization officer for confirmation.
-    Rule 5b: If the regional marshal approves a non-youth senior marshal, it becomes active.
-    Rule 5c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.region_summits = Branch.objects.create(name='Summits', type='Principality', region=cls.region_an_tir)
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_summits)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_other_marshal = User.objects.create_user(username='martindavis@gmail.com', password='eGqNMC2D',
-                                                          membership='31913',
-                                                          membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_other_marshal = Person.objects.create(user=cls.user_other_marshal, sca_name='Cedric Diggory',
-                                                         branch=cls.branch_tp,
-                                                         is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
-    def setUp(self):
-        self.factory = RequestFactory()
-
-    def test_must_be_correct_regional_marshal(self):
-        discipline_armored = Discipline.objects.create(name='Armored')
-        style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_armored)
-        style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=discipline_armored)
-
-        auth_marshal_sm_armored = Authorization.objects.create(person=self.person_marshal,
-                                                                   style=style_sm_armored,
-                                                                   status=self.status_active,
-                                                                   expiration=date.today() + relativedelta(years=1))
-
-        auth_other_marshal_sm_armored = Authorization.objects.create(person=self.person_other_marshal,
-                                                                         style=style_sm_armored,
-                                                                         status=self.status_active,
-                                                                         expiration=date.today() + relativedelta(
-                                                                             years=1))
-        user_rapier_marshal = User.objects.create_user(username='kristinadav@gmail.com', password='eGqNMC2D',
-                                                    membership='913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        person_rapier_marshal = Person.objects.create(user=user_rapier_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=self.branch_tp,
-                                                   is_minor=False)
-        discipline_rapier = Discipline.objects.create(name='Rapier')
-        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_rapier)
-
-        auth_sm_rapier_marshal_armored = Authorization.objects.create(person=person_rapier_marshal, style=style_sm_armored,
-                                                              status=self.status_active,
-                                                              expiration=date.today() + relativedelta(
-                                                                  years=1))
-        auth_sm_rapier_marshal = Authorization.objects.create(person=person_rapier_marshal, style=style_sm_rapier,status=self.status_active,
-                                                                               expiration=date.today() + relativedelta(
-                                                                                   years=1))
-        rapier_branch_marshal = BranchMarshal.objects.create(person=person_rapier_marshal, branch=self.region_an_tir, discipline=discipline_rapier,start_date=date.today() - relativedelta(
-                                                                                   years=1), end_date=date.today() + relativedelta(
-        ))
-        branch_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.region_an_tir,
-                                                                  discipline=discipline_armored,
-                                                                  start_date=date.today() - relativedelta(
-                                                                      years=1), end_date=date.today() + relativedelta(years=1))
-        auth_adult_sm_armored = Authorization.objects.create(person=self.person_adult,
-                                                                     style=style_sm_armored,
-                                                                     status=self.status_regional,
-                                                                     expiration=date.today() + relativedelta(
-                                                                         years=1), marshal=self.person_other_marshal)
-        auth_adult_jm_armored = Authorization.objects.create(person=self.person_adult,
-                                                             style=style_jm_armored,
-                                                             status=self.status_active,
-                                                             expiration=date.today() + relativedelta(
-                                                                 years=1), marshal=self.person_other_marshal)
-
-        # Prepare request
-        post_data = {'authorization_id': str(auth_adult_sm_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = user_rapier_marshal
-
-        # Do the test
-        # DATA CHECK: active adult_junior armored marshal exists
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=style_jm_armored, status=self.status_active).exists())
-        # NEGATIVE: person_rapier_marshal cannot approve adult_armored
-        result, message = approve_authorization(request)
-        self.assertFalse(result)
-        self.assertEqual(message,
-                         'You must be a regional marshal in this discipline to approve this authorization.')
-
-        # Prepare request
-        post_data = {'authorization_id': str(auth_adult_sm_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # POSITIVE: person_marshal can approve adult_armored
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message,
-                         'Armored Senior Marshal authorization approved!')
-        # POSITIVE: adult_armored becomes active
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=style_sm_armored,
-                                                     status=self.status_active).exists())
-        # POSITIVE: adult_armored expiration is four years from now.
-        self.assertEqual(Authorization.objects.get(person=self.person_adult, style=style_sm_armored).expiration,
-                         date.today() + relativedelta(years=4))
-        # POSITIVE: adult_junior_armored is deleted
-        self.assertFalse(Authorization.objects.filter(person=self.person_adult, style=style_jm_armored,
-                                                     status=self.status_active).exists())
-
-    def test_regional_armored_can_approve_missile_marshal(self):
-        discipline_armored = Discipline.objects.create(name='Armored')
-        style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_armored)
-
-        discipline_missile = Discipline.objects.create(name='Missile')
-        style_sm_missile = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_missile)
-
-        auth_marshal_sm_armored = Authorization.objects.create(person=self.person_marshal,
-                                                               style=style_sm_armored,
-                                                               status=self.status_active,
-                                                               expiration=date.today() + relativedelta(years=1))
-        auth_other_marshal_sm_missile = Authorization.objects.create(person=self.person_other_marshal,
-                                                                     style=style_sm_missile,
-                                                                     status=self.status_active,
-                                                                     expiration=date.today() + relativedelta(
-                                                                         years=1))
-        branch_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.region_an_tir,
-                                                              discipline=discipline_armored,
-                                                              start_date=date.today() - relativedelta(
-                                                                  years=1),
-                                                              end_date=date.today() + relativedelta(years=1))
-        auth_adult_sm_missile = Authorization.objects.create(person=self.person_adult,
-                                                                     style=style_sm_missile,
-                                                                     status=self.status_regional,
-                                                                     expiration=date.today() + relativedelta(
-                                                                         years=1), marshal=self.person_other_marshal)
-
-        # Prepare request
-        post_data = {'authorization_id': str(auth_adult_sm_missile.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # POSITIVE: regional armored marshal can approve missile marshal
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message,
-                         'Missile Senior Marshal authorization approved!')
-
-
-    def test_kingdom_must_approve_youth_marshal(self):
-        discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
-        style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal',
-                                                                discipline=discipline_youth_armored)
-        auth_marshal_sm_youth_armored = Authorization.objects.create(person=self.person_marshal,
-                                                                         style=style_sm_youth_armored,
-                                                                         status=self.status_active,
-                                                                         expiration=date.today() + relativedelta(
-                                                                             years=1))
-        auth_other_marshal_sm_youth_armored = Authorization.objects.create(person=self.person_other_marshal,
-                                                                               style=style_sm_youth_armored,
-                                                                               status=self.status_active,
-                                                                               expiration=date.today() + relativedelta(
-                                                                                   years=1))
-        auth_adult_sm_youth_armored = Authorization.objects.create(person=self.person_adult,
-                                                                           style=style_sm_youth_armored,
-                                                                           status=self.status_regional,
-                                                                           expiration=date.today() + relativedelta(
-                                                                               years=1), marshal=self.person_other_marshal)
-        branch_youth_armored_marshal = BranchMarshal.objects.create(person=self.person_marshal, branch=self.region_an_tir,
-                                                              discipline=discipline_youth_armored,
-                                                              start_date=date.today() - relativedelta(
-                                                                  years=1),
-                                                              end_date=date.today() + relativedelta(years=1))
-
-        # Prepare request
-        post_data = {'authorization_id': str(auth_adult_sm_youth_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # POSITIVE: adult_youth_marshal becomes needs kingdom approval
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message,
-                         'Youth Armored Senior Marshal authorization ready for kingdom to confirm background check!')
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=style_sm_youth_armored,
-                                                     status=self.status_kingdom).exists())
-
-    def test_earl_marshal(self):
-        discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
-        discipline_archery = Discipline.objects.create(name='Archery')
-        style_sm_archery = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_archery)
-        region_tir_righ = Branch.objects.create(name='Tir Righ', region=self.region_an_tir)
-
-        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=region_tir_righ, person=self.person_marshal,
-                                                               discipline=discipline_earl_marshal,
-                                                               start_date=date.today() - relativedelta(years=1),
-                                                               end_date=date.today() + relativedelta(years=1))
-
-        branch_tir_righ_earl_marshal = BranchMarshal.objects.create(branch=region_tir_righ, person=self.person_other_marshal,
-                                                                    discipline=discipline_earl_marshal,
-                                                                    start_date=date.today() - relativedelta(years=1),
-                                                                    end_date=date.today() + relativedelta(years=1))
-
-        authorization_need_regional = Authorization.objects.create(person=self.person_adult, style=style_sm_archery,
-                                                                   status=self.status_regional, expiration=date.today() + relativedelta(years=1),
-                                                                     marshal=self.person_marshal)
-
-        # Prepare request
-        post_data = {'authorization_id': str(authorization_need_regional.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
-
-        # Do the test
-        # NEGATIVE: authorization_need_regional does not become approved because not in the region
-        result, message = approve_authorization(request)
-        self.assertFalse(result)
-        self.assertEqual(message,
-                         'You must be a regional marshal in the same region as the fighter to approve this authorization.')
-        self.assertFalse(Authorization.objects.filter(person=self.person_adult, style=style_sm_archery,
-                                                     status=self.status_active).exists())
-
-        # Prepare request
-        post_data = {'authorization_id': str(authorization_need_regional.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_other_marshal
-
-        # POSITIVE: authorization_need_regional becomes approved
-        result, message = approve_authorization(request)
-        self.assertTrue(result)
-        self.assertEqual(message,
-                         'Archery Senior Marshal authorization approved!')
-        self.assertTrue(Authorization.objects.filter(person=self.person_adult, style=style_sm_archery,
-                                                     status=self.status_active).exists())
-
-
-
-class ApprovalTestRule6(TestCase):
-    """
-    Rule 6: If the authorization is out for kingdom approval, you need to be a kingdom authorization officer to approve it.
-    """
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.region_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
-        cls.branch_tp = Branch.objects.create(name='Barony of Terra Pomaria', region=cls.region_an_tir)
-        cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-
-        cls.user_marshal = User.objects.create_user(username='kristinadavis@gmail.com', password='eGqNMC2D',
-                                                    membership='31913662',
-                                                    membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_marshal = Person.objects.create(user=cls.user_marshal, sca_name='Theodric of the White Hart',
-                                                   branch=cls.branch_tp,
-                                                   is_minor=False)
-
-        cls.user_other_marshal = User.objects.create_user(username='martindavis@gmail.com', password='eGqNMC2D',
-                                                          membership='31913',
-                                                          membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_other_marshal = Person.objects.create(user=cls.user_other_marshal, sca_name='Cedric Diggory',
-                                                         branch=cls.branch_tp,
-                                                         is_minor=False)
-
-        cls.user_adult = User.objects.create_user(username='sandersduane@hotmail.com', password='eGqNMC2D',
-                                                  membership='68907107',
-                                                  membership_expiration=date.today() + relativedelta(years=1))
-        cls.person_adult = Person.objects.create(user=cls.user_adult, sca_name='Ysabeau de la Mar',
-                                                 branch=cls.branch_tp,
-                                                 is_minor=False)
-
+        cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
-        cls.style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_armored)
+        cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
+        cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
 
-        cls.auth_marshal_sm_youth_armored = Authorization.objects.create(person=cls.person_marshal,
-                                                                     style=cls.style_sm_youth_armored,
-                                                                     status=cls.status_active,
-                                                                     expiration=date.today() + relativedelta(
-                                                                         years=1))
-        cls.auth_other_marshal_sm_youth_armored = Authorization.objects.create(person=cls.person_other_marshal,
-                                                                           style=cls.style_sm_youth_armored,
-                                                                           status=cls.status_active,
-                                                                           expiration=date.today() + relativedelta(
-                                                                               years=1))
-        cls.auth_adult_sm_youth_armored = Authorization.objects.create(person=cls.person_adult,
-                                                                   style=cls.style_sm_youth_armored,
-                                                                   status=cls.status_kingdom,
-                                                                   expiration=date.today() + relativedelta(
-                                                                       years=1), marshal=cls.person_other_marshal)
-        cls.branch_youth_armored_marshal = BranchMarshal.objects.create(person=cls.person_marshal,
-                                                                    branch=cls.region_an_tir,
-                                                                    discipline=cls.discipline_youth_armored,
-                                                                    start_date=date.today() - relativedelta(
-                                                                        years=1),
-                                                                    end_date=date.today() + relativedelta(years=1))
+        # Styles
+        cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
+        cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
+        cls.style_weapon_armored = WeaponStyle.objects.create(name='Weapon & Shield', discipline=cls.discipline_armored)
+        cls.style_single_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=cls.discipline_rapier)
+        cls.style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_armored)
+        cls.style_jm_youth_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_youth_armored)
+        cls.style_sword_youth_armored = WeaponStyle.objects.create(name='Sword', discipline=cls.discipline_youth_armored)
 
     def setUp(self):
         self.factory = RequestFactory()
+        self._membership_seed = 100000
 
-    def test_case(self):
-        # Prepare request
-        post_data = {'authorization_id': str(self.auth_adult_sm_youth_armored.id)}
-        request = self.factory.post('/dummy-url/', data=post_data)
-        request.user = self.user_marshal
+    def _next_membership(self):
+        self._membership_seed += 1
+        return str(self._membership_seed)
 
-        # Do the test
-        # NEGATIVE: person_marshal cannot approve person_adult due to needs kingdom approval.
-        result, message = approve_authorization(request)
-        self.assertFalse(result)
-        self.assertEqual(message,
-                         'You must be the kingdom authorization officer to approve this authorization.')
+    def make_person(
+        self,
+        username,
+        sca_name,
+        *,
+        branch=None,
+        membership='auto',
+        membership_expiration='auto',
+        is_minor=False,
+        birthday=None,
+        parent=None,
+        country='United States',
+        state_province='Oregon',
+        background_check_expiration=None,
+        waiver_expiration=None,
+    ):
+        if membership == 'auto':
+            membership = self._next_membership()
+        if membership_expiration == 'auto':
+            membership_expiration = date.today() + relativedelta(years=1)
+
+        user = User.objects.create_user(
+            username=username,
+            password='StrongPass!123',
+            email=f'{username}@example.com',
+            first_name=sca_name.split()[0],
+            last_name='Tester',
+            membership=membership,
+            membership_expiration=membership_expiration,
+            birthday=birthday,
+            country=country,
+            state_province=state_province,
+            background_check_expiration=background_check_expiration,
+            waiver_expiration=waiver_expiration,
+        )
+        person = Person.objects.create(
+            user=user,
+            sca_name=sca_name,
+            branch=branch or self.branch_gd,
+            is_minor=is_minor,
+            parent=parent,
+        )
+        return user, person
+
+    def grant_authorization(self, person, style, *, status=None, expiration=None, marshal=None):
+        return Authorization.objects.create(
+            person=person,
+            style=style,
+            status=status or self.status_active,
+            expiration=expiration or (date.today() + relativedelta(years=1)),
+            marshal=marshal or person,
+        )
+
+    def appoint(self, person, branch, discipline, *, end_date=None):
+        return BranchMarshal.objects.create(
+            person=person,
+            branch=branch,
+            discipline=discipline,
+            start_date=date.today() - timedelta(days=1),
+            end_date=end_date or (date.today() + relativedelta(years=1)),
+        )
 
 
+class MembershipCurrentTests(AuthorizationTestBase):
+    def test_returns_false_without_membership(self):
+        user, _ = self.make_person('no_membership', 'No Membership', membership=None, membership_expiration=None)
+        self.assertFalse(membership_is_current(user))
+
+    def test_returns_false_without_membership_expiration(self):
+        user, _ = self.make_person(
+            'no_membership_exp',
+            'No Membership Exp',
+            membership=self._next_membership(),
+            membership_expiration=None,
+        )
+        self.assertFalse(membership_is_current(user))
+
+    def test_returns_false_when_membership_expired(self):
+        user, _ = self.make_person(
+            'expired_membership',
+            'Expired Membership',
+            membership_expiration=date.today() - timedelta(days=1),
+        )
+        self.assertFalse(membership_is_current(user))
+
+    def test_returns_true_when_membership_is_current(self):
+        user, _ = self.make_person('current_member', 'Current Member')
+        self.assertTrue(membership_is_current(user))
+
+
+class EffectiveExpirationTests(AuthorizationTestBase):
+    def test_non_marshal_effective_expiration_equals_base_expiration(self):
+        _, fighter = self.make_person('fighter_non_marshal', 'Fighter Non-Marshal')
+        base_exp = date.today() + relativedelta(years=3)
+        auth = self.grant_authorization(fighter, self.style_weapon_armored, expiration=base_exp)
+
+        self.assertEqual(auth.effective_expiration, base_exp)
+
+    def test_marshal_effective_expiration_is_limited_by_membership(self):
+        user, fighter = self.make_person(
+            'fighter_marshal',
+            'Fighter Marshal',
+            membership_expiration=date.today() + timedelta(days=90),
+        )
+        base_exp = date.today() + relativedelta(years=2)
+        auth = self.grant_authorization(fighter, self.style_sm_armored, expiration=base_exp)
+
+        self.assertEqual(auth.effective_expiration, user.membership_expiration)
+
+    def test_youth_marshal_effective_expiration_is_limited_by_background_check(self):
+        user, fighter = self.make_person(
+            'fighter_youth_marshal',
+            'Fighter Youth Marshal',
+            membership_expiration=date.today() + relativedelta(years=2),
+            background_check_expiration=date.today() + timedelta(days=60),
+        )
+        base_exp = date.today() + relativedelta(years=2)
+        auth = self.grant_authorization(fighter, self.style_sm_youth_armored, expiration=base_exp)
+
+        self.assertEqual(auth.effective_expiration, user.background_check_expiration)
+
+    def test_queryset_annotation_supports_filter_and_sort(self):
+        user_a, fighter_a = self.make_person(
+            'fighter_sort_a',
+            'Fighter Sort A',
+            membership_expiration=date.today() + relativedelta(years=2),
+            background_check_expiration=date.today() + timedelta(days=45),
+        )
+        user_b, fighter_b = self.make_person(
+            'fighter_sort_b',
+            'Fighter Sort B',
+            membership_expiration=date.today() + relativedelta(years=2),
+            background_check_expiration=date.today() + timedelta(days=120),
+        )
+        auth_a = self.grant_authorization(
+            fighter_a,
+            self.style_sm_youth_armored,
+            expiration=date.today() + relativedelta(years=2),
+        )
+        auth_b = self.grant_authorization(
+            fighter_b,
+            self.style_sm_youth_armored,
+            expiration=date.today() + relativedelta(years=2),
+        )
+
+        sorted_ids = list(
+            Authorization.objects.with_effective_expiration()
+            .filter(style=self.style_sm_youth_armored)
+            .order_by('effective_expiration_date')
+            .values_list('id', flat=True)
+        )
+        self.assertEqual(sorted_ids, [auth_a.id, auth_b.id])
+
+        filtered_ids = list(
+            Authorization.objects.with_effective_expiration()
+            .filter(
+                style=self.style_sm_youth_armored,
+                effective_expiration_date__gte=date.today() + timedelta(days=90),
+            )
+            .values_list('id', flat=True)
+        )
+        self.assertEqual(filtered_ids, [auth_b.id])
+
+
+class AuthorizationExpirationCalculationTests(AuthorizationTestBase):
+    def test_adult_non_youth_defaults_to_four_years(self):
+        _, fighter = self.make_person('adult_non_youth', 'Adult Non Youth', is_minor=False)
+
+        expected = date.today() + relativedelta(years=4)
+        self.assertEqual(calculate_authorization_expiration(fighter, self.style_weapon_armored), expected)
+
+    def test_adult_youth_defaults_to_two_years(self):
+        _, fighter = self.make_person('adult_youth', 'Adult Youth', is_minor=False)
+
+        expected = date.today() + relativedelta(years=2)
+        self.assertEqual(calculate_authorization_expiration(fighter, self.style_sword_youth_armored), expected)
+
+    def test_minor_us_expiration_is_capped_at_age_18(self):
+        birthday = date.today() - relativedelta(years=17, months=11)
+        _, fighter = self.make_person(
+            'minor_us',
+            'Minor US',
+            is_minor=True,
+            birthday=birthday,
+            country='United States',
+            state_province='Oregon',
+        )
+
+        expected = birthday + relativedelta(years=18)
+        self.assertEqual(calculate_authorization_expiration(fighter, self.style_weapon_armored), expected)
+
+    def test_minor_canada_expiration_is_capped_at_age_19_by_country(self):
+        birthday = date.today() - relativedelta(years=18, months=11)
+        _, fighter = self.make_person(
+            'minor_ca_country',
+            'Minor CA Country',
+            is_minor=True,
+            birthday=birthday,
+            country='Canada',
+            state_province='British Columbia',
+        )
+
+        expected = birthday + relativedelta(years=19)
+        self.assertEqual(calculate_authorization_expiration(fighter, self.style_weapon_armored), expected)
+
+    def test_minor_canada_expiration_is_capped_at_age_19_by_province(self):
+        birthday = date.today() - relativedelta(years=18, months=11)
+        _, fighter = self.make_person(
+            'minor_ca_province',
+            'Minor CA Province',
+            is_minor=True,
+            birthday=birthday,
+            country='',
+            state_province='BC',
+        )
+
+        expected = birthday + relativedelta(years=19)
+        self.assertEqual(calculate_authorization_expiration(fighter, self.style_weapon_armored), expected)
+
+
+class MarshalRoleCheckTests(AuthorizationTestBase):
+    def test_is_senior_marshal_true_with_current_membership_and_active_authorization(self):
+        user, marshal = self.make_person('sm_true', 'Senior Marshal True')
+        self.grant_authorization(marshal, self.style_sm_armored)
+
+        self.assertTrue(is_senior_marshal(user, 'Armored'))
+        self.assertFalse(is_senior_marshal(user, 'Rapier Combat'))
+
+    def test_is_senior_marshal_false_when_membership_expired(self):
+        user, marshal = self.make_person('sm_false_expired', 'Senior Marshal Expired')
+        self.grant_authorization(marshal, self.style_sm_armored)
+        user.membership_expiration = date.today() - timedelta(days=1)
+        user.save()
+
+        self.assertFalse(is_senior_marshal(user, 'Armored'))
+
+    def test_is_regional_marshal_checks_region_and_discipline(self):
+        user, marshal = self.make_person('regional_user', 'Regional User')
+        self.appoint(marshal, self.region_summits, self.discipline_armored)
+
+        self.assertTrue(is_regional_marshal(user, 'Armored', 'Summits'))
+        self.assertFalse(is_regional_marshal(user, 'Armored', 'Tir Righ'))
+
+    def test_is_kingdom_marshal_by_branch_assignment(self):
+        user, marshal = self.make_person('kingdom_user', 'Kingdom User')
+        self.appoint(marshal, self.branch_an_tir, self.discipline_armored)
+
+        self.assertTrue(is_kingdom_marshal(user, 'Armored'))
+        self.assertFalse(is_kingdom_marshal(user, 'Rapier Combat'))
+
+    def test_authorization_officer_requires_current_membership(self):
+        user, marshal = self.make_person('ao_user', 'AO User')
+        self.appoint(marshal, self.branch_an_tir, self.discipline_auth_officer)
+
+        self.assertTrue(is_kingdom_authorization_officer(user))
+
+        user.membership_expiration = date.today() - timedelta(days=1)
+        user.save()
+
+        self.assertFalse(is_kingdom_authorization_officer(user))
+
+
+class AuthorizationRuleTests(AuthorizationTestBase):
+    def test_blocks_self_authorization(self):
+        user, marshal = self.make_person('self_auth_user', 'Self Auth User')
+        self.grant_authorization(marshal, self.style_sm_armored)
+
+        ok, msg = authorization_follows_rules(user, marshal, self.style_weapon_armored.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Cannot make an authorization for yourself.')
+
+    def test_requires_senior_marshal_in_matching_discipline(self):
+        marshal_user, marshal = self.make_person('discipline_marshal', 'Discipline Marshal')
+        _, fighter = self.make_person('discipline_target', 'Discipline Target')
+        self.grant_authorization(marshal, self.style_sm_armored)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_single_rapier.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Must have a current Rapier Combat senior marshal.')
+
+    def test_blocks_armored_authorization_for_minor_under_16(self):
+        marshal_user, marshal = self.make_person('age_marshal', 'Age Marshal')
+        self.grant_authorization(marshal, self.style_sm_armored)
+
+        birthday = date.today() - relativedelta(years=15)
+        _, minor = self.make_person(
+            'age_minor',
+            'Age Minor',
+            is_minor=True,
+            birthday=birthday,
+        )
+
+        ok, msg = authorization_follows_rules(marshal_user, minor, self.style_weapon_armored.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Must be at least 16 years old to become authorized in Armored combat.')
+
+    def test_youth_marshal_requires_background_check(self):
+        marshal_user, marshal = self.make_person('youth_marshal', 'Youth Marshal')
+        self.grant_authorization(marshal, self.style_sm_youth_armored)
+
+        _, fighter = self.make_person(
+            'no_bg_target',
+            'No BG Target',
+            background_check_expiration=None,
+        )
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_jm_youth_armored.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(
+            msg,
+            'Must have a valid background check to become authorized as a youth marshal in Youth Armored combat.',
+        )
+
+    def test_blocks_pending_duplicate_authorization(self):
+        marshal_user, marshal = self.make_person('pending_marshal', 'Pending Marshal')
+        _, fighter = self.make_person('pending_target', 'Pending Target')
+        self.grant_authorization(marshal, self.style_sm_armored)
+        self.grant_authorization(fighter, self.style_weapon_armored, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_weapon_armored.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Cannot renew a pending authorization.')
+
+    def test_blocks_revoked_renewal(self):
+        marshal_user, marshal = self.make_person('revoked_marshal', 'Revoked Marshal')
+        _, fighter = self.make_person('revoked_target', 'Revoked Target')
+        self.grant_authorization(marshal, self.style_sm_armored)
+        self.grant_authorization(fighter, self.style_weapon_armored, status=self.status_revoked)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_weapon_armored.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Cannot renew a revoked authorization.')
+
+    def test_valid_authorization_path(self):
+        marshal_user, marshal = self.make_person('valid_marshal', 'Valid Marshal')
+        _, fighter = self.make_person('valid_target', 'Valid Target')
+        self.grant_authorization(marshal, self.style_sm_armored)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_weapon_armored.id)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+
+class ConcurrenceRequirementTests(AuthorizationTestBase):
+    def test_requires_concurrence_when_no_prior_authorization_in_discipline(self):
+        _, fighter = self.make_person('concur_none', 'Concur None')
+
+        self.assertTrue(authorization_requires_concurrence(fighter, self.style_weapon_armored))
+
+    def test_does_not_require_concurrence_for_recently_expired_authorization(self):
+        _, fighter = self.make_person('concur_recent', 'Concur Recent')
+        self.grant_authorization(
+            fighter,
+            self.style_weapon_armored,
+            status=self.status_active,
+            expiration=date.today() - timedelta(days=200),
+        )
+
+        self.assertFalse(authorization_requires_concurrence(fighter, self.style_weapon_armored))
+
+    def test_requires_concurrence_for_lapsed_authorization_older_than_one_year(self):
+        _, fighter = self.make_person('concur_old', 'Concur Old')
+        self.grant_authorization(
+            fighter,
+            self.style_weapon_armored,
+            status=self.status_active,
+            expiration=date.today() - timedelta(days=400),
+        )
+
+        self.assertTrue(authorization_requires_concurrence(fighter, self.style_weapon_armored))
+
+    def test_marshal_styles_never_require_concurrence(self):
+        _, fighter = self.make_person('concur_marshal', 'Concur Marshal')
+
+        self.assertFalse(authorization_requires_concurrence(fighter, self.style_sm_armored))
+
+
+class ApproveAuthorizationTests(AuthorizationTestBase):
+    def test_pending_junior_marshal_is_approved_by_different_senior_marshal(self):
+        _, fighter = self.make_person('pending_jm_target', 'Pending JM Target')
+        proposer_user, proposer = self.make_person('pending_jm_proposer', 'Pending JM Proposer')
+        approver_user, approver = self.make_person('pending_jm_approver', 'Pending JM Approver')
+        self.grant_authorization(proposer, self.style_sm_armored)
+        self.grant_authorization(approver, self.style_sm_armored)
+
+        pending_auth = self.grant_authorization(
+            fighter,
+            self.style_jm_armored,
+            status=self.status_pending,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(pending_auth.id), 'action_note': 'Concurred at event'},
+        )
+        request.user = approver_user
+
+        ok, msg = approve_authorization(request)
+
+        pending_auth.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Junior Marshal authorization approved!')
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=pending_auth,
+                action='marshal_concurred',
+                created_by=approver_user,
+            ).exists()
+        )
+
+    def test_pending_senior_marshal_moves_to_regional_approval(self):
+        _, fighter = self.make_person('pending_sm_target', 'Pending SM Target')
+        proposer_user, proposer = self.make_person('pending_sm_proposer', 'Pending SM Proposer')
+        approver_user, approver = self.make_person('pending_sm_approver', 'Pending SM Approver')
+        self.grant_authorization(proposer, self.style_sm_armored)
+        self.grant_authorization(approver, self.style_sm_armored)
+
+        pending_auth = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_pending,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(pending_auth.id), 'action_note': 'Eligible for regional review'},
+        )
+        request.user = approver_user
+
+        ok, msg = approve_authorization(request)
+
+        pending_auth.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Senior Marshal authorization ready for regional approval!')
+        self.assertEqual(pending_auth.status, self.status_regional)
+
+    def test_cannot_concur_with_own_pending_authorization(self):
+        _, fighter = self.make_person('self_concur_target', 'Self Concur Target')
+        proposer_user, proposer = self.make_person('self_concur_proposer', 'Self Concur Proposer')
+        self.grant_authorization(proposer, self.style_sm_armored)
+
+        pending_auth = self.grant_authorization(
+            fighter,
+            self.style_jm_armored,
+            status=self.status_pending,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(pending_auth.id), 'action_note': 'Attempting own concurrence'},
+        )
+        request.user = proposer_user
+
+        ok, msg = approve_authorization(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You cannot concur with your own authorization.')
+
+    def test_regional_approval_requires_same_region_when_fighter_branch_is_region(self):
+        proposer_user, proposer = self.make_person('regional_proposer', 'Regional Proposer')
+        approver_user, approver = self.make_person('regional_wrong_approver', 'Regional Wrong Approver')
+        _, fighter = self.make_person('regional_target', 'Regional Target', branch=self.region_summits)
+
+        self.appoint(approver, self.region_tir_righ, self.discipline_armored)
+        needs_regional = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_regional,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_regional.id), 'action_note': 'Attempting out-of-region approval'},
+        )
+        request.user = approver_user
+
+        ok, msg = approve_authorization(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+
+    def test_authorization_officer_approval_sets_active_and_removes_junior(self):
+        ao_user, ao_person = self.make_person('ao_approver', 'AO Approver')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        proposer_user, proposer = self.make_person('ao_proposer', 'AO Proposer')
+        _, fighter = self.make_person('ao_target', 'AO Target')
+
+        junior_auth = self.grant_authorization(fighter, self.style_jm_armored, status=self.status_active, marshal=proposer)
+        pending_senior = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_regional,
+            marshal=proposer,
+            expiration=date.today() + timedelta(days=20),
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(pending_senior.id), 'action_note': 'AO final approval'},
+        )
+        request.user = ao_user
+
+        ok, msg = approve_authorization(request)
+
+        pending_senior.refresh_from_db()
+        fighter.user.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        self.assertEqual(pending_senior.status, self.status_active)
+        self.assertFalse(Authorization.objects.filter(id=junior_auth.id).exists())
+        self.assertGreaterEqual(fighter.user.waiver_expiration, pending_senior.expiration)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=pending_senior,
+                action='marshal_approved',
+                created_by=ao_user,
+            ).exists()
+        )
+
+
+class AppointBranchMarshalTests(AuthorizationTestBase):
+    def test_non_authorization_officer_cannot_appoint_branch_marshal(self):
+        normal_user, _ = self.make_person('appoint_normal_user', 'Appoint Normal User')
+        _, candidate = self.make_person('appoint_candidate_user', 'Appoint Candidate User')
+        self.grant_authorization(candidate, self.style_sm_armored)
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.branch_gd.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = normal_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Only the authorization officer can appoint branch marshals.')
+
+    def test_authorization_officer_can_appoint_local_branch_marshal_with_junior(self):
+        ao_user, ao_person = self.make_person('appoint_ao_user', 'Appoint AO User')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        _, candidate = self.make_person('appoint_local_candidate', 'Appoint Local Candidate')
+        self.grant_authorization(candidate, self.style_jm_armored)
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.branch_gd.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Branch marshal appointed.')
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=candidate,
+                branch=self.branch_gd,
+                discipline=self.discipline_armored,
+            ).exists()
+        )
+
+    def test_regional_branch_marshal_requires_senior_marshal(self):
+        ao_user, ao_person = self.make_person('appoint_ao_user_regional', 'Appoint AO User Regional')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        _, candidate = self.make_person('appoint_regional_candidate', 'Appoint Regional Candidate')
+        self.grant_authorization(candidate, self.style_jm_armored)
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.region_summits.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Must be a senior marshal to be a regional marshal.')
+
+    def test_only_one_active_branch_marshal_position_allowed(self):
+        ao_user, ao_person = self.make_person('appoint_ao_user_single', 'Appoint AO User Single')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        _, candidate = self.make_person('appoint_single_candidate', 'Appoint Single Candidate')
+        self.grant_authorization(candidate, self.style_sm_armored)
+        self.appoint(candidate, self.branch_lg, self.discipline_armored)
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.branch_gd.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Can only serve as one branch marshal position at a time.')
+
+    def test_candidate_must_have_current_membership(self):
+        ao_user, ao_person = self.make_person('appoint_ao_user_membership', 'Appoint AO User Membership')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        _, candidate = self.make_person(
+            'appoint_expired_candidate',
+            'Appoint Expired Candidate',
+            membership_expiration=date.today() - timedelta(days=1),
+        )
+        self.grant_authorization(candidate, self.style_sm_armored)
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.branch_gd.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Must be a current member to be a branch marshal.')

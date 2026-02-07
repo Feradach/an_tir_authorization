@@ -147,6 +147,10 @@ def is_kingdom_authorization_officer(user):
     """
     Checks if the user is a current Kingdom Authorization Officer for the given discipline.
     """
+    # Anonymous users cannot hold marshal offices; also avoids ORM type errors
+    # when this helper is called from public views.
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
 
     query = BranchMarshal.objects.filter(
         person__user=user,
