@@ -302,15 +302,34 @@
                 const endDateInput = document.getElementById('end_date');
                 const isCurrentInput = document.getElementById('is_current');
 
+                function syncCurrentDateFilters() {
+                    const isCurrentChecked = isCurrentInput && isCurrentInput.checked;
+                    if (isCurrentChecked) {
+                        startDateInput.value = '';
+                        endDateInput.value = '';
+                    }
+                    startDateInput.disabled = isCurrentChecked;
+                    endDateInput.disabled = isCurrentChecked;
+                }
+
                 function submitDateFormIfValid() {
                     addQueryParamsToForm(dateFilterForm);
                     dateFilterForm.submit();
                 }
 
+                syncCurrentDateFilters();
+
+                // Submit immediately when a date is selected from the picker.
+                startDateInput.addEventListener('change', submitDateFormIfValid);
+                endDateInput.addEventListener('change', submitDateFormIfValid);
+                // Keep blur as a fallback for manual keyboard entry.
                 startDateInput.addEventListener('blur', submitDateFormIfValid);
                 endDateInput.addEventListener('blur', submitDateFormIfValid);
                 if (isCurrentInput) {
-                    isCurrentInput.addEventListener('change', submitDateFormIfValid);
+                    isCurrentInput.addEventListener('change', function () {
+                        syncCurrentDateFilters();
+                        submitDateFormIfValid();
+                    });
                 }
             }
         });

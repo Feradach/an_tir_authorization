@@ -1,6 +1,7 @@
 ﻿## [0.1.5] - 2026-02-07
 ### Added
 - Changed name search on the search page to match the behavior on the authorizations home page.
+- Changed date search behavior to be more smooth.
 
 ## [0.1.4] - 2026-02-05
 ### Added

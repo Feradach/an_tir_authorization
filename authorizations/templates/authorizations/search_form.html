@@ -145,5 +145,27 @@
                 });
             });
         });
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const startDateInput = document.getElementById('start_date');
+            const endDateInput = document.getElementById('end_date');
+            const isCurrentInput = document.getElementById('is_current');
+            if (!startDateInput || !endDateInput || !isCurrentInput) {
+                return;
+            }
+
+            function syncCurrentDateFilters() {
+                const isCurrentChecked = isCurrentInput.checked;
+                if (isCurrentChecked) {
+                    startDateInput.value = '';
+                    endDateInput.value = '';
+                }
+                startDateInput.disabled = isCurrentChecked;
+                endDateInput.disabled = isCurrentChecked;
+            }
+
+            syncCurrentDateFilters();
+            isCurrentInput.addEventListener('change', syncCurrentDateFilters);
+        });
     </script>
 {% endblock %}
