@@ -1,4 +1,5 @@
-﻿## [0.1.5] - 2026-02-07
+﻿
+## [0.1.5] - 2026-02-07
 ### Added
 - Changed the way some of the drop downs behave to be more user friendly.
 - Set up protections against making duplicate accounts.
