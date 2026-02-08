@@ -58,6 +58,14 @@ class User(AbstractUser):
     has_logged_in = models.BooleanField(default=False)
     waiver_expiration = models.DateField(null=True, blank=True)
     background_check_expiration = models.DateField(null=True, blank=True)
+    merged_into = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='merged_source_users'
+    )
+    merged_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey('self', null=True, blank=True,
@@ -81,6 +89,14 @@ class User(AbstractUser):
                 self.waiver_expiration = self.membership_expiration
 
         super().save(*args, **kwargs)
+
+    class Meta(AbstractUser.Meta):
+        constraints = [
+            models.UniqueConstraint(
+                fields=['first_name', 'last_name', 'email'],
+                name='unique_user_first_last_email',
+            ),
+        ]
 
 class BranchManager(models.Manager):
     def regions(self):

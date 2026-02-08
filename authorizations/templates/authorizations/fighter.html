@@ -24,30 +24,38 @@
     {% if auth_officer %}
         <h4>Officer Position</h4>
         <p>Appoint to an officer position</p>
-        <p><strong>Branch</strong></p>
         <form method="post" action="">
             {% csrf_token %}
             <input type="hidden" name="action" value="appoint_branch_marshal">
             <input type="hidden" name="person" value="{{ person }}">
-            <select id="branch" name="branch" class="choices-dropdown">
-                <option value=""></option>
-                {% for option in branch_choices %}
-                <option value="{{ option }}">
-                    {{ option }}
-                </option>
-                {% endfor %}
-            </select><br>
-        <p><strong>Discipline</strong></p>
-            <select id="discipline" name="discipline" class="choices-dropdown">
-                <option value=""></option>
-                {% for option in discipline_choices %}
-                <option value="{{ option }}">
-                    {{ option }}
-                </option>
-                {% endfor %}
-            </select><br>
-        <p><strong>Start Date</strong></p>
-            <input type="date" id="start_date" name="start_date"><br><br>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <p><strong>Branch</strong></p>
+                    <select id="branch" name="branch" class="choices-dropdown">
+                        <option value=""></option>
+                        {% for option in branch_choices %}
+                        <option value="{{ option }}">
+                            {{ option }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <p><strong>Discipline</strong></p>
+                    <select id="discipline" name="discipline" class="choices-dropdown">
+                        <option value=""></option>
+                        {% for option in discipline_choices %}
+                        <option value="{{ option }}">
+                            {{ option }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <p><strong>Start Date</strong></p>
+                    <input type="date" id="start_date" name="start_date" class="form-control">
+                </div>
+            </div><br>
             <button type="submit" class="btn btn-primary"> Appoint Branch Marshal</button>
         </form><br>
     {% endif %}
@@ -115,6 +123,19 @@
     </div>
     {% if pending_authorization_list %}
         <h4>Pending Authorizations</h4>
+        {% if auth_officer %}
+        <div class="row mb-2">
+            <div class="col-md-4">
+                <label for="kao_submit_as_control"><strong>Approve As (optional):</strong></label>
+                <select id="kao_submit_as_control" class="form-control">
+                    <option value="">My own account</option>
+                    {% for person in all_people %}
+                        <option value="{{ person.user.id }}"{% if selected_submit_as_user_id and selected_submit_as_user_id|stringformat:"s" == person.user.id|stringformat:"s" %} selected{% endif %}>{{ person }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        {% endif %}
         <div class="row">
             {% for discipline, data in pending_authorization_list.items %}
                 <div class="col-md-3">
@@ -137,12 +158,15 @@
                         </p>
                         <p><strong>Status:</strong> {{ data.status }}</p>
                         <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
-                        {% if is_marshal and data.status == "Pending" %}
-                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
+                        {% if is_marshal and data.status == "Pending" or auth_officer and data.status == "Pending" %}
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
                             <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
                             <input type="hidden" name="action_note" value="">
+                            {% if auth_officer %}
+                                <input type="hidden" name="submit_as_user_id" value="">
+                            {% endif %}
                             {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
                                 <input type="hidden" name="pending_authorization_action" value="1">
                             {% endif %}
@@ -150,19 +174,25 @@
                         </form>
                         {% endif %}
                         {% if data.status == "Needs Concurrence" and data.can_concur %}
-                        <form method="post" action="">
+                        <form method="post" action=""{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="concur_authorization">
                             <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
+                            {% if auth_officer %}
+                                <input type="hidden" name="submit_as_user_id" value="">
+                            {% endif %}
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
-                        {% if regional_marshal and data.status == "Needs Regional Approval" %}
-                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
+                        {% if regional_marshal and data.status == "Needs Regional Approval" or auth_officer and data.status == "Needs Regional Approval" %}
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
                             <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
                             <input type="hidden" name="action_note" value="">
+                            {% if auth_officer %}
+                                <input type="hidden" name="submit_as_user_id" value="">
+                            {% endif %}
                             {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
                                 <input type="hidden" name="pending_authorization_action" value="1">
                             {% endif %}
@@ -170,11 +200,14 @@
                         </form>
                         {% endif %}
                         {% if auth_officer and data.status == "Needs Kingdom Approval" %}
-                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
                             <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
                             <input type="hidden" name="action_note" value="">
+                            {% if auth_officer %}
+                                <input type="hidden" name="submit_as_user_id" value="">
+                            {% endif %}
                             {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
                                 <input type="hidden" name="pending_authorization_action" value="1">
                             {% endif %}
@@ -287,6 +320,20 @@
                         {% endfor %}
                     </select>
                     <input type="hidden" id="marshal_id" name="marshal_id" value="">
+                </div>
+                <div class="mb-3">
+                    <label for="concurring_fighter_id">Concurring Fighter (optional):</label>
+                    <select id="concurring_fighter_id" name="concurring_fighter_id" class="form-control choices-dropdown">
+                        <option value="">-- No immediate concurrence --</option>
+                        {% for person in all_people %}
+                            <option value="{{ person.user.id }}"{% if pending_concurring_fighter_user_id and pending_concurring_fighter_user_id == person.user.id %} selected{% endif %}>
+                                {{ person }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <small class="form-text text-muted">
+                        Used only when a selected authorization requires concurrence.
+                    </small>
                 </div>
             {% endif %}
             <label for="discipline-select">Discipline:</label>
@@ -445,31 +492,57 @@
 {% block script %}
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        // Initialize Choices.js for the authorizing marshal dropdown if it exists
-        let choicesInstance = null;
-        const authorizingMarshalSelect = document.getElementById('authorizing_marshal');
-        const marshalIdInput = document.getElementById('marshal_id');
-        const disciplineSelect = document.getElementById('discipline-select');
-        const stylesSelect = document.getElementById('weapon-styles-select');
-        const cartContainer = document.getElementById('cart-container');
-        const form = document.getElementById('new_authorization_form');
-
-        if (!disciplineSelect || !stylesSelect || !cartContainer || !form) {
-            return;
-        }
-
-        // Initialize Choices.js if the dropdown exists
-        if (authorizingMarshalSelect) {
-            choicesInstance = new Choices(authorizingMarshalSelect, {
+        function initSearchableSelect(selectElement, searchResultLimit) {
+            if (!selectElement || typeof Choices === 'undefined') {
+                return null;
+            }
+            return new Choices(selectElement, {
                 removeItemButton: true,
                 shouldSort: false,
                 searchEnabled: true,
-                searchResultLimit: 10,
+                searchResultLimit: searchResultLimit || 10,
                 fuseOptions: {
                     threshold: 0.3,
                 },
                 itemSelectText: '',
             });
+        }
+
+        // Initialize searchable dropdowns.
+        let authorizingMarshalChoices = null;
+        const authorizingMarshalSelect = document.getElementById('authorizing_marshal');
+        const concurringFighterSelect = document.getElementById('concurring_fighter_id');
+        const officerBranchSelect = document.getElementById('branch');
+        const officerDisciplineSelect = document.getElementById('discipline');
+        const marshalIdInput = document.getElementById('marshal_id');
+        const submitAsControl = document.getElementById('kao_submit_as_control');
+        const disciplineSelect = document.getElementById('discipline-select');
+        const stylesSelect = document.getElementById('weapon-styles-select');
+        const cartContainer = document.getElementById('cart-container');
+        const form = document.getElementById('new_authorization_form');
+
+        initSearchableSelect(officerBranchSelect, 1000);
+        initSearchableSelect(officerDisciplineSelect, 1000);
+        initSearchableSelect(concurringFighterSelect, 20);
+        initSearchableSelect(submitAsControl, 20);
+
+        const approvalForms = document.querySelectorAll('form[data-kao-submit-as="1"]');
+        approvalForms.forEach(function (approvalForm) {
+            approvalForm.addEventListener('submit', function () {
+                if (!submitAsControl) {
+                    return;
+                }
+                const fieldName = approvalForm.dataset.submitAsField || 'submit_as_user_id';
+                const hiddenInput = approvalForm.querySelector(`input[name="${fieldName}"]`);
+                if (hiddenInput) {
+                    hiddenInput.value = submitAsControl.value || '';
+                }
+            });
+        });
+
+        // Initialize Choices.js for the authorizing marshal dropdown
+        if (authorizingMarshalSelect) {
+            authorizingMarshalChoices = initSearchableSelect(authorizingMarshalSelect, 20);
 
             // Update marshal_id when selection changes
             authorizingMarshalSelect.addEventListener('change', function () {
@@ -481,6 +554,10 @@
                     console.log('DEBUG: Setting marshal_id to:', userId);
                 }
             });
+        }
+
+        if (!disciplineSelect || !stylesSelect || !cartContainer || !form) {
+            return;
         }
 
         console.log('Initial Discipline Dropdown Content:', disciplineSelect.innerHTML);
@@ -589,8 +666,9 @@
             }
 
             // Handle marshal selection if Choices.js is initialized
-            if (choicesInstance) {
-                const selectedValue = choicesInstance.getValue(true)[0];
+            if (authorizingMarshalChoices) {
+                const selectedChoiceValue = authorizingMarshalChoices.getValue(true);
+                const selectedValue = Array.isArray(selectedChoiceValue) ? selectedChoiceValue[0] : selectedChoiceValue;
                 console.log('DEBUG: Choices.js selected value:', selectedValue);
                 if (selectedValue) {
                     const selectedOption = authorizingMarshalSelect.querySelector(`option[value="${selectedValue}"]`);

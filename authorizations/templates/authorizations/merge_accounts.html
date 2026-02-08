@@ -1,0 +1,341 @@
+{% extends "authorizations/inner_layout.html" %}
+
+{% block title %}
+    Merge Accounts
+{% endblock %}
+
+{% block body %}
+<h1>Merge Accounts</h1>
+<p>This tool is for the Kingdom Authorization Officer only.</p>
+<p>Step 1: select the old identity to be migrated. Step 2: select the new identity that will inherit records.</p>
+
+<h3>1. Old Identity To Be Migrated</h3>
+<form method="get" id="old-search-form" class="mb-2">
+    <input type="hidden" name="action" value="search_old">
+    <div class="col-md-3">
+        <label for="old_sca_name"><strong>SCA Name</strong></label>
+        <select id="old_sca_name" name="old_sca_name" class="choices-dropdown">
+            <option value="">-- Select a fighter --</option>
+            {% for person_name in all_people %}
+                <option value="{{ person_name }}"{% if old_sca_name == person_name %} selected{% endif %}>{{ person_name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+</form>
+
+{% if old_sca_name %}
+    {% if old_matches %}
+        <h4>Matching Accounts For Old Identity</h4>
+        <form method="get" id="old-select-form">
+            <input type="hidden" name="action" value="select_source">
+            <input type="hidden" name="old_sca_name" value="{{ old_sca_name }}">
+            <table>
+                <tr>
+                    <th>Select</th>
+                    <th>User ID</th>
+                    <th>SCA Name</th>
+                    <th>Username</th>
+                    <th>Email</th>
+                    <th>Branch</th>
+                </tr>
+                {% for person in old_matches %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" name="source_candidate" value="{{ person.user_id }}"
+                                   {% if selected_source_user_id == person.user_id %}checked{% endif %}>
+                        </td>
+                        <td>{{ person.user_id }}</td>
+                        <td>{{ person.sca_name|default:"-" }}</td>
+                        <td>{{ person.user.username }}</td>
+                        <td>{{ person.user.email|default:"-" }}</td>
+                        <td>{% if person.branch %}{{ person.branch.name }}{% else %}-{% endif %}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+            <p class="mt-2">
+                <button type="submit" class="btn btn-primary">Use Selected Old Identity</button>
+            </p>
+        </form>
+    {% else %}
+        <p>No accounts found with that SCA name.</p>
+    {% endif %}
+{% endif %}
+
+{% if selected_source_person %}
+    <hr>
+    <h3>Selected Old Identity</h3>
+    <p>
+        User #{{ selected_source_person.user_id }} |
+        {{ selected_source_person.sca_name|default:"-" }} |
+        {{ selected_source_person.user.username }} |
+        {{ selected_source_person.user.email|default:"-" }}
+    </p>
+
+    <h3>2. New Identity To Inherit Authorizations</h3>
+    <form method="get" id="new-search-form" class="mb-2">
+        <input type="hidden" name="action" value="search_new">
+        <input type="hidden" name="old_sca_name" value="{{ old_sca_name }}">
+        <input type="hidden" name="selected_source_user_id" value="{{ selected_source_person.user_id }}">
+        <div class="col-md-3">
+            <label for="new_sca_name"><strong>SCA Name</strong></label>
+            <select id="new_sca_name" name="new_sca_name" class="choices-dropdown">
+                <option value="">-- Select a fighter --</option>
+                {% for person_name in all_people %}
+                    <option value="{{ person_name }}"{% if new_sca_name == person_name %} selected{% endif %}>{{ person_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+
+    {% if new_sca_name %}
+        {% if new_matches %}
+            <h4>Matching Accounts For New Identity</h4>
+            <form method="get" id="new-select-form">
+                <input type="hidden" name="action" value="select_survivor">
+                <input type="hidden" name="old_sca_name" value="{{ old_sca_name }}">
+                <input type="hidden" name="new_sca_name" value="{{ new_sca_name }}">
+                <input type="hidden" name="selected_source_user_id" value="{{ selected_source_person.user_id }}">
+                <table>
+                    <tr>
+                        <th>Select</th>
+                        <th>User ID</th>
+                        <th>SCA Name</th>
+                        <th>Username</th>
+                        <th>Email</th>
+                        <th>Branch</th>
+                    </tr>
+                    {% for person in new_matches %}
+                        <tr>
+                            <td>
+                                <input type="checkbox" name="survivor_candidate" value="{{ person.user_id }}"
+                                       {% if selected_survivor_user_id == person.user_id %}checked{% endif %}>
+                            </td>
+                            <td>{{ person.user_id }}</td>
+                            <td>{{ person.sca_name|default:"-" }}</td>
+                            <td>{{ person.user.username }}</td>
+                            <td>{{ person.user.email|default:"-" }}</td>
+                            <td>{% if person.branch %}{{ person.branch.name }}{% else %}-{% endif %}</td>
+                        </tr>
+                    {% endfor %}
+                </table>
+                <p class="mt-2">
+                    <button type="submit" class="btn btn-primary">Use Selected New Identity</button>
+                </p>
+            </form>
+        {% else %}
+            <p>No accounts found with that SCA name.</p>
+        {% endif %}
+    {% endif %}
+{% endif %}
+
+{% if selected_survivor_person and selected_source_person %}
+    <h3>Selected New Identity</h3>
+    <p>
+        User #{{ selected_survivor_person.user_id }} |
+        {{ selected_survivor_person.sca_name|default:"-" }} |
+        {{ selected_survivor_person.user.username }} |
+        {{ selected_survivor_person.user.email|default:"-" }}
+    </p>
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="preview">
+        <input type="hidden" name="old_sca_name" value="{{ old_sca_name }}">
+        <input type="hidden" name="new_sca_name" value="{{ new_sca_name }}">
+        <input type="hidden" name="source_user_id" value="{{ selected_source_person.user_id }}">
+        <input type="hidden" name="survivor_user_id" value="{{ selected_survivor_person.user_id }}">
+        <p><button type="submit" class="btn btn-primary">Preview Merge</button></p>
+    </form>
+{% endif %}
+
+{% if preview_data %}
+    <hr>
+    <h3>Merge Preview</h3>
+    <p><strong>Survivor Account:</strong> #{{ preview_data.survivor_user.id }} ({{ preview_data.survivor_user.username }})</p>
+    <p><strong>Source Account (will be tombstoned):</strong> #{{ preview_data.source_user.id }} ({{ preview_data.source_user.username }})</p>
+    <p><strong>Newest Account (default profile source):</strong> #{{ preview_data.newer_user.id }} ({{ preview_data.newer_user.username }})</p>
+
+    <h4>Authorization Resolution (Newest Wins)</h4>
+    {% if preview_data.authorization_rows %}
+        <table>
+            <tr>
+                <th>Discipline</th>
+                <th>Style</th>
+                <th>Winning Authorization</th>
+                <th>Winning Account</th>
+                <th>Winning Status</th>
+                <th>Sanction Kept</th>
+                <th>Candidates</th>
+            </tr>
+            {% for row in preview_data.authorization_rows %}
+                <tr>
+                    <td>{{ row.discipline_name }}</td>
+                    <td>{{ row.style_name }}</td>
+                    <td>#{{ row.winner_id }}</td>
+                    <td>#{{ row.winner_user_id }} ({{ row.winner_sca_name }})</td>
+                    <td>{{ row.winner_status }}</td>
+                    <td>{% if row.sanction_kept %}Yes{% else %}No{% endif %}</td>
+                    <td>
+                        {% for candidate in row.candidates %}
+                            #{{ candidate.id }} / user #{{ candidate.person_id }} / {{ candidate.status.name|default:"Unknown" }} / {{ candidate.updated_at }}<br>
+                        {% endfor %}
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No authorization records found across the selected accounts.</p>
+    {% endif %}
+
+    <h4>Branch Marshal Offices</h4>
+    <p>Expired offices will be preserved as historical records on the survivor account.</p>
+    <p>For active offices, keep checked items active. Unchecked active offices will be ended immediately and preserved historically.</p>
+
+    <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="execute">
+        <input type="hidden" name="old_sca_name" value="{{ old_sca_name }}">
+        <input type="hidden" name="new_sca_name" value="{{ new_sca_name }}">
+        <input type="hidden" name="survivor_user_id" value="{{ preview_data.survivor_user.id }}">
+        <input type="hidden" name="source_user_id" value="{{ preview_data.source_user.id }}">
+        <input type="hidden" name="honeypot" value="">
+
+        {% if preview_data.active_offices %}
+            <table>
+                <tr>
+                    <th>Keep Active</th>
+                    <th>Office ID</th>
+                    <th>Current Account</th>
+                    <th>Branch</th>
+                    <th>Discipline</th>
+                    <th>Start</th>
+                    <th>End</th>
+                </tr>
+                {% for office in preview_data.active_offices %}
+                    <tr>
+                        <td>
+                            <input type="checkbox" name="keep_active_office_ids" value="{{ office.id }}"
+                                   {% if office.id in selected_keep_active_office_ids %}checked{% endif %}>
+                        </td>
+                        <td>#{{ office.id }}</td>
+                        <td>#{{ office.person_id }} {% if office.person %}({{ office.person.sca_name }}){% endif %}</td>
+                        <td>{% if office.branch %}{{ office.branch.name }}{% else %}-{% endif %}</td>
+                        <td>{% if office.discipline %}{{ office.discipline.name }}{% else %}-{% endif %}</td>
+                        <td>{{ office.start_date }}</td>
+                        <td>{{ office.end_date }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <p>No active branch marshal offices found.</p>
+        {% endif %}
+
+        {% if preview_data.expired_offices %}
+            <h5>Expired Offices (Automatically Preserved)</h5>
+            <table>
+                <tr>
+                    <th>Office ID</th>
+                    <th>Current Account</th>
+                    <th>Branch</th>
+                    <th>Discipline</th>
+                    <th>Start</th>
+                    <th>End</th>
+                </tr>
+                {% for office in preview_data.expired_offices %}
+                    <tr>
+                        <td>#{{ office.id }}</td>
+                        <td>#{{ office.person_id }} {% if office.person %}({{ office.person.sca_name }}){% endif %}</td>
+                        <td>{% if office.branch %}{{ office.branch.name }}{% else %}-{% endif %}</td>
+                        <td>{% if office.discipline %}{{ office.discipline.name }}{% else %}-{% endif %}</td>
+                        <td>{{ office.start_date }}</td>
+                        <td>{{ office.end_date }}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% endif %}
+
+        <h4>Merged Profile (Editable)</h4>
+        <p>Defaults come from the newest account. You may override any profile field before merge.</p>
+        {% if profile_form %}
+            {{ profile_form.non_field_errors }}
+            {% for field in profile_form %}
+                {% if field.name != 'honeypot' %}
+                    <div class="mb-2">
+                        <label for="{{ field.id_for_label }}"><strong>{{ field.label }}</strong></label><br>
+                        {{ field }}
+                        {% if field.help_text %}
+                            <div><small>{{ field.help_text }}</small></div>
+                        {% endif %}
+                        {% for error in field.errors %}
+                            <div class="text-danger">{{ error }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+
+        <div class="mb-3">
+            <label for="merge_action_note"><strong>Merge Action Note (Required)</strong></label><br>
+            <textarea id="merge_action_note" name="merge_action_note" rows="4" cols="80" required>{{ merge_action_note }}</textarea>
+        </div>
+
+        <p>
+            <button type="submit" class="btn btn-success">Execute Merge</button>
+            <a href="{% url 'merge_accounts' %}" class="btn btn-danger">Cancel Merge</a>
+        </p>
+    </form>
+{% endif %}
+{% endblock %}
+
+{% block script %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const dropdowns = document.querySelectorAll('.choices-dropdown');
+        dropdowns.forEach(function (dropdown) {
+            new Choices(dropdown, {
+                removeItemButton: true,
+                shouldSort: false,
+                searchEnabled: true,
+                searchResultLimit: 1000,
+                fuseOptions: {
+                    threshold: 0.3,
+                },
+                itemSelectText: '',
+            });
+        });
+
+        function submitOnSelection(selectId, formId) {
+            const select = document.getElementById(selectId);
+            const form = document.getElementById(formId);
+            if (!select || !form) {
+                return;
+            }
+            select.addEventListener('change', function () {
+                if (select.value) {
+                    form.submit();
+                }
+            });
+        }
+
+        submitOnSelection('old_sca_name', 'old-search-form');
+        submitOnSelection('new_sca_name', 'new-search-form');
+
+        function enforceSingleCheckbox(groupName) {
+            const boxes = document.querySelectorAll(`input[name="${groupName}"]`);
+            boxes.forEach(function (box) {
+                box.addEventListener('change', function () {
+                    if (this.checked) {
+                        boxes.forEach(function (other) {
+                            if (other !== box) {
+                                other.checked = false;
+                            }
+                        });
+                    }
+                });
+            });
+        }
+
+        enforceSingleCheckbox('source_candidate');
+        enforceSingleCheckbox('survivor_candidate');
+    });
+</script>
+{% endblock %}

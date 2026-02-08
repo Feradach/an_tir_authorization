@@ -216,6 +216,7 @@
                     pendingForm.appendChild(hidden);
                 }
                 hidden.value = note;
+
                 pendingForm.dataset.noteValidated = 'true';
                 modal.hide();
                 if (typeof pendingForm.requestSubmit === 'function') {

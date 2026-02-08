@@ -43,18 +43,35 @@
         </div>
         {% for field in person_form %}
             {% if field.name != 'background_check_expiration' and field.name != 'honeypot' %}
-                <div class="form-group">
-                    {{ field.label_tag }}
-                    {{ field }}
-                    {% if field.help_text %}
-                        <small class="form-text text-muted">{{ field.help_text }}</small>
-                    {% endif %}
-                    {% if field.errors %}
-                        <div class="invalid-feedback d-block">
-                            {{ field.errors.0 }}
+                {% if field.name == 'state_province' or field.name == 'title' or field.name == 'branch' or field.name == 'parent_id' %}
+                    <div class="form-group register-inline-field">
+                        {{ field.label_tag }}
+                        <div class="register-inline-control">
+                            {{ field }}
+                            {% if field.help_text %}
+                                <small class="form-text text-muted">{{ field.help_text }}</small>
+                            {% endif %}
+                            {% if field.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {{ field.errors.0 }}
+                                </div>
+                            {% endif %}
                         </div>
-                    {% endif %}
-                </div>
+                    </div>
+                {% else %}
+                    <div class="form-group">
+                        {{ field.label_tag }}
+                        {{ field }}
+                        {% if field.help_text %}
+                            <small class="form-text text-muted">{{ field.help_text }}</small>
+                        {% endif %}
+                        {% if field.errors %}
+                            <div class="invalid-feedback d-block">
+                                {{ field.errors.0 }}
+                            </div>
+                        {% endif %}
+                    </div>
+                {% endif %}
             {% endif %}
         {% endfor %}
         {% if TEST_FEATURES_ENABLED %}
@@ -74,4 +91,89 @@
         <button type="submit" class="btn btn-primary mt-3">Create Account</button>
     </form>
 
+{% endblock %}
+
+{% block script %}
+<style>
+    #register_form .register-inline-field {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    #register_form .register-inline-field > label {
+        min-width: 0;
+        margin: 0;
+        white-space: nowrap;
+    }
+    #register_form .register-inline-field .register-inline-control {
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+    #register_form .choices.choices-compact {
+        margin-bottom: 0;
+        width: 220px;
+        max-width: 100%;
+    }
+    #register_form .choices.choices-compact .choices__inner {
+        min-height: 30px;
+        padding: 2px 8px;
+        font-size: inherit;
+        line-height: 1.2;
+    }
+    #register_form .choices.choices-compact[data-type*="select-one"] .choices__inner {
+        padding-bottom: 2px;
+    }
+    #register_form .choices.choices-compact[data-type*="select-one"]::after {
+        top: 50%;
+        transform: translateY(-50%);
+    }
+    #register_form .choices.choices-compact .choices__list--single {
+        padding: 2px 16px 2px 0;
+    }
+    #register_form .choices.choices-compact .choices__input {
+        font-size: inherit;
+        margin-bottom: 0;
+        padding: 2px 0;
+    }
+    @media (max-width: 768px) {
+        #register_form .register-inline-field {
+            display: block;
+        }
+        #register_form .register-inline-field > label {
+            min-width: 0;
+            margin-top: 0;
+        }
+    }
+</style>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        if (typeof Choices === 'undefined') {
+            return;
+        }
+
+        function initRegisterSearchableSelect(fieldId) {
+            const element = document.getElementById(fieldId);
+            if (!element) {
+                return null;
+            }
+            const instance = new Choices(element, {
+                removeItemButton: false,
+                shouldSort: false,
+                searchEnabled: true,
+                searchResultLimit: 15,
+                fuseOptions: {
+                    threshold: 0.3,
+                },
+                itemSelectText: '',
+            });
+            instance.containerOuter.element.classList.add('choices-compact');
+            return instance;
+        }
+
+        initRegisterSearchableSelect('id_state_province');
+        initRegisterSearchableSelect('id_title');
+        initRegisterSearchableSelect('id_branch');
+        initRegisterSearchableSelect('id_parent_id');
+    });
+</script>
 {% endblock %}

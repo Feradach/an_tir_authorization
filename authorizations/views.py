@@ -19,11 +19,13 @@ from django.core.paginator import Paginator
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.urls import reverse
+from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline
 from itertools import groupby
+from collections import defaultdict
 from operator import attrgetter
 from pdfrw import PdfReader, PdfWriter, PdfName, PageMerge
 from reportlab.pdfgen import canvas
@@ -72,6 +74,26 @@ def _can_concur_authorization(user, authorization: Authorization) -> bool:
     if authorization.marshal and authorization.marshal.user_id == user.id:
         return False
     return is_authorized_in_discipline(user, authorization.style.discipline)
+
+
+def _resolve_submit_as_user(request, field_name='submit_as_user_id'):
+    submit_as = request.user
+    if not is_kingdom_authorization_officer(request.user):
+        return submit_as, None
+    submit_as_raw = (request.POST.get(field_name) or '').strip()
+    if not submit_as_raw:
+        return submit_as, None
+    try:
+        submit_as_id = int(submit_as_raw)
+    except (TypeError, ValueError):
+        return None, 'Selected submitting marshal was not found.'
+    try:
+        submit_as = User.objects.select_related('person').get(id=submit_as_id)
+    except User.DoesNotExist:
+        return None, 'Selected submitting marshal was not found.'
+    if not hasattr(submit_as, 'person') or submit_as.person is None:
+        return None, 'Selected submitting marshal has no fighter record.'
+    return submit_as, None
 
 
 def _user_can_view_note(user, note) -> bool:
@@ -151,7 +173,10 @@ def validate_authorization_action(request):
         return JsonResponse({'ok': False, 'message': 'Authorization not found.'}, status=404)
 
     if action == 'approve_authorization':
-        ok, msg = validate_approve_authorization(request.user, authorization)
+        submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+        if submit_as_error:
+            return JsonResponse({'ok': False, 'message': submit_as_error}, status=400)
+        ok, msg = validate_approve_authorization(request.user, submit_as_user, authorization)
         return JsonResponse({'ok': ok, 'message': msg})
     if action == 'reject_authorization':
         ok, msg = validate_reject_authorization(request.user, authorization)
@@ -288,12 +313,16 @@ state_province_choices = state_choices + province_choices
 def index(request):
     """This is the page they land on for the authorization system."""
 
-    all_people = Person.objects.all().order_by('sca_name').values_list('sca_name',                                                                            flat=True).distinct()
+    all_people_qs = Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name')
+    all_people = all_people_qs.values_list('sca_name', flat=True).distinct()
     fighter_name = request.GET.get('sca_name')
 
     # If a fighter name is selected, handle potential duplicates gracefully
     if fighter_name:
-        matches = Person.objects.select_related('branch__region').filter(sca_name=fighter_name)
+        matches = Person.objects.select_related('branch__region').filter(
+            sca_name=fighter_name,
+            user__merged_into__isnull=True,
+        )
         match_count = matches.count()
 
         # Single match: go straight to fighter card
@@ -305,6 +334,7 @@ def index(request):
         if match_count > 1:
             context = {
                 'all_people': all_people,
+                'all_people_people': all_people_qs,
                 'name_matches': matches.order_by('user_id'),
             }
             # If anonymous, we don't populate marshal-related context
@@ -320,7 +350,10 @@ def index(request):
 
     if request.user.is_anonymous:
         # If the fighter name hasn't been chosen and the user is anonymous, load the page.
-        anon_context = {'all_people': all_people}
+        anon_context = {
+            'all_people': all_people,
+            'all_people_people': all_people_qs,
+        }
         if 'name_matches' in locals() and name_matches:
             anon_context['name_matches'] = name_matches
         return render(request, 'authorizations/index.html' , anon_context)
@@ -397,19 +430,30 @@ def index(request):
                 and pending_action.get('action') == 'approve_authorization'
                 and pending_action.get('authorization_id') == authorization.id
             )
+            pending_submit_as_user_id = pending_action.get('submit_as_user_id') if is_pending_submit else None
+            submit_as_user_id_raw = (request.POST.get('submit_as_user_id') or '').strip()
+            if pending_submit_as_user_id and not submit_as_user_id_raw:
+                mutable_post = request.POST.copy()
+                mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
+                request.POST = mutable_post
             requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
                     messages.error(request, 'A note is required for marshal promotion actions.')
                     return redirect('index')
-                ok, msg = validate_approve_authorization(request.user, authorization)
+                submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+                if submit_as_error:
+                    messages.error(request, submit_as_error)
+                    return redirect('index')
+                ok, msg = validate_approve_authorization(request.user, submit_as_user, authorization)
                 if not ok:
                     messages.error(request, msg)
                     return redirect('index')
                 request.session[pending_key] = {
                     'action': 'approve_authorization',
                     'authorization_id': authorization.id,
+                    'submit_as_user_id': submit_as_user.id if submit_as_user else None,
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
@@ -460,6 +504,11 @@ def index(request):
                 request.session.modified = True
 
 
+    pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
+    selected_submit_as_user_id = None
+    if pending_authorization_action and pending_authorization_action.get('action') == 'approve_authorization':
+        selected_submit_as_user_id = pending_authorization_action.get('submit_as_user_id')
+
     base_context = {
         'senior_marshal': senior_marshal,
         'branch_marshal': branch_marshal,
@@ -469,7 +518,9 @@ def index(request):
         'auth_officer': auth_officer,
         'pending_authorizations': pending_authorizations,
         'all_people': all_people,
-        'pending_authorization_action': _get_pending_session(request, 'pending_authorization_action'),
+        'all_people_people': all_people_qs,
+        'pending_authorization_action': pending_authorization_action,
+        'selected_submit_as_user_id': selected_submit_as_user_id,
     }
 
     # Include potential duplicate results for logged-in users
@@ -704,7 +755,7 @@ def password_reset_token(request, uidb64, token):
     except (TypeError, ValueError, OverflowError, User.DoesNotExist):
         user = None
 
-    if not user or not _PASSWORD_TOKEN_GENERATOR.check_token(user, token):
+    if (not user) or user.merged_into_id or (not _PASSWORD_TOKEN_GENERATOR.check_token(user, token)):
         messages.error(request, 'This password reset link is invalid or has expired.')
         return render(request, 'authorizations/password_reset_token.html', {'valid_link': False})
 
@@ -756,7 +807,10 @@ def recover_account(request):
                 return redirect('login')
                 
             try:
-                user = User.objects.get(username=username)
+                user = User.objects.get(
+                    username=username,
+                    merged_into__isnull=True,
+                )
             except User.DoesNotExist:
                 # Avoid user enumeration: behave as if a reset was requested.
                 messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
@@ -801,7 +855,10 @@ def recover_account(request):
                 return render(request, 'authorizations/recover_account.html')
 
             logger.info('Username recovery requested for email=%s ip=%s', email, ip_address)
-            users = User.objects.filter(email=email)
+            users = User.objects.filter(
+                email=email,
+                merged_into__isnull=True,
+            )
             login_path = reverse('login')
             login_url = f"{settings.SITE_URL}{login_path}"
                 
@@ -1223,6 +1280,14 @@ def fighter(request, person_id):
 
     Create a link on the authorization search to go to this page."""
 
+    merged_user = User.objects.select_related('merged_into').filter(
+        id=person_id,
+        merged_into__isnull=False,
+    ).first()
+    if merged_user and merged_user.merged_into_id:
+        messages.info(request, 'That fighter record was merged. Redirected to the current record.')
+        return redirect('fighter', person_id=merged_user.merged_into_id)
+
     # Get the person who's card is being requested
     try:
         person = Person.objects.get(user_id=person_id)
@@ -1283,19 +1348,30 @@ def fighter(request, person_id):
                 and pending_action.get('action') == 'approve_authorization'
                 and pending_action.get('authorization_id') == authorization.id
             )
+            pending_submit_as_user_id = pending_action.get('submit_as_user_id') if is_pending_submit else None
+            submit_as_user_id_raw = (request.POST.get('submit_as_user_id') or '').strip()
+            if pending_submit_as_user_id and not submit_as_user_id_raw:
+                mutable_post = request.POST.copy()
+                mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
+                request.POST = mutable_post
             requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
                     messages.error(request, 'A note is required for marshal promotion actions.')
                     return redirect('fighter', person_id=person_id)
-                ok, msg = validate_approve_authorization(request.user, authorization)
+                submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+                if submit_as_error:
+                    messages.error(request, submit_as_error)
+                    return redirect('fighter', person_id=person_id)
+                ok, msg = validate_approve_authorization(request.user, submit_as_user, authorization)
                 if not ok:
                     messages.error(request, msg)
                     return redirect('fighter', person_id=person_id)
                 request.session[pending_key] = {
                     'action': 'approve_authorization',
                     'authorization_id': authorization.id,
+                    'submit_as_user_id': submit_as_user.id if submit_as_user else None,
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
@@ -1371,7 +1447,12 @@ def fighter(request, person_id):
                 messages.error(request, 'Authorization is not awaiting concurrence.')
                 return redirect('fighter', person_id=person_id)
 
-            if not _can_concur_authorization(request.user, authorization):
+            submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+            if submit_as_error:
+                messages.error(request, submit_as_error)
+                return redirect('fighter', person_id=person_id)
+
+            if not _can_concur_authorization(submit_as_user, authorization):
                 messages.error(request, 'You do not have permission to concur with this authorization.')
                 return redirect('fighter', person_id=person_id)
 
@@ -1383,7 +1464,7 @@ def fighter(request, person_id):
                 status__name='Needs Concurrence',
             )
 
-            if pending_auths.filter(marshal__user=request.user).exists():
+            if pending_auths.filter(marshal__user=submit_as_user).exists():
                 messages.error(request, 'You cannot concur with an authorization you proposed.')
                 return redirect('fighter', person_id=person_id)
 
@@ -1392,7 +1473,7 @@ def fighter(request, person_id):
                 return redirect('fighter', person_id=person_id)
 
             try:
-                concurring_person = Person.objects.get(user=request.user)
+                concurring_person = Person.objects.get(user=submit_as_user)
             except Person.DoesNotExist:
                 messages.error(request, 'Unable to find your fighter record.')
                 return redirect('fighter', person_id=person_id)
@@ -1413,6 +1494,7 @@ def fighter(request, person_id):
                 pending.concurring_fighter = concurring_person
                 pending.expiration = calculate_authorization_expiration(pending.person, pending.style)
                 pending.status = status_to_set
+                pending.updated_by = submit_as_user
                 pending.save()
 
             if not AUTHORIZATION_OFFICER_SIGN_OFF and status_to_set == active_status:
@@ -1523,7 +1605,9 @@ def fighter(request, person_id):
     for auth in pending_authorization_list:
         discipline_name = auth.style.discipline.name
         if discipline_name not in pending_authorizations:
-            can_concur = auth.status.name == 'Needs Concurrence' and _can_concur_authorization(request.user, auth)
+            can_concur = auth.status.name == 'Needs Concurrence' and (
+                auth_officer or _can_concur_authorization(request.user, auth)
+            )
             pending_authorizations[discipline_name] = {
                 'auth_id': auth.id,
                 'marshal_name': auth.marshal.sca_name if auth.marshal else '',
@@ -1539,6 +1623,12 @@ def fighter(request, person_id):
             style_name = auth.style.name
             if style_name not in pending_authorizations[discipline_name]['styles']:
                 pending_authorizations[discipline_name]['styles'].append(style_name)
+            if auth.status.name == 'Needs Concurrence':
+                pending_authorizations[discipline_name]['can_concur'] = (
+                    pending_authorizations[discipline_name]['can_concur']
+                    or auth_officer
+                    or _can_concur_authorization(request.user, auth)
+                )
 
     pending_waivers = {}
     for auth in pending_waiver_list:
@@ -1615,10 +1705,12 @@ def fighter(request, person_id):
     discipline_choices = Discipline.objects.all().order_by('name')
     regional_marshal = is_regional_marshal(request.user)
     pending_note_required = False
+    pending_concurring_fighter_user_id = None
     pending_key = f'pending_authorization_{person_id}'
     pending = _get_pending_session(request, pending_key)
     if pending and pending.get('person_id') == person_id:
         pending_style_ids = pending.get('style_ids', [])
+        pending_concurring_fighter_user_id = pending.get('concurring_fighter_user_id')
         created_at = pending.get('created_at')
         if created_at:
             try:
@@ -1637,6 +1729,9 @@ def fighter(request, person_id):
             )
             pending_note_required = any(int(style_id) in marshal_style_ids for style_id in pending_style_ids)
     pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
+    selected_submit_as_user_id = None
+    if pending_authorization_action and pending_authorization_action.get('action') == 'approve_authorization':
+        selected_submit_as_user_id = pending_authorization_action.get('submit_as_user_id')
 
     officer_notes = []
     if can_manage_officer_comments:
@@ -1656,8 +1751,8 @@ def fighter(request, person_id):
             'equestrian': equestrian,
             'youth': youth,
             'fighter': fighter,
-            'is_marshal': is_senior_marshal(request.user),
-            'auth_form': CreateAuthorizationForm(user=request.user),
+            'is_marshal': is_senior_marshal(request.user) or auth_officer,
+            'auth_form': CreateAuthorizationForm(user=request.user, show_all=auth_officer),
             'auth_officer': auth_officer,
             'can_manage_officer_comments': can_manage_officer_comments,
             'officer_notes': officer_notes,
@@ -1666,13 +1761,15 @@ def fighter(request, person_id):
             'discipline_choices': discipline_choices,
             'sanctions': sanctions,
             'regional_marshal': regional_marshal,
-            'all_people': Person.objects.all().order_by('sca_name'),
+            'all_people': Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name'),
             'pending_waivers': pending_waivers,
             'pending_note_required': pending_note_required,
             'pending_authorization_action': pending_authorization_action,
+            'selected_submit_as_user_id': selected_submit_as_user_id,
             'can_view_notes': can_view_notes,
             'visible_notes': visible_notes,
             'today': date.today(),
+            'pending_concurring_fighter_user_id': pending_concurring_fighter_user_id,
         },
     )
 
@@ -1957,18 +2054,44 @@ def add_authorization(request, person_id):
             needs_concurrence_status = AuthorizationStatus.objects.get(name='Needs Concurrence')
             pending_key = f'pending_authorization_{person_id}'
             is_pending_submit = request.POST.get('pending_authorization') == '1'
+            pending_concurring_fighter_user_id = None
             if is_pending_submit:
                 pending = _get_pending_session(request, pending_key)
                 if not pending:
                     messages.error(request, 'Pending authorization not found. Please try again.')
                     return redirect('fighter', person_id=person_id)
                 selected_styles = pending.get('style_ids', [])
+                pending_concurring_fighter_user_id = pending.get('concurring_fighter_user_id')
                 if not selected_styles:
                     messages.error(request, 'Pending authorization missing styles. Please try again.')
                     return redirect('fighter', person_id=person_id)
             else:
                 sent_styles = request.POST.getlist('weapon_styles')
                 selected_styles = sorted(set(sent_styles))
+
+            # Optional KAO-only explicit concurrence when rule 25 concurrence is required.
+            concurring_fighter_user_id_raw = (request.POST.get('concurring_fighter_id') or '').strip()
+            if is_pending_submit and pending_concurring_fighter_user_id and not concurring_fighter_user_id_raw:
+                concurring_fighter_user_id_raw = str(pending_concurring_fighter_user_id)
+            if concurring_fighter_user_id_raw and not is_kingdom_authorization_officer(request.user):
+                messages.error(request, 'You are not allowed to specify a concurring fighter.')
+                return redirect('fighter', person_id=person_id)
+            concurring_fighter = None
+            if concurring_fighter_user_id_raw:
+                try:
+                    concurring_fighter_user_id = int(concurring_fighter_user_id_raw)
+                except (TypeError, ValueError):
+                    messages.error(request, 'Selected concurring fighter not found.')
+                    return redirect('fighter', person_id=person_id)
+                try:
+                    concurring_user = User.objects.select_related('person').get(id=concurring_fighter_user_id)
+                except User.DoesNotExist:
+                    messages.error(request, 'Selected concurring fighter not found.')
+                    return redirect('fighter', person_id=person_id)
+                if not hasattr(concurring_user, 'person') or concurring_user.person is None:
+                    messages.error(request, 'Selected concurring fighter has no fighter record.')
+                    return redirect('fighter', person_id=person_id)
+                concurring_fighter = concurring_user.person
             existing_authorizations = Authorization.objects.with_effective_expiration().filter(person=person)
             existing_by_style = {int(auth.style_id): auth for auth in existing_authorizations}
             marshal_style_ids = set(
@@ -1998,6 +2121,26 @@ def add_authorization(request, person_id):
                     concurrence_cache[discipline_id] = authorization_requires_concurrence(person, style)
                 return concurrence_cache[discipline_id]
 
+            selected_style_ids = [int(style_id) for style_id in selected_styles]
+            selected_style_map = WeaponStyle.objects.select_related('discipline').in_bulk(selected_style_ids)
+
+            if concurring_fighter:
+                if concurring_fighter.user_id == person.user_id:
+                    messages.error(request, 'Concurring fighter must be different from the fighter receiving the authorization.')
+                    return redirect('fighter', person_id=person_id)
+                if concurring_fighter.user_id == authorizing_marshal.id:
+                    messages.error(request, 'Concurring fighter must be different from the authorizing marshal.')
+                    return redirect('fighter', person_id=person_id)
+                for style_id in selected_style_ids:
+                    style = selected_style_map.get(style_id)
+                    if style and requires_concurrence(style):
+                        if not is_authorized_in_discipline(concurring_fighter.user, style.discipline):
+                            messages.error(
+                                request,
+                                f"{concurring_fighter.sca_name} is not currently authorized in {style.discipline.name} and cannot concur."
+                            )
+                            return redirect('fighter', person_id=person_id)
+
             requires_note = any(marshal_note_required(style_id) for style_id in selected_styles)
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
@@ -2017,6 +2160,7 @@ def add_authorization(request, person_id):
                     'person_id': person_id,
                     'style_ids': selected_styles,
                     'authorizing_marshal_id': authorizing_marshal.id,
+                    'concurring_fighter_user_id': concurring_fighter.user_id if concurring_fighter else None,
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
@@ -2026,7 +2170,7 @@ def add_authorization(request, person_id):
             def record_note(authorization, action):
                 AuthorizationNote.objects.create(
                     authorization=authorization,
-                    created_by=request.user,
+                    created_by=authorizing_marshal,
                     action=action,
                     note=action_note,
                 )
@@ -2053,6 +2197,22 @@ def add_authorization(request, person_id):
                             except User.DoesNotExist:
                                 messages.error(request, 'Selected authorizing marshal not found.')
                                 return redirect('fighter', person_id=person_id)
+                        pending_concurring_fighter_user_id = pending.get('concurring_fighter_user_id')
+                        if pending_concurring_fighter_user_id and not concurring_fighter:
+                            try:
+                                pending_concurring_user = User.objects.select_related('person').get(
+                                    id=int(pending_concurring_fighter_user_id)
+                                )
+                            except (User.DoesNotExist, TypeError, ValueError):
+                                messages.error(request, 'Selected concurring fighter not found.')
+                                return redirect('fighter', person_id=person_id)
+                            if not hasattr(pending_concurring_user, 'person') or pending_concurring_user.person is None:
+                                messages.error(request, 'Selected concurring fighter has no fighter record.')
+                                return redirect('fighter', person_id=person_id)
+                            concurring_fighter = pending_concurring_user.person
+                        if concurring_fighter and concurring_fighter.user_id == authorizing_marshal.id:
+                            messages.error(request, 'Concurring fighter must be different from the authorizing marshal.')
+                            return redirect('fighter', person_id=person_id)
                     
                     for style_id in selected_styles:
                         print(f"\nDebug: Processing style {style_id}")
@@ -2085,9 +2245,30 @@ def add_authorization(request, person_id):
                                         messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
                                 else:
                                     if requires_concurrence(update_auth.style):
-                                        update_auth.status = needs_concurrence_status
-                                        update_auth.concurring_fighter = None
-                                        messages.success(request, f'Authorization for {update_auth.style.name} requires concurrence from another authorized fighter.')
+                                        if concurring_fighter:
+                                            update_auth.concurring_fighter = concurring_fighter
+                                            if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                                update_auth.status = needs_kingdom_status
+                                                messages.success(
+                                                    request,
+                                                    f'Concurrence recorded for {update_auth.style.name}. Authorization submitted to Kingdom for approval.'
+                                                )
+                                            else:
+                                                update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
+                                                if update_auth.status == active_status:
+                                                    messages.success(
+                                                        request,
+                                                        f'Existing authorization for {update_auth.style.name} updated successfully with concurrence.'
+                                                    )
+                                                else:
+                                                    messages.success(
+                                                        request,
+                                                        f'Existing authorization for {update_auth.style.name} pending waiver after concurrence.'
+                                                    )
+                                        else:
+                                            update_auth.status = needs_concurrence_status
+                                            update_auth.concurring_fighter = None
+                                            messages.success(request, f'Authorization for {update_auth.style.name} requires concurrence from another authorized fighter.')
                                     else:
                                         update_auth.concurring_fighter = None
                                         update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
@@ -2097,6 +2278,7 @@ def add_authorization(request, person_id):
                                             messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
                                 
                                 update_auth.expiration = calculate_authorization_expiration(person, update_auth.style)
+                                update_auth.updated_by = authorizing_marshal
                                 update_auth.save()
                                 if update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
                                     record_note(update_auth, 'marshal_proposed')
@@ -2112,21 +2294,51 @@ def add_authorization(request, person_id):
                                         expiration=expiration,
                                         marshal=Person.objects.get(user=authorizing_marshal),
                                         status=AuthorizationStatus.objects.get(name='Pending'),
+                                        created_by=authorizing_marshal,
+                                        updated_by=authorizing_marshal,
                                     )
                                     record_note(new_auth, 'marshal_proposed')
                                     messages.success(request, f'Authorization for {style.name} pending confirmation.')
                                 else:
                                     expiration = calculate_authorization_expiration(person, style)
                                     if requires_concurrence(style):
-                                        new_auth = Authorization.objects.create(
-                                            person=person,
-                                            style=style,
-                                            expiration=expiration,
-                                            marshal=Person.objects.get(user=authorizing_marshal),
-                                            status=needs_concurrence_status,
-                                            concurring_fighter=None,
-                                        )
-                                        messages.success(request, f'Authorization for {style.name} requires concurrence from another authorized fighter.')
+                                        if concurring_fighter:
+                                            if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                                status_to_set = needs_kingdom_status
+                                                success_message = f'Concurrence recorded for {style.name}. Authorization submitted to Kingdom for approval.'
+                                            else:
+                                                status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
+                                                if status_to_set == active_status:
+                                                    success_message = f'Authorization for {style.name} created successfully with concurrence.'
+                                                else:
+                                                    success_message = f'Authorization for {style.name} pending waiver after concurrence.'
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=expiration,
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=status_to_set,
+                                                concurring_fighter=concurring_fighter,
+                                                created_by=authorizing_marshal,
+                                                updated_by=authorizing_marshal,
+                                            )
+                                            if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                                if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
+                                                    person.user.waiver_expiration = expiration
+                                                    person.user.save()
+                                            messages.success(request, success_message)
+                                        else:
+                                            new_auth = Authorization.objects.create(
+                                                person=person,
+                                                style=style,
+                                                expiration=expiration,
+                                                marshal=Person.objects.get(user=authorizing_marshal),
+                                                status=needs_concurrence_status,
+                                                concurring_fighter=None,
+                                                created_by=authorizing_marshal,
+                                                updated_by=authorizing_marshal,
+                                            )
+                                            messages.success(request, f'Authorization for {style.name} requires concurrence from another authorized fighter.')
                                     else:
                                         if AUTHORIZATION_OFFICER_SIGN_OFF:
                                             new_auth = Authorization.objects.create(
@@ -2135,6 +2347,8 @@ def add_authorization(request, person_id):
                                                 expiration=expiration,
                                                 marshal=Person.objects.get(user=authorizing_marshal),
                                                 status=needs_kingdom_status,
+                                                created_by=authorizing_marshal,
+                                                updated_by=authorizing_marshal,
                                             )
                                             messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                         else:
@@ -2145,6 +2359,8 @@ def add_authorization(request, person_id):
                                                 expiration=expiration,
                                                 marshal=Person.objects.get(user=authorizing_marshal),
                                                 status=status_to_set,
+                                                created_by=authorizing_marshal,
+                                                updated_by=authorizing_marshal,
                                             )
                                             if status_to_set == active_status:
                                                 messages.success(request, f'Authorization for {style.name} created successfully!')
@@ -2470,7 +2686,7 @@ def user_account(request, user_id):
         # Prep authorization UI (initially just show the form; logic wired later)
         'auth_form': CreateAuthorizationForm(user=request.user, show_all=True),
         'auth_officer': is_kingdom_authorization_officer(request.user),
-        'all_people': Person.objects.all().order_by('sca_name'),
+        'all_people': Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name'),
         # Branch choices for self-appointment (exclude Other type)
         'branch_choices': Branch.objects.exclude(type='Other').order_by('name'),
         'discipline_choices': Discipline.objects.order_by('name'),
@@ -2831,6 +3047,527 @@ def create_sanction(request, person):
         return False, 'Invalid sanction type'
 
 
+def _first_non_empty(*values):
+    for value in values:
+        if isinstance(value, str):
+            if value.strip():
+                return value
+        elif value is not None:
+            return value
+    return ''
+
+
+def _updated_sort_key(record):
+    return (record.updated_at, record.id)
+
+
+def _newer_user(first_user: User, second_user: User) -> User:
+    return max([first_user, second_user], key=lambda u: (u.updated_at, u.id))
+
+
+def _build_merge_profile_initial(survivor_user: User, source_user: User, survivor_person: Person, source_person: Person):
+    newer_user = _newer_user(survivor_user, source_user)
+    newer_person = survivor_person if newer_user.id == survivor_user.id else source_person
+
+    is_minor = newer_person.is_minor
+    parent_id = newer_person.parent_id if is_minor else None
+    if parent_id is None and is_minor:
+        fallback_parent = survivor_person.parent_id if survivor_person.is_minor else None
+        parent_id = fallback_parent
+
+    return {
+        'honeypot': '',
+        'email': _first_non_empty(newer_user.email, survivor_user.email),
+        'username': _first_non_empty(newer_user.username, survivor_user.username),
+        'first_name': _first_non_empty(newer_user.first_name, survivor_user.first_name),
+        'last_name': _first_non_empty(newer_user.last_name, survivor_user.last_name),
+        'membership': _first_non_empty(newer_user.membership, survivor_user.membership),
+        'membership_expiration': _first_non_empty(newer_user.membership_expiration, survivor_user.membership_expiration),
+        'address': _first_non_empty(newer_user.address, survivor_user.address),
+        'address2': _first_non_empty(newer_user.address2, survivor_user.address2),
+        'city': _first_non_empty(newer_user.city, survivor_user.city),
+        'state_province': _first_non_empty(newer_user.state_province, survivor_user.state_province),
+        'postal_code': _first_non_empty(newer_user.postal_code, survivor_user.postal_code),
+        'country': _first_non_empty(newer_user.country, survivor_user.country),
+        'phone_number': _first_non_empty(newer_user.phone_number, survivor_user.phone_number),
+        'birthday': _first_non_empty(newer_user.birthday, survivor_user.birthday),
+        'sca_name': _first_non_empty(newer_person.sca_name, survivor_person.sca_name),
+        'title': newer_person.title_id or survivor_person.title_id or '',
+        'new_title': '',
+        'new_title_rank': '',
+        'branch': newer_person.branch_id or survivor_person.branch_id or '',
+        'is_minor': is_minor,
+        'parent_id': parent_id or '',
+        'background_check_expiration': _first_non_empty(
+            newer_user.background_check_expiration,
+            survivor_user.background_check_expiration
+        ),
+    }
+
+
+def _build_authorization_merge_preview(survivor_person: Person, source_person: Person):
+    auths = list(
+        Authorization.objects.select_related('style__discipline', 'status', 'person')
+        .filter(person__in=[survivor_person, source_person], style__isnull=False)
+        .order_by('style__discipline__name', 'style__name', 'id')
+    )
+
+    auths_by_style = defaultdict(list)
+    for auth in auths:
+        auths_by_style[auth.style_id].append(auth)
+
+    preview_rows = []
+    for style_id, candidates in auths_by_style.items():
+        winner = max(candidates, key=_updated_sort_key)
+        has_revoked = any(c.status and c.status.name == 'Revoked' for c in candidates)
+        preview_rows.append({
+            'style_id': style_id,
+            'discipline_name': winner.style.discipline.name if winner.style and winner.style.discipline else '',
+            'style_name': winner.style.name if winner.style else '',
+            'winner_id': winner.id,
+            'winner_user_id': winner.person_id,
+            'winner_sca_name': winner.person.sca_name if winner.person else '',
+            'winner_status': winner.status.name if winner.status else 'Unknown',
+            'sanction_kept': has_revoked,
+            'candidates': sorted(candidates, key=_updated_sort_key, reverse=True),
+        })
+
+    preview_rows.sort(key=lambda row: (row['discipline_name'], row['style_name']))
+    return preview_rows
+
+
+def _build_branch_office_merge_preview(survivor_person: Person, source_person: Person):
+    offices = list(
+        BranchMarshal.objects.select_related('branch', 'discipline', 'person')
+        .filter(person__in=[survivor_person, source_person])
+        .order_by('-end_date', '-updated_at', '-id')
+    )
+
+    active_offices = []
+    expired_offices = []
+    by_branch_and_discipline = defaultdict(list)
+    today_value = date.today()
+
+    for office in offices:
+        if office.end_date >= today_value:
+            active_offices.append(office)
+            by_branch_and_discipline[(office.branch_id, office.discipline_id)].append(office)
+        else:
+            expired_offices.append(office)
+
+    default_keep_active_office_ids = set()
+    for grouped_offices in by_branch_and_discipline.values():
+        newest = max(grouped_offices, key=_updated_sort_key)
+        default_keep_active_office_ids.add(newest.id)
+
+    return {
+        'active_offices': active_offices,
+        'expired_offices': expired_offices,
+        'default_keep_active_office_ids': sorted(default_keep_active_office_ids),
+    }
+
+
+def _apply_profile_form_to_user_and_person(profile_form, user: User, person: Person, acting_user: User):
+    cleaned = profile_form.cleaned_data
+
+    user.email = cleaned['email']
+    user.username = cleaned['username']
+    user.first_name = cleaned['first_name']
+    user.last_name = cleaned['last_name']
+    user.membership = cleaned.get('membership')
+    user.membership_expiration = cleaned.get('membership_expiration')
+    user.address = cleaned['address']
+    user.address2 = cleaned.get('address2')
+    user.city = cleaned['city']
+    user.state_province = cleaned['state_province']
+    user.postal_code = cleaned['postal_code']
+    user.country = cleaned['country']
+    user.phone_number = cleaned['phone_number']
+    user.birthday = cleaned.get('birthday')
+    user.background_check_expiration = cleaned.get('background_check_expiration')
+    user.updated_by = acting_user
+    user.save()
+
+    person.sca_name = cleaned.get('sca_name') or f"{user.first_name} {user.last_name}".strip()
+    person.title = cleaned.get('title')
+    person.branch = cleaned.get('branch')
+    person.is_minor = cleaned.get('is_minor', False)
+    person.parent = cleaned.get('parent_id')
+    person.updated_by = acting_user
+    person.save()
+
+
+def _tombstone_user_for_merge(user: User, survivor_user: User, acting_user: User):
+    stamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+    user.username = f'merged_{user.id}_{stamp}'
+    user.email = f'merged_{user.id}_{stamp}@invalid.local'
+    user.membership = None
+    user.membership_expiration = None
+    user.is_active = False
+    user.merged_into = survivor_user
+    user.merged_at = timezone.now()
+    user.updated_by = acting_user
+    user.set_unusable_password()
+    user.save()
+
+
+def _execute_account_merge(
+    request,
+    survivor_user: User,
+    source_user: User,
+    profile_form,
+    keep_active_office_ids,
+    action_note: str,
+):
+    survivor_person = survivor_user.person
+    source_person = source_user.person
+    today_value = date.today()
+    yesterday = today_value - timedelta(days=1)
+
+    source_username_before = source_user.username
+    source_email_before = source_user.email
+
+    _tombstone_user_for_merge(source_user, survivor_user, request.user)
+    _apply_profile_form_to_user_and_person(profile_form, survivor_user, survivor_person, request.user)
+
+    Authorization.objects.filter(marshal=source_person).update(marshal=survivor_person)
+    Authorization.objects.filter(concurring_fighter=source_person).update(concurring_fighter=survivor_person)
+    Person.objects.filter(parent=source_person).update(parent=survivor_person)
+    UserNote.objects.filter(person=source_person).update(person=survivor_person)
+
+    all_auths = list(
+        Authorization.objects.select_related('status', 'style')
+        .filter(person__in=[survivor_person, source_person])
+    )
+    auths_with_style = [auth for auth in all_auths if auth.style_id]
+    auths_without_style = [auth for auth in all_auths if not auth.style_id]
+
+    by_style = defaultdict(list)
+    for auth in auths_with_style:
+        by_style[auth.style_id].append(auth)
+
+    revoked_status = AuthorizationStatus.objects.filter(name='Revoked').first()
+    merged_style_count = 0
+    removed_duplicate_authorizations = 0
+
+    for style_id, candidates in by_style.items():
+        winner = max(candidates, key=_updated_sort_key)
+        losers = [candidate for candidate in candidates if candidate.id != winner.id]
+
+        for loser in losers:
+            AuthorizationNote.objects.filter(authorization=loser).update(authorization=winner)
+
+        newest_revoked = None
+        if revoked_status:
+            revoked_candidates = [candidate for candidate in candidates if candidate.status_id == revoked_status.id]
+            if revoked_candidates:
+                newest_revoked = max(revoked_candidates, key=_updated_sort_key)
+
+        for loser in losers:
+            loser.delete()
+            removed_duplicate_authorizations += 1
+
+        if winner.person_id != survivor_person.user_id:
+            winner.person = survivor_person
+            winner.updated_by = request.user
+            winner.save()
+
+        if revoked_status and newest_revoked:
+            if winner.status_id != revoked_status.id or winner.expiration != newest_revoked.expiration:
+                winner.status = revoked_status
+                winner.expiration = newest_revoked.expiration
+                winner.updated_by = request.user
+                winner.save()
+
+        merged_style_count += 1
+
+    for auth in auths_without_style:
+        if auth.person_id == source_person.user_id:
+            auth.person = survivor_person
+            auth.updated_by = request.user
+            auth.save()
+
+    all_offices = list(
+        BranchMarshal.objects.filter(person__in=[survivor_person, source_person]).order_by('id')
+    )
+    keep_active_office_ids = set(keep_active_office_ids)
+    active_kept = 0
+    active_ended = 0
+
+    for office in all_offices:
+        if office.person_id != survivor_person.user_id:
+            office.person = survivor_person
+
+        if office.end_date >= today_value:
+            if office.id in keep_active_office_ids:
+                active_kept += 1
+            else:
+                office.end_date = yesterday
+                active_ended += 1
+
+        office.updated_by = request.user
+        office.save()
+
+    source_person.updated_by = request.user
+    source_person.save()
+
+    UserNote.objects.create(
+        person=survivor_person,
+        created_by=request.user,
+        note_type='officer_note',
+        note=(
+            f'Account merge completed by {request.user.username}. '
+            f'Merged source user #{source_user.id} ({source_username_before}, {source_email_before}) '
+            f'into survivor user #{survivor_user.id}. '
+            f'Action note: {action_note}'
+        ),
+    )
+
+    return {
+        'merged_style_count': merged_style_count,
+        'removed_duplicate_authorizations': removed_duplicate_authorizations,
+        'active_kept': active_kept,
+        'active_ended': active_ended,
+    }
+
+
+@login_required
+def merge_accounts(request):
+    if not is_kingdom_authorization_officer(request.user):
+        raise PermissionDenied
+
+    all_people = (
+        Person.objects.filter(user__merged_into__isnull=True)
+        .exclude(sca_name__isnull=True)
+        .exclude(sca_name='')
+        .order_by('sca_name')
+        .values_list('sca_name', flat=True)
+        .distinct()
+    )
+
+    old_sca_name = (request.GET.get('old_sca_name') or request.POST.get('old_sca_name') or '').strip()
+    new_sca_name = (request.GET.get('new_sca_name') or request.POST.get('new_sca_name') or '').strip()
+    old_matches = []
+    new_matches = []
+    preview_data = None
+    profile_form = None
+    selected_survivor_user_id = None
+    selected_source_user_id = None
+    selected_keep_active_office_ids = []
+    merge_action_note = ''
+    selected_source_person = None
+    selected_survivor_person = None
+
+    def _parse_optional_int(value):
+        if value in [None, '']:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    if request.method == 'GET':
+        action = (request.GET.get('action') or '').strip().lower()
+        selected_source_user_id = _parse_optional_int(request.GET.get('selected_source_user_id'))
+        selected_survivor_user_id = _parse_optional_int(request.GET.get('selected_survivor_user_id'))
+
+        if action == 'search_old':
+            selected_source_user_id = None
+            selected_survivor_user_id = None
+            new_sca_name = ''
+        elif action == 'select_source':
+            selected_candidates = request.GET.getlist('source_candidate')
+            if len(selected_candidates) != 1:
+                messages.error(request, 'Please check exactly one old identity account.')
+                selected_source_user_id = None
+            else:
+                selected_source_user_id = _parse_optional_int(selected_candidates[0])
+            selected_survivor_user_id = None
+            new_sca_name = ''
+        elif action == 'search_new':
+            selected_survivor_user_id = None
+        elif action == 'select_survivor':
+            selected_candidates = request.GET.getlist('survivor_candidate')
+            if len(selected_candidates) != 1:
+                messages.error(request, 'Please check exactly one new identity account.')
+                selected_survivor_user_id = None
+            else:
+                selected_survivor_user_id = _parse_optional_int(selected_candidates[0])
+
+        if old_sca_name:
+            old_matches = list(
+                Person.objects.select_related('user', 'branch')
+                .filter(sca_name=old_sca_name, user__merged_into__isnull=True)
+                .order_by('user_id')
+            )
+
+        if selected_source_user_id:
+            selected_source_person = Person.objects.select_related('user', 'branch').filter(
+                user_id=selected_source_user_id,
+                user__merged_into__isnull=True,
+            ).first()
+            if not selected_source_person:
+                messages.error(request, 'Selected old identity account was not found.')
+                selected_source_user_id = None
+
+        if selected_source_user_id and new_sca_name:
+            new_matches = list(
+                Person.objects.select_related('user', 'branch')
+                .filter(sca_name=new_sca_name, user__merged_into__isnull=True)
+                .order_by('user_id')
+            )
+
+        if selected_survivor_user_id:
+            selected_survivor_person = Person.objects.select_related('user', 'branch').filter(
+                user_id=selected_survivor_user_id,
+                user__merged_into__isnull=True,
+            ).first()
+            if not selected_survivor_person:
+                messages.error(request, 'Selected new identity account was not found.')
+                selected_survivor_user_id = None
+
+        if selected_source_user_id and selected_survivor_user_id and selected_source_user_id == selected_survivor_user_id:
+            messages.error(request, 'Please choose two different accounts.')
+            selected_survivor_user_id = None
+            selected_survivor_person = None
+
+    if request.method == 'POST':
+        action = (request.POST.get('action') or '').strip().lower()
+        selected_survivor_user_id = _parse_optional_int(request.POST.get('survivor_user_id'))
+        selected_source_user_id = _parse_optional_int(request.POST.get('source_user_id'))
+
+        if old_sca_name:
+            old_matches = list(
+                Person.objects.select_related('user', 'branch')
+                .filter(sca_name=old_sca_name, user__merged_into__isnull=True)
+                .order_by('user_id')
+            )
+        if new_sca_name:
+            new_matches = list(
+                Person.objects.select_related('user', 'branch')
+                .filter(sca_name=new_sca_name, user__merged_into__isnull=True)
+                .order_by('user_id')
+            )
+
+        if action in ['preview', 'execute']:
+            if not selected_survivor_user_id or not selected_source_user_id:
+                messages.error(request, 'Please select two valid accounts by ID.')
+            elif selected_survivor_user_id == selected_source_user_id:
+                messages.error(request, 'Please choose two different accounts.')
+            elif selected_source_user_id == request.user.id:
+                messages.error(request, 'You cannot tombstone the account you are currently logged in with.')
+            else:
+                selected_people = Person.objects.select_related('user', 'branch', 'title', 'parent').filter(
+                    user_id__in=[selected_survivor_user_id, selected_source_user_id],
+                    user__merged_into__isnull=True,
+                )
+                people_by_id = {person.user_id: person for person in selected_people}
+                survivor_person = people_by_id.get(selected_survivor_user_id)
+                source_person = people_by_id.get(selected_source_user_id)
+
+                selected_source_person = source_person
+                selected_survivor_person = survivor_person
+
+                if not survivor_person or not source_person:
+                    messages.error(request, 'One or both selected accounts could not be found.')
+                else:
+                    survivor_user = survivor_person.user
+                    source_user = source_person.user
+
+                    preview_data = {
+                        'survivor_user': survivor_user,
+                        'source_user': source_user,
+                        'newer_user': _newer_user(survivor_user, source_user),
+                        'authorization_rows': _build_authorization_merge_preview(survivor_person, source_person),
+                    }
+                    office_preview = _build_branch_office_merge_preview(survivor_person, source_person)
+                    preview_data.update(office_preview)
+
+                    if action == 'preview':
+                        initial_data = _build_merge_profile_initial(
+                            survivor_user,
+                            source_user,
+                            survivor_person,
+                            source_person,
+                        )
+                        profile_form = CreatePersonForm(
+                            initial=initial_data,
+                            user_instance=survivor_user,
+                            exclude_user_ids=[source_user.id],
+                            request=request,
+                            show_all=True,
+                        )
+                        selected_keep_active_office_ids = preview_data['default_keep_active_office_ids']
+                    else:
+                        profile_form = CreatePersonForm(
+                            request.POST,
+                            user_instance=survivor_user,
+                            exclude_user_ids=[source_user.id],
+                            request=request,
+                            show_all=True,
+                        )
+                        posted_keep_ids = request.POST.getlist('keep_active_office_ids')
+                        active_office_ids = {office.id for office in preview_data['active_offices']}
+                        selected_keep_active_office_ids = sorted({
+                            int(office_id) for office_id in posted_keep_ids
+                            if office_id.isdigit() and int(office_id) in active_office_ids
+                        })
+                        merge_action_note = _get_action_note(request, 'merge_action_note')
+
+                        if not merge_action_note:
+                            messages.error(request, 'A merge action note is required.')
+                        elif profile_form.is_valid():
+                            try:
+                                with transaction.atomic():
+                                    merge_summary = _execute_account_merge(
+                                        request,
+                                        survivor_user,
+                                        source_user,
+                                        profile_form,
+                                        selected_keep_active_office_ids,
+                                        merge_action_note,
+                                    )
+                            except Exception:
+                                logger.exception(
+                                    'Error during account merge survivor_id=%s source_id=%s',
+                                    survivor_user.id,
+                                    source_user.id,
+                                )
+                                messages.error(
+                                    request,
+                                    'We could not complete the merge right now. No changes were saved.',
+                                )
+                            else:
+                                messages.success(
+                                    request,
+                                    'Accounts merged successfully. '
+                                    f'Merged styles: {merge_summary["merged_style_count"]}. '
+                                    f'Removed duplicate authorizations: {merge_summary["removed_duplicate_authorizations"]}. '
+                                    f'Active offices kept: {merge_summary["active_kept"]}. '
+                                    f'Active offices ended: {merge_summary["active_ended"]}.'
+                                )
+                                return redirect('index')
+                        else:
+                            messages.error(request, 'Please correct the errors in the merged profile before continuing.')
+
+    context = {
+        'all_people': all_people,
+        'old_sca_name': old_sca_name,
+        'new_sca_name': new_sca_name,
+        'old_matches': old_matches,
+        'new_matches': new_matches,
+        'preview_data': preview_data,
+        'profile_form': profile_form,
+        'selected_survivor_user_id': selected_survivor_user_id,
+        'selected_source_user_id': selected_source_user_id,
+        'selected_source_person': selected_source_person,
+        'selected_survivor_person': selected_survivor_person,
+        'selected_keep_active_office_ids': selected_keep_active_office_ids,
+        'merge_action_note': merge_action_note,
+    }
+    return render(request, 'authorizations/merge_accounts.html', context)
+
+
 def branch_marshals(request):
     """
     Handles displaying the branch marshal search form, and showing the results
@@ -3050,6 +3787,7 @@ class CreatePersonForm(forms.Form):
     def __init__(self, *args, **kwargs):
         """Allow passing a user instance when updating."""
         self.user_instance = kwargs.pop('user_instance', None)
+        self.exclude_user_ids = set(kwargs.pop('exclude_user_ids', []))
         self.request = kwargs.pop('request', None)
         show_all = kwargs.pop('show_all', False)
         super().__init__(*args, **kwargs)
@@ -3115,7 +3853,9 @@ class CreatePersonForm(forms.Form):
         new_title = cleaned_data.get('new_title')
         new_title_rank = cleaned_data.get('new_title_rank')
 
-        user_id = self.user_instance.id if self.user_instance else None
+        excluded_user_ids = set(self.exclude_user_ids)
+        if self.user_instance:
+            excluded_user_ids.add(self.user_instance.id)
 
         if cleaned_data.get('honeypot'):
             raise forms.ValidationError('Unable to process submission.')
@@ -3124,15 +3864,47 @@ class CreatePersonForm(forms.Form):
             raise forms.ValidationError('A non-minor must not have a parent ID.')
 
         username = cleaned_data.get('username')
-        if username and User.objects.filter(username=username).exclude(id=user_id).exists():
+        if username and User.objects.filter(
+            username=username,
+            merged_into__isnull=True,
+        ).exclude(id__in=excluded_user_ids).exists():
             raise forms.ValidationError('A user with this username already exists.')
 
         membership = cleaned_data.get('membership')
         if isinstance(membership, str):
             membership = membership.strip()
             cleaned_data['membership'] = membership or None
-        if membership and User.objects.filter(membership=membership).exclude(id=user_id).exists():
-            raise forms.ValidationError('A user with this membership number already exists.')
+        if membership and User.objects.filter(
+            membership=membership,
+            merged_into__isnull=True,
+        ).exclude(id__in=excluded_user_ids).exists():
+            raise forms.ValidationError(
+                'A user with this membership number already exists. '
+                'If this is your existing account, use the account recovery options on the login page '
+                'or contact the Kingdom Authorization Officer for help.'
+            )
+
+        first_name = cleaned_data.get('first_name')
+        last_name = cleaned_data.get('last_name')
+        email = cleaned_data.get('email')
+        if first_name and last_name and email:
+            first_name = first_name.strip()
+            last_name = last_name.strip()
+            email = email.strip()
+            cleaned_data['first_name'] = first_name
+            cleaned_data['last_name'] = last_name
+            cleaned_data['email'] = email
+            if User.objects.filter(
+                first_name__iexact=first_name,
+                last_name__iexact=last_name,
+                email__iexact=email,
+                merged_into__isnull=True,
+            ).exclude(id__in=excluded_user_ids).exists():
+                raise forms.ValidationError(
+                    'An account with this first name, last name, and email already exists. '
+                    'If this is your account, recover your credentials from the login page '
+                    'or contact the Kingdom Authorization Officer to merge duplicate accounts.'
+                )
 
         if bool(cleaned_data.get('membership')) != bool(cleaned_data.get('membership_expiration')):
             raise forms.ValidationError('Must have both a membership number and expiration or neither.')

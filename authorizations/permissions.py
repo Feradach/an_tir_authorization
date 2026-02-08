@@ -24,9 +24,6 @@ def is_senior_marshal(user, discipline=None):
     Checks if the user has an active Senior Marshal status for the given discipline.
     """
 
-    if is_kingdom_authorization_officer(user):
-        return True
-
     if is_kingdom_earl_marshal(user):
         return True
 
@@ -75,9 +72,6 @@ def is_regional_marshal(user, discipline=None, region=None):
     if not membership_is_current(user):
         return False
 
-    if is_kingdom_authorization_officer(user):
-        return True
-
     if is_kingdom_earl_marshal(user):
         return True
 
@@ -121,9 +115,6 @@ def is_kingdom_marshal(user, discipline=None):
     """
     Checks if the user is a current Kingdom Marshal for the given discipline or is the Earl Marshal.
     """
-
-    if is_kingdom_authorization_officer(user):
-        return True
 
     if is_kingdom_earl_marshal(user):
         return True
@@ -421,6 +412,30 @@ def authorization_requires_concurrence(person: Person, style: WeaponStyle, today
 
 def approve_authorization(request):
     """Add a concurance to a pending marshal authorization."""
+    def _display_name_for_user(user: User) -> str:
+        if hasattr(user, 'person') and user.person and user.person.sca_name:
+            return user.person.sca_name
+        return user.get_full_name() or user.username
+
+    def _resolve_submit_as_user():
+        submit_as = request.user
+        if not is_kingdom_authorization_officer(request.user):
+            return submit_as, None
+        submit_as_raw = (request.POST.get('submit_as_user_id') or '').strip()
+        if not submit_as_raw:
+            return submit_as, None
+        try:
+            submit_as_id = int(submit_as_raw)
+        except (TypeError, ValueError):
+            return None, 'Selected submitting marshal was not found.'
+        try:
+            submit_as = User.objects.select_related('person').get(id=submit_as_id)
+        except User.DoesNotExist:
+            return None, 'Selected submitting marshal was not found.'
+        if not hasattr(submit_as, 'person') or submit_as.person is None:
+            return None, 'Selected submitting marshal has no fighter record.'
+        return submit_as, None
+
     def get_action_note():
         return (request.POST.get('action_note') or '').strip()
 
@@ -429,10 +444,14 @@ def approve_authorization(request):
             return
         AuthorizationNote.objects.create(
             authorization=authorization,
-            created_by=request.user,
+            created_by=marshal,
             action=action,
             note=note,
         )
+
+    def save_authorization(authorization):
+        authorization.updated_by = marshal
+        authorization.save()
 
     def remove_junior_marshal(authorization):
         discipline = authorization.style.discipline.name
@@ -443,7 +462,10 @@ def approve_authorization(request):
         except Authorization.DoesNotExist:
             return True
 
-    marshal = request.user
+    request_user = request.user
+    marshal, submit_as_error = _resolve_submit_as_user()
+    if submit_as_error:
+        return False, submit_as_error
     authorization = Authorization.objects.get(id=request.POST['authorization_id'])
     auth_region = authorization.person.branch.name if authorization.person.branch.is_region() else None
     discipline = authorization.style.discipline.name
@@ -451,6 +473,11 @@ def approve_authorization(request):
     note = get_action_note() if requires_note else ''
     if requires_note and not note:
         return False, 'A note is required for marshal promotion actions.'
+    if requires_note and request_user.id != marshal.id:
+        note = (
+            f'{note}\n\n'
+            f'Submitted as {_display_name_for_user(marshal)} by {_display_name_for_user(request_user)}.'
+        )
 
     active_status = AuthorizationStatus.objects.get(name='Active')
     regional_status = AuthorizationStatus.objects.get(name='Needs Regional Approval')
@@ -460,52 +487,6 @@ def approve_authorization(request):
     # Helper: determine if waiver is current strictly by waiver_expiration
     def waiver_current(u: User):
         return bool(u.waiver_expiration and u.waiver_expiration > date.today())
-
-    # Rule 1: Kingdom authorization officer can approve any marshal by themselves.
-    if is_kingdom_authorization_officer(marshal):
-        # Marshal authorizations require current membership; never Pending Waiver for marshal styles
-        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
-            if not membership_is_current(authorization.person.user):
-                return False, 'Marshal authorizations require a current membership.'
-            authorization.status = active_status
-            
-            # Rule 1a/1b: Set base expiration based on discipline and minor status.
-            authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
-            authorization.save()
-            # Ensure waiver does not trail authorization expiration
-            user = authorization.person.user
-            if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
-                user.waiver_expiration = authorization.expiration
-                user.save()
-            
-            # Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-            if authorization.style.name == 'Senior Marshal':
-                remove_junior_marshal(authorization)
-            record_note(authorization, 'marshal_approved', note)
-            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
-        else:
-            if waiver_current(authorization.person.user):
-                authorization.status = active_status
-                
-                # Rule 1a/1b: Set base expiration based on discipline and minor status.
-                authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
-                authorization.save()
-                # Ensure waiver does not trail authorization expiration
-                user = authorization.person.user
-                if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
-                    user.waiver_expiration = authorization.expiration
-                    user.save()
-                
-                # Rule 1c: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-                if authorization.style.name == 'Senior Marshal':
-                    remove_junior_marshal(authorization)
-                record_note(authorization, 'marshal_approved', note)
-                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
-            else:
-                authorization.status = pending_waiver_status
-                authorization.save()
-                return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
-
 
     if authorization.status.name == 'Pending':
         # Rule 2: must be a senior marshal in the discipline to approve (exception for missile marshal concurence).
@@ -521,7 +502,7 @@ def approve_authorization(request):
             if not membership_is_current(authorization.person.user):
                 return False, 'Marshal authorizations require a current membership.'
             authorization.status = regional_status
-            authorization.save()
+            save_authorization(authorization)
             record_note(authorization, 'marshal_concurred', note)
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for regional approval!'
         
@@ -529,14 +510,14 @@ def approve_authorization(request):
         if authorization.style.name == 'Junior Marshal':
             if AUTHORIZATION_OFFICER_SIGN_OFF:
                 authorization.status = kingdom_status
-                authorization.save()
+                save_authorization(authorization)
                 record_note(authorization, 'marshal_concurred', note)
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
             else:
                 if not membership_is_current(authorization.person.user):
                     return False, 'Marshal authorizations require a current membership.'
                 authorization.status = active_status
-                authorization.save()
+                save_authorization(authorization)
                 record_note(authorization, 'marshal_concurred', note)
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
@@ -553,7 +534,7 @@ def approve_authorization(request):
         # Rule 5: If the regional marshal approves a senior marshal, it becomes active (or pending waiver).
         if AUTHORIZATION_OFFICER_SIGN_OFF:
             authorization.status = kingdom_status
-            authorization.save()
+            save_authorization(authorization)
             record_note(authorization, 'marshal_approved', note)
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
         else:
@@ -562,7 +543,7 @@ def approve_authorization(request):
                     return False, 'Marshal authorizations require a current membership.'
                 authorization.status = active_status
                 authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
-                authorization.save()
+                save_authorization(authorization)
                 # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
                 remove_junior_marshal(authorization)
                 # Ensure waiver does not trail authorization expiration
@@ -576,7 +557,7 @@ def approve_authorization(request):
                 if waiver_current(authorization.person.user):
                     authorization.status = active_status
                     authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
-                    authorization.save()
+                    save_authorization(authorization)
                     # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
                     remove_junior_marshal(authorization)
                     # Ensure waiver does not trail authorization expiration
@@ -587,14 +568,44 @@ def approve_authorization(request):
                     return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
                 else:
                     authorization.status = pending_waiver_status
-                    authorization.save()
+                    save_authorization(authorization)
                     return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
+
+    elif authorization.status.name == 'Needs Kingdom Approval':
+        if not is_kingdom_authorization_officer(request_user):
+            return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
+
+        # Marshal authorizations require current membership; never Pending Waiver for marshal styles
+        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+            authorization.status = active_status
+        else:
+            authorization.status = active_status if waiver_current(authorization.person.user) else pending_waiver_status
+
+        authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
+        save_authorization(authorization)
+
+        # Ensure waiver does not trail authorization expiration for active approvals.
+        if authorization.status == active_status:
+            user = authorization.person.user
+            if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
+                user.waiver_expiration = authorization.expiration
+                user.save()
+
+        if authorization.style.name == 'Senior Marshal':
+            remove_junior_marshal(authorization)
+
+        if authorization.status == active_status:
+            record_note(authorization, 'marshal_approved', note)
+            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+        return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
 
     else:
         return False, 'Authorization status not valid for confirmation.'
 
 
-def validate_approve_authorization(marshal: User, authorization: Authorization):
+def validate_approve_authorization(request_user: User, marshal: User, authorization: Authorization):
     """Validate approval rules without persisting changes."""
     auth_region = authorization.person.branch.name if authorization.person.branch.is_region() else None
     discipline = authorization.style.discipline.name
@@ -602,7 +613,9 @@ def validate_approve_authorization(marshal: User, authorization: Authorization):
     def waiver_current(u: User):
         return bool(u.waiver_expiration and u.waiver_expiration > date.today())
 
-    if is_kingdom_authorization_officer(marshal):
+    if authorization.status.name == 'Needs Kingdom Approval':
+        if not is_kingdom_authorization_officer(request_user):
+            return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
             if not membership_is_current(authorization.person.user):
                 return False, 'Marshal authorizations require a current membership.'

@@ -15,6 +15,7 @@
     <p><a href="{% url 'search' %}?goal=search" class="btn btn-primary">Search Fighters</a></p>
     {% if auth_officer %}
         <p><a href="{% url 'register' %}" class="btn btn-primary">Create an Account</a></p>
+        <p><a href="{% url 'merge_accounts' %}" class="btn btn-primary">Merge Accounts</a></p>
     {% endif %}
     <p><a href="{% url 'branch_marshals' %}" class="btn btn-primary">View Branch Marshals</a></p>
     {% if auth_officer or kingdom_earl_marshal %}
@@ -56,6 +57,17 @@
     {% endif %}
     {% if pending_authorizations %}
         <h3>Authorizations Needing Approval</h3>
+        {% if auth_officer %}
+            <div class="col-md-4 mb-3">
+                <label for="kao_submit_as_control"><strong>Approve As (optional):</strong></label>
+                <select id="kao_submit_as_control" class="form-control">
+                    <option value="">My own account</option>
+                    {% for person in all_people_people %}
+                        <option value="{{ person.user.id }}"{% if selected_submit_as_user_id and selected_submit_as_user_id|stringformat:"s" == person.user.id|stringformat:"s" %} selected{% endif %}>{{ person }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        {% endif %}
          <table>
                 <tr>
                     <th>SCA Name</th>
@@ -74,11 +86,14 @@
                         <td>{{ authorization.style.discipline.name }}</td>
                         <td>{{ authorization.style.name }}</td>
                         <td>{{ authorization.status.name }}</td>
-                        <td><form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
+                        <td><form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
                             <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
                             <input type="hidden" name="action_note" value="">
+                            {% if auth_officer %}
+                                <input type="hidden" name="submit_as_user_id" value="">
+                            {% endif %}
                             {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %}
                                 <input type="hidden" name="pending_authorization_action" value="1">
                             {% endif %}
@@ -107,7 +122,6 @@
             <input type="hidden" name="action" value="clear_pending_authorization_action">
         </form>
     {% endif %}
-
 {% endblock %}
 
 {% block script %}
@@ -155,6 +169,34 @@
                     }
                 });
             }
+
+            const submitAsControl = document.getElementById('kao_submit_as_control');
+            if (submitAsControl && typeof Choices !== 'undefined') {
+                new Choices(submitAsControl, {
+                    removeItemButton: true,
+                    shouldSort: false,
+                    searchEnabled: true,
+                    searchResultLimit: 20,
+                    fuseOptions: {
+                        threshold: 0.3,
+                    },
+                    itemSelectText: '',
+                });
+            }
+
+            const approvalForms = document.querySelectorAll('form[data-kao-submit-as="1"]');
+            approvalForms.forEach(function (form) {
+                form.addEventListener('submit', function () {
+                    if (!submitAsControl) {
+                        return;
+                    }
+                    const fieldName = form.dataset.submitAsField || 'submit_as_user_id';
+                    const hiddenInput = form.querySelector(`input[name="${fieldName}"]`);
+                    if (hiddenInput) {
+                        hiddenInput.value = submitAsControl.value || '';
+                    }
+                });
+            });
         });
     </script>
 {% endblock %}

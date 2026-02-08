@@ -1,7 +1,11 @@
 ﻿## [0.1.5] - 2026-02-07
 ### Added
-- Changed name search on the search page to match the behavior on the authorizations home page.
-- Changed date search behavior to be more smooth.
+- Changed the way some of the drop downs behave to be more user friendly.
+- Set up protections against making duplicate accounts.
+- Set up the ability for the Kingdom Authorization Officer to merge duplicate accounts.
+- Added unit tests.
+- Refined how the Kingdom Authorization Officer ability to submit as someone else works.
+
 
 ## [0.1.4] - 2026-02-05
 ### Added

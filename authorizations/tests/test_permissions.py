@@ -565,7 +565,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertFalse(ok)
         self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
 
-    def test_authorization_officer_approval_sets_active_and_removes_junior(self):
+    def test_authorization_officer_final_approval_sets_active_and_removes_junior(self):
         ao_user, ao_person = self.make_person('ao_approver', 'AO Approver')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
 
@@ -576,7 +576,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         pending_senior = self.grant_authorization(
             fighter,
             self.style_sm_armored,
-            status=self.status_regional,
+            status=self.status_kingdom,
             marshal=proposer,
             expiration=date.today() + timedelta(days=20),
         )
@@ -602,6 +602,47 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
                 action='marshal_approved',
                 created_by=ao_user,
             ).exists()
+        )
+
+    def test_authorization_officer_submit_as_appends_note_suffix(self):
+        ao_user, ao_person = self.make_person('ao_submit_as', 'AO Submit As')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        submit_as_user, submit_as_person = self.make_person('ao_submit_as_target', 'Bob Marshal')
+        proposer_user, proposer = self.make_person('ao_submit_as_prop', 'SubmitAs Proposer')
+        _, fighter = self.make_person('ao_submit_as_fighter', 'SubmitAs Fighter')
+
+        pending_senior = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_kingdom,
+            marshal=proposer,
+            expiration=date.today() + timedelta(days=20),
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {
+                'authorization_id': str(pending_senior.id),
+                'action_note': 'AO confirmation note',
+                'submit_as_user_id': str(submit_as_user.id),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = approve_authorization(request)
+
+        pending_senior.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        note = AuthorizationNote.objects.get(
+            authorization=pending_senior,
+            action='marshal_approved',
+        )
+        self.assertEqual(note.created_by, submit_as_user)
+        self.assertIn('AO confirmation note', note.note)
+        self.assertIn(
+            f'Submitted as {submit_as_person.sca_name} by {ao_person.sca_name}.',
+            note.note,
         )
 
 

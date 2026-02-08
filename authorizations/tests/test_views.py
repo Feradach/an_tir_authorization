@@ -3,9 +3,13 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.messages import get_messages
 from django.core.cache import cache
 from django.test import TestCase, override_settings
+from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from django.urls import reverse
 
 from authorizations.models import (
@@ -394,6 +398,50 @@ class RegisterViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'A user with this membership number already exists.')
+        self.assertContains(response, 'account recovery options on the login page')
+        self.assertContains(response, 'Kingdom Authorization Officer')
+
+    def test_register_rejects_duplicate_first_last_email(self):
+        User.objects.create_user(
+            username='register_existing_identity',
+            password='StrongPass!123',
+            email='dup.identity@example.com',
+            first_name='Dup',
+            last_name='Identity',
+        )
+        payload = self.registration_payload(
+            username='register_duplicate_identity',
+            email='dup.identity@example.com',
+            first_name='Dup',
+            last_name='Identity',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'An account with this first name, last name, and email already exists.')
+        self.assertContains(response, 'recover your credentials from the login page')
+        self.assertContains(response, 'merge duplicate accounts')
+
+    def test_register_rejects_duplicate_first_last_email_case_insensitive(self):
+        User.objects.create_user(
+            username='register_existing_identity_case',
+            password='StrongPass!123',
+            email='Case.Match@Example.com',
+            first_name='Case',
+            last_name='Match',
+        )
+        payload = self.registration_payload(
+            username='register_duplicate_identity_case',
+            email='case.match@example.com',
+            first_name='case',
+            last_name='match',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'An account with this first name, last name, and email already exists.')
 
     @override_settings(AUTHZ_TEST_FEATURES=True)
     def test_background_check_field_renders_when_feature_enabled(self):
@@ -406,6 +454,166 @@ class RegisterViewTests(ViewTestBase):
         response = self.client.get(reverse('register'))
 
         self.assertNotContains(response, 'name="background_check_expiration"')
+
+
+class TombstoneBehaviorTests(ViewTestBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.ao_user = User.objects.create_user(
+            username='merge_ao',
+            password='StrongPass!123',
+            email='merge_ao@example.com',
+            first_name='Merge',
+            last_name='AO',
+            membership='9191919191',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.ao_person = Person.objects.create(
+            user=cls.ao_user,
+            sca_name='Merge AO',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.ao_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_auth_officer,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+
+    def _create_merged_user(self, username, sca_name, *, merged_into, email):
+        user = User.objects.create_user(
+            username=username,
+            password='StrongPass!123',
+            email=email,
+            first_name=sca_name.split()[0],
+            last_name='Merged',
+            membership=None,
+            membership_expiration=None,
+            state_province='Oregon',
+            country='United States',
+        )
+        person = Person.objects.create(
+            user=user,
+            sca_name=sca_name,
+            branch=self.branch_gd,
+            is_minor=False,
+        )
+        user.merged_into = merged_into
+        user.merged_at = timezone.now()
+        user.is_active = False
+        user.save()
+        return user, person
+
+    def test_fighter_redirects_merged_person_to_survivor(self):
+        survivor_user, _ = self.make_person('fighter_survivor', 'Fighter Survivor')
+        source_user, _ = self._create_merged_user(
+            'fighter_source_merged',
+            'Fighter Source',
+            merged_into=survivor_user,
+            email='fighter_source_merged@example.com',
+        )
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': source_user.id}))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': survivor_user.id}))
+
+    @patch('authorizations.views.send_mail')
+    def test_username_recovery_excludes_merged_accounts(self, mock_send_mail):
+        survivor_user, _ = self.make_person('recover_survivor', 'Recover Survivor', email='survivor-recover@example.com')
+        active_user, _ = self.make_person('recover_active', 'Recover Active', email='shared-recover@example.com')
+        merged_user, _ = self._create_merged_user(
+            'recover_merged',
+            'Recover Merged',
+            merged_into=survivor_user,
+            email='shared-recover@example.com',
+        )
+
+        response = self.client.post(
+            reverse('recover_account'),
+            {
+                'action': 'get_username',
+                'email': 'shared-recover@example.com',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 1)
+        email_body = mock_send_mail.call_args[0][1]
+        self.assertIn(active_user.username, email_body)
+        self.assertNotIn(merged_user.username, email_body)
+
+    @patch('authorizations.views.send_mail')
+    def test_password_reset_by_username_ignores_merged_accounts(self, mock_send_mail):
+        survivor_user, _ = self.make_person('reset_survivor', 'Reset Survivor')
+        merged_user, _ = self._create_merged_user(
+            'reset_merged',
+            'Reset Merged',
+            merged_into=survivor_user,
+            email='reset_merged@example.com',
+        )
+
+        response = self.client.post(
+            reverse('recover_account'),
+            {
+                'action': 'reset_password',
+                'username': merged_user.username,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 0)
+        self.assertIn(
+            'If an account exists for that username, a password reset link has been sent to the email on file.',
+            self.messages_for(response),
+        )
+
+    def test_password_reset_token_rejects_merged_account(self):
+        survivor_user, _ = self.make_person('token_survivor', 'Token Survivor')
+        merged_user, _ = self._create_merged_user(
+            'token_merged',
+            'Token Merged',
+            merged_into=survivor_user,
+            email='token_merged@example.com',
+        )
+        uidb64 = urlsafe_base64_encode(force_bytes(merged_user.pk))
+        token = PasswordResetTokenGenerator().make_token(merged_user)
+
+        response = self.client.get(reverse('password_reset_token', kwargs={'uidb64': uidb64, 'token': token}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'invalid or has expired')
+
+    def test_merge_page_search_excludes_already_merged_identities(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        survivor_user, _ = self.make_person('merge_page_survivor', 'Merge Page Survivor')
+        active_user, _ = self.make_person('merge_page_active', 'Duplicate Merge Name')
+        merged_user, _ = self._create_merged_user(
+            'merge_page_merged',
+            'Duplicate Merge Name',
+            merged_into=survivor_user,
+            email='merge_page_merged@example.com',
+        )
+
+        response = self.client.get(
+            reverse('merge_accounts'),
+            {
+                'action': 'search_old',
+                'old_sca_name': 'Duplicate Merge Name',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        returned_ids = [person.user_id for person in response.context['old_matches']]
+        self.assertIn(active_user.id, returned_ids)
+        self.assertNotIn(merged_user.id, returned_ids)
 
 
 class UserAccountViewTests(ViewTestBase):

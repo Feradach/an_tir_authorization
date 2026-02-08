@@ -19,6 +19,7 @@ urlpatterns = [
     path('password_reset/<int:user_id>', views.password_reset, name='password_reset'),
     path('user_account/<int:user_id>', views.user_account, name='user_account'),
     path('manage_sanctions', views.manage_sanctions, name='manage_sanctions'),
+    path('merge_accounts', views.merge_accounts, name='merge_accounts'),
     path('issue_sanctions/<int:person_id>', views.issue_sanctions, name='issue_sanctions'),
     path('branch_marshals', views.branch_marshals, name='branch_marshals')
 ]

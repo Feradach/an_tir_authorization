@@ -439,6 +439,66 @@ class PendingNoteFlowTests(AdditionalCoverageBase):
         self.assertNotIn('pending_authorization_action', self.client.session)
         self.assertEqual(second.status_code, 200)
 
+    def test_approve_two_step_flow_persists_submit_as_between_requests(self):
+        ao_user, ao_person = self.make_person('note_approve_ao', 'Note Approve AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        submit_as_user, submit_as_person = self.make_person('note_approve_submit_as', 'Note Approve SubmitAs')
+        proposer_user, proposer_person = self.make_person('note_approve_prop_submit_as', 'Note Approve Proposer SubmitAs')
+        target_user, target_person = self.make_person('note_approve_target_submit_as', 'Note Approve Target SubmitAs')
+
+        self.grant_authorization(submit_as_person, self.style_sm_armored)
+        self.grant_authorization(proposer_person, self.style_sm_armored)
+
+        pending_auth = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_pending,
+            marshal=proposer_person,
+        )
+
+        self.login(ao_user)
+
+        first = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'submit_as_user_id': str(submit_as_user.id),
+            },
+            follow=True,
+        )
+
+        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertEqual(
+            self.client.session['pending_authorization_action'].get('submit_as_user_id'),
+            submit_as_user.id,
+        )
+        self.assertIn('Eligibility verified. Please add a note to finalize the marshal promotion.', self.messages_for(first))
+
+        # Mirror modal round-trip: note submitted without resending submit_as_user_id.
+        second = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'Approval note',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=pending_auth,
+                action='marshal_concurred',
+                created_by=submit_as_user,
+            ).exists()
+        )
+        self.assertNotIn('pending_authorization_action', self.client.session)
+        self.assertEqual(second.status_code, 200)
+
     def test_reject_two_step_flow_requires_note_and_clears_pending_session(self):
         proposer_user, proposer_person = self.make_person('note_reject_proposer', 'Note Reject Proposer')
         regional_user, regional_person = self.make_person('note_reject_regional', 'Note Reject Regional')
@@ -661,6 +721,60 @@ class ConcurrenceFlowTests(AdditionalCoverageBase):
         )
 
         self.assertIn('You do not have permission to concur with this authorization.', self.messages_for(response))
+
+    def test_authorization_officer_can_concur_as_selected_authorized_user(self):
+        ao_user, ao_person = self.make_person('concur_submit_as_ao', 'Concur SubmitAs AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        self.login(ao_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.target_user.id}),
+            {
+                'action': 'concur_authorization',
+                'authorization_id': str(self.pending_a.id),
+                'submit_as_user_id': str(self.concurring_user.id),
+            },
+            follow=True,
+        )
+
+        self.pending_a.refresh_from_db()
+        self.pending_b.refresh_from_db()
+        self.assertEqual(self.pending_a.status, self.status_active)
+        self.assertEqual(self.pending_b.status, self.status_active)
+        self.assertEqual(self.pending_a.concurring_fighter, self.concurring_person)
+        self.assertEqual(self.pending_b.concurring_fighter, self.concurring_person)
+        self.assertEqual(response.status_code, 200)
+
+    def test_authorization_officer_submit_as_unqualified_user_is_rejected(self):
+        ao_user, ao_person = self.make_person('concur_submit_as_bad_ao', 'Concur SubmitAs Bad AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        self.login(ao_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.target_user.id}),
+            {
+                'action': 'concur_authorization',
+                'authorization_id': str(self.pending_a.id),
+                'submit_as_user_id': str(self.unqualified_user.id),
+            },
+            follow=True,
+        )
+
+        self.pending_a.refresh_from_db()
+        self.pending_b.refresh_from_db()
+        self.assertEqual(self.pending_a.status, self.status_needs_concurrence)
+        self.assertEqual(self.pending_b.status, self.status_needs_concurrence)
+        self.assertIn('You do not have permission to concur with this authorization.', self.messages_for(response))
+
+    def test_authorization_officer_can_see_concur_approve_button(self):
+        ao_user, ao_person = self.make_person('concur_button_ao', 'Concur Button AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        self.login(ao_user)
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.target_user.id}))
+
+        self.assertContains(response, 'value="concur_authorization"')
+        self.assertContains(response, 'data-kao-submit-as="1"')
 
     def test_concurring_fighter_visible_only_to_authorization_officer(self):
         self.pending_a.status = self.status_active
@@ -1104,3 +1218,73 @@ class CreatePersonFormEdgeTests(AdditionalCoverageBase):
 
         self.assertFalse(form.is_valid())
         self.assertIn('Ensure this value has at most 20 characters (it has 21).', form.errors['membership'])
+
+    def test_duplicate_first_last_email_is_rejected(self):
+        User.objects.create_user(
+            username='form_edge_existing_identity',
+            password='StrongPass!123',
+            email='form.edge.dup@example.com',
+            first_name='Form',
+            last_name='Edge',
+        )
+        form = CreatePersonForm(
+            data=self.form_payload(
+                username='form_edge_dup_identity',
+                email='form.edge.dup@example.com',
+                first_name='Form',
+                last_name='Edge',
+            )
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertTrue(
+            any(
+                'An account with this first name, last name, and email already exists.' in msg
+                for msg in form.errors['__all__']
+            )
+        )
+
+    def test_duplicate_first_last_email_is_case_insensitive(self):
+        User.objects.create_user(
+            username='form_edge_existing_identity_case',
+            password='StrongPass!123',
+            email='Case.Form.Edge@Example.com',
+            first_name='Case',
+            last_name='Match',
+        )
+        form = CreatePersonForm(
+            data=self.form_payload(
+                username='form_edge_dup_identity_case',
+                email='case.form.edge@example.com',
+                first_name='case',
+                last_name='match',
+            )
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertTrue(
+            any(
+                'An account with this first name, last name, and email already exists.' in msg
+                for msg in form.errors['__all__']
+            )
+        )
+
+
+class UserModelConstraintTests(AdditionalCoverageBase):
+    def test_unique_constraint_rejects_duplicate_first_last_email(self):
+        User.objects.create_user(
+            username='user_constraint_a',
+            password='StrongPass!123',
+            email='unique.constraint@example.com',
+            first_name='Unique',
+            last_name='Constraint',
+        )
+
+        with self.assertRaises(IntegrityError):
+            User.objects.create_user(
+                username='user_constraint_b',
+                password='StrongPass!123',
+                email='unique.constraint@example.com',
+                first_name='Unique',
+                last_name='Constraint',
+            )
