@@ -30,6 +30,7 @@ tmp/
 
 # Local helper scripts not needed in repo
 scripts/dump-anonymized.ps1
+antir_authorizations_handoff.md
 
 # If your Django app stores media or static files that are generated
 # (if they're user-uploaded or created by Django), you might consider
