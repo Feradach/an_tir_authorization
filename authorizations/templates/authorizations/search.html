@@ -223,6 +223,13 @@
             {% endfor %}
             <button type="submit" class="btn btn-outline-secondary ms-1">Go</button>
         </form>
+        {% if view_mode == 'table' %}
+        <div class="mt-2">
+            <a class="btn btn-outline-secondary btn-sm" href="{% if querystring %}?{{ querystring }}&download=csv{% else %}?download=csv{% endif %}">
+                Download CSV
+            </a>
+        </div>
+        {% endif %}
     </div>
 {% endblock %}
 

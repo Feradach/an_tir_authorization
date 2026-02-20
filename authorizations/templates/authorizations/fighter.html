@@ -16,50 +16,6 @@
     <p><strong>Branch:</strong> {{ person.branch.name }}</p>
     <p><strong>Minor Status:</strong> {{ person.minor_status }}</p>
     
-{% if branch_officer %}
-    <h4>Officer Position</h4>
-    <p><strong>Position:</strong> {{ branch_officer.branch.name }} {{ branch_officer.discipline.name }}</p>
-    <p><strong>Expires:</strong> {{ branch_officer.end_date }}</p>
-{% else %}
-    {% if auth_officer %}
-        <h4>Officer Position</h4>
-        <p>Appoint to an officer position</p>
-        <form method="post" action="">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="appoint_branch_marshal">
-            <input type="hidden" name="person" value="{{ person }}">
-            <div class="row g-3">
-                <div class="col-md-3">
-                    <p><strong>Branch</strong></p>
-                    <select id="branch" name="branch" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in branch_choices %}
-                        <option value="{{ option }}">
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <p><strong>Discipline</strong></p>
-                    <select id="discipline" name="discipline" class="choices-dropdown">
-                        <option value=""></option>
-                        {% for option in discipline_choices %}
-                        <option value="{{ option }}">
-                            {{ option }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <p><strong>Start Date</strong></p>
-                    <input type="date" id="start_date" name="start_date" class="form-control">
-                </div>
-            </div><br>
-            <button type="submit" class="btn btn-primary"> Appoint Branch Marshal</button>
-        </form><br>
-    {% endif %}
-{% endif %}
 <p><strong>Membership Expiration:</strong>
     {% if person.user.membership_expiration %}
         {% if person.user.membership_expiration < today %}Expired{% else %}{{ person.user.membership_expiration }}{% endif %}
@@ -74,9 +30,64 @@
         None
     {% endif %}
 </p>
+{% if branch_officers %}
+    <h4>Officer Positions</h4>
+    {% for office in branch_officers %}
+        <p><strong>Position:</strong> {{ office.branch.name }} {{ office.discipline.name }}</p>
+        <p>
+            <strong>Expires:</strong> {{ office.end_date }}
+            {% if office.show_effective_expiration %}
+                <span class="past-expiration">({{ office.effective_expiration }})</span>
+            {% endif %}
+        </p>
+    {% endfor %}
+{% endif %}
+{% if can_manage_marshal_offices %}
+    <h4>Officer Position</h4>
+    <p>Appoint to an officer position</p>
+    <form method="post" action="">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="appoint_branch_marshal">
+        <input type="hidden" name="person" value="{{ person }}">
+        <div class="row g-3">
+            <div class="col-md-3">
+                <p><strong>Branch</strong></p>
+                <select id="branch" name="branch" class="choices-dropdown">
+                    <option value=""></option>
+                    {% for option in branch_choices %}
+                    <option value="{{ option }}">
+                        {{ option }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <p><strong>Discipline</strong></p>
+                <select id="discipline" name="discipline" class="choices-dropdown">
+                    <option value=""></option>
+                    {% for option in discipline_choices %}
+                    <option value="{{ option }}">
+                        {{ option }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <p><strong>Start Date</strong></p>
+                <input type="date" id="start_date" name="start_date" class="form-control">
+            </div>
+        </div><br>
+        <button type="submit" class="btn btn-primary">Appoint Marshal Officer</button>
+    </form><br>
+{% endif %}
 {% if auth_officer or request.user.id == person.user.id %}
     <p><a href="{% url 'user_account' user_id=person.id %}" class="btn btn-primary">View and Edit User Account</a></p>
 {% endif %}
+    <form method="post" action="">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="send_login_instructions">
+        <button type="submit" class="btn btn-primary mb-3">Send Login Instructions</button>
+    </form>
     <h4>Authorizations</h4>
     <div class="row">
         {% for discipline, data in authorization_list.items %}
@@ -277,7 +288,7 @@
             </div>
         {% endfor %}
     </div>
-    {% if auth_officer %}
+    {% if can_manage_sanctions %}
         {% if sanctions %}
             <p><a href="{% url 'manage_sanctions' %}?sca_name={{ person.sca_name }}" class="btn btn-primary">Manage Sanctions</a></p>
         {% endif %}
@@ -285,7 +296,7 @@
     {% endif %}
 </div>
 {% else %}
-    {% if auth_officer %}
+    {% if can_manage_sanctions %}
         <div class="card">
             <h4>Sanctions</h4>
                 <p><a href="{% url 'issue_sanctions' person_id=person.id %}" class="btn btn-danger">Issue Sanctions</a></p>
@@ -294,15 +305,6 @@
 {% endif %}
 <div class="card">
     {% if is_marshal %}
-        {% if messages %}
-            <div id="messages-container">
-                {% for message in messages %}
-                    <div class="alert alert-{{ message.tags }}" role="alert">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-            </div>
-        {% endif %}
         <form method="post" id="new_authorization_form" action="" data-person-id="{{ person.id }}"{% if pending_note_required %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_form"{% endif %}>
             {% csrf_token %}
             <input type="hidden" name="action" value="add_authorization">

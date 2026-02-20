@@ -110,7 +110,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=50)),
-                ('rank', models.CharField(choices=[('Ducal', 'Ducal'), ('County', 'County'), ('Viscounty', 'Viscounty'), ('Peerage', 'Peerage'), ('Baronial', 'Baronial'), ('Grant of Arms', 'Grant of Arms'), ('Award of Arms', 'Award of Arms'), ('Non-Armigerous', 'Non-Armigerous')], default='Non-Armigerous', max_length=50)),
+                ('rank', models.CharField(choices=[('Duchy', 'Duchy'), ('County', 'County'), ('Viscounty', 'Viscounty'), ('Peerage', 'Peerage'), ('Baronial', 'Baronial'), ('Grant of Arms', 'Grant of Arms'), ('Award of Arms', 'Award of Arms'), ('Non-Armigerous', 'Non-Armigerous')], default='Non-Armigerous', max_length=50)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
                 ('created_by', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='titles_created', to=settings.AUTH_USER_MODEL)),

@@ -60,9 +60,13 @@
     <div class="card">
         <div class="col-md-4">
                 <div class="mb-3">
-                    <h3>Children</h3>
+                    <h3>Child Accounts</h3>
                     {% for child in children %}
-                        <p><a href="{% url 'user_account' user_id=child.id %}" class="btn btn-primary">View {{ child.sca_name }}'s Account</a></p>
+                        <p>
+                            <a href="{% url 'user_account' user_id=child.user_id %}" class="btn btn-primary">
+                                View {{ child.sca_name }} ({{ child.user.username }})
+                            </a>
+                        </p>
                     {% endfor %}
                 </div>
         </div>
@@ -82,23 +86,30 @@
     <div class="col-md-4">
             <div class="mb-3">
                 <h3>Edit Your Information</h3>
-                {% if messages %}
-                    <div id="messages-container">
-                        {% for message in messages %}
-                            <div class="alert alert-{{ message.tags }}" role="alert">
-                                {{ message }}
-                            </div>
-                        {% endfor %}
-                    </div>
-                {% endif %}
-
                 <form method="post">
                     {% csrf_token %}
+                    {% if form.non_field_errors %}
+                        <div class="alert alert-danger" role="alert">
+                            {% for error in form.non_field_errors %}
+                                <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                     {% for field in form %}
                         {% if field.name != 'background_check_expiration' and field.name != 'honeypot' %}
                             <div class="form-group">
                                 <label for="{{ field.id_for_label }}">{{ field.label }}</label>
                                 {{ field }}
+                                {% if field.help_text %}
+                                    <small class="form-text text-muted">{{ field.help_text }}</small>
+                                {% endif %}
+                                {% if field.errors %}
+                                    <div class="invalid-feedback d-block">
+                                        {% for error in field.errors %}
+                                            <div>{{ error }}</div>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
                             </div>
                         {% endif %}
                     {% endfor %}
@@ -106,6 +117,13 @@
                         <div class="form-group">
                             <label for="id_background_check_expiration">Background Check Expiration</label>
                             <input type="date" class="form-control" id="id_background_check_expiration" name="background_check_expiration" value="{{ user.background_check_expiration|date:'Y-m-d' }}">
+                            {% if form.background_check_expiration.errors %}
+                                <div class="invalid-feedback d-block">
+                                    {% for error in form.background_check_expiration.errors %}
+                                        <div>{{ error }}</div>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
                         </div>
                     {% endif %}
                     <button type="submit" class="btn btn-primary">Save Changes</button>

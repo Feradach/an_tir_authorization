@@ -1,4 +1,5 @@
-﻿from dateutil.relativedelta import relativedelta
+from dateutil.relativedelta import relativedelta
+import csv
 from django.core.mail import send_mail
 from django.conf import settings
 from datetime import date, datetime
@@ -22,8 +23,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, AUTHORIZATION_OFFICER_SIGN_OFF, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration
 from itertools import groupby
 from collections import defaultdict
 from operator import attrgetter
@@ -38,11 +39,56 @@ from django.core.validators import RegexValidator
 import re
 import mistune
 import bleach
+from types import SimpleNamespace
 from authorizations.security.events import log_security_event
+from authorizations.reporting import build_current_report_snapshot, ReportingConfigurationError
 
 
 def _get_action_note(request, field_name='action_note'):
     return (request.POST.get(field_name) or '').strip()
+
+
+def _approve_all_needs_kingdom(request, action_note=''):
+    pending_ids = list(
+        Authorization.objects.filter(status__name='Needs Kingdom Approval')
+        .order_by('id')
+        .values_list('id', flat=True)
+    )
+    approved = 0
+    failures = []
+    for authorization_id in pending_ids:
+        payload = {'authorization_id': str(authorization_id)}
+        if action_note:
+            payload['action_note'] = action_note
+        synthetic_request = SimpleNamespace(user=request.user, POST=payload)
+        ok, msg = approve_authorization(synthetic_request)
+        if ok:
+            approved += 1
+        else:
+            failures.append((authorization_id, msg))
+    return len(pending_ids), approved, failures
+
+
+def _report_bulk_kingdom_approval_results(request, total, approved, failures, *, automatic=False):
+    if total == 0:
+        if automatic:
+            messages.info(request, 'No authorizations were waiting for Kingdom approval.')
+        else:
+            messages.info(request, 'No authorizations are waiting for Kingdom approval.')
+        return
+
+    prefix = 'Automatically approved' if automatic else 'Approved'
+    if failures:
+        messages.warning(
+            request,
+            f'{prefix} {approved} of {total} authorizations waiting for Kingdom approval.'
+        )
+        for authorization_id, error_message in failures[:3]:
+            messages.warning(request, f'Authorization {authorization_id}: {error_message}')
+        if len(failures) > 3:
+            messages.warning(request, f'{len(failures) - 3} additional authorization(s) failed approval.')
+    else:
+        messages.success(request, f'{prefix} all {total} authorizations waiting for Kingdom approval.')
 
 
 def _get_pending_session(request, key, max_age_seconds=3600):
@@ -125,6 +171,85 @@ def _user_can_view_note(user, note) -> bool:
     return False
 
 
+def _office_region_name(office: BranchMarshal):
+    branch = getattr(office, 'branch', None)
+    if not branch:
+        return None
+    if branch.is_region():
+        return branch.name
+    if branch.region:
+        return branch.region.name
+    return None
+
+
+def _viewer_is_superior_for_office(viewer: User, office: BranchMarshal) -> bool:
+    """Chain-of-command check used for limited officer-expiration visibility."""
+    if not viewer or not getattr(viewer, 'is_authenticated', False):
+        return False
+    if not office or not office.branch or not office.discipline:
+        return False
+
+    if can_manage_branch_marshal_office(viewer, office.branch, office.discipline):
+        return True
+
+    # Regional discipline marshals are superiors for branch discipline marshals in their own region.
+    if office.branch.is_region():
+        return False
+    if office.discipline.name in ['Earl Marshal', 'Authorization Officer']:
+        return False
+
+    region_name = _office_region_name(office)
+    if not region_name:
+        return False
+
+    regional_offices = BranchMarshal.objects.filter(
+        person__user=viewer,
+        branch__name=region_name,
+        discipline=office.discipline,
+        end_date__gte=date.today(),
+    ).select_related('person__user', 'discipline')
+    for regional_office in regional_offices:
+        effective = marshal_office_effective_expiration(regional_office)
+        if effective and effective >= date.today():
+            return True
+    return False
+
+
+def _is_sanctions_supervisor(user) -> bool:
+    return is_kingdom_authorization_officer(user) or is_kingdom_earl_marshal(user)
+
+
+def _can_access_sanctions(user) -> bool:
+    return _is_sanctions_supervisor(user) or is_kingdom_marshal(user)
+
+
+def _sanctionable_disciplines_for_user(user):
+    base = Discipline.objects.exclude(name__in=['Earl Marshal', 'Authorization Officer'])
+    if not user or not user.is_authenticated:
+        return base.none()
+    if _is_sanctions_supervisor(user):
+        return base.order_by('name')
+    if not hasattr(user, 'person'):
+        return base.none()
+    discipline_ids = BranchMarshal.objects.filter(
+        person=user.person,
+        branch__name='An Tir',
+        end_date__gte=date.today(),
+    ).values_list('discipline_id', flat=True)
+    return base.filter(id__in=discipline_ids).distinct().order_by('name')
+
+
+def _can_manage_sanctions_for_discipline(user, discipline) -> bool:
+    if not discipline:
+        return False
+    discipline_name = discipline.name if hasattr(discipline, 'name') else discipline
+    if discipline_name in ['Earl Marshal', 'Authorization Officer']:
+        return False
+    if _is_sanctions_supervisor(user):
+        return True
+    return is_kingdom_marshal(user, discipline_name)
+
+
 @login_required
 def validate_authorization_rules(request):
     if request.method != 'POST':
@@ -191,16 +316,21 @@ def validate_sanction_action(request):
         return JsonResponse({'ok': False, 'message': 'Invalid request method.'}, status=405)
 
     action = request.POST.get('action', 'issue_sanction')
-    if not is_kingdom_authorization_officer(request.user) and not is_kingdom_marshal(request.user, 'Earl Marshal'):
+    if not _can_access_sanctions(request.user):
         return JsonResponse({'ok': False, 'message': 'You do not have permission to perform this action.'}, status=403)
 
     if action == 'lift_sanction':
         authorization_id = request.POST.get('authorization_id')
         if not authorization_id:
             return JsonResponse({'ok': False, 'message': 'Missing authorization.'}, status=400)
-        exists = Authorization.objects.filter(id=authorization_id, status__name='Revoked').exists()
-        if not exists:
+        authorization = Authorization.objects.select_related('style__discipline').filter(
+            id=authorization_id,
+            status__name='Revoked',
+        ).first()
+        if not authorization:
             return JsonResponse({'ok': False, 'message': 'Could not find the specified sanction to lift.'})
+        if not _can_manage_sanctions_for_discipline(request.user, authorization.style.discipline):
+            return JsonResponse({'ok': False, 'message': 'You do not have permission to manage this sanction.'}, status=403)
         return JsonResponse({'ok': True})
 
     sanction_type = request.POST.get('sanction_type')
@@ -212,10 +342,20 @@ def validate_sanction_action(request):
     if sanction_type == 'discipline':
         if not discipline_id:
             return JsonResponse({'ok': False, 'message': 'Please select a discipline before sanctioning.'})
+        discipline = Discipline.objects.filter(id=discipline_id).first()
+        if not discipline:
+            return JsonResponse({'ok': False, 'message': 'Invalid discipline.'}, status=400)
+        if not _can_manage_sanctions_for_discipline(request.user, discipline):
+            return JsonResponse({'ok': False, 'message': 'You do not have permission to sanction this discipline.'}, status=403)
         return JsonResponse({'ok': True})
     if sanction_type == 'style':
         if not style_id:
             return JsonResponse({'ok': False, 'message': 'Please select a style before sanctioning.'})
+        style = WeaponStyle.objects.select_related('discipline').filter(id=style_id).first()
+        if not style:
+            return JsonResponse({'ok': False, 'message': 'Invalid style.'}, status=400)
+        if not _can_manage_sanctions_for_discipline(request.user, style.discipline):
+            return JsonResponse({'ok': False, 'message': 'You do not have permission to sanction this discipline.'}, status=403)
         return JsonResponse({'ok': True})
 
     return JsonResponse({'ok': False, 'message': 'Invalid sanction type.'}, status=400)
@@ -232,6 +372,9 @@ USERNAME_RECOVERY_WINDOW_SECONDS = 15 * 60
 PASSWORD_RESET_IP_LIMIT = 5
 PASSWORD_RESET_USERNAME_LIMIT = 3
 PASSWORD_RESET_WINDOW_SECONDS = 15 * 60
+FIGHTER_LOGIN_INSTRUCTIONS_IP_LIMIT = 5
+FIGHTER_LOGIN_INSTRUCTIONS_PERSON_LIMIT = 3
+FIGHTER_LOGIN_INSTRUCTIONS_WINDOW_SECONDS = 15 * 60
 REGISTER_IP_LIMIT = 5
 REGISTER_EMAIL_LIMIT = 3
 REGISTER_WINDOW_SECONDS = 15 * 60
@@ -315,6 +458,7 @@ def index(request):
 
     all_people_qs = Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name')
     all_people = all_people_qs.values_list('sca_name', flat=True).distinct()
+    sign_off_required = authorization_officer_sign_off_enabled()
     fighter_name = request.GET.get('sca_name')
 
     # If a fighter name is selected, handle potential duplicates gracefully
@@ -336,6 +480,8 @@ def index(request):
                 'all_people': all_people,
                 'all_people_people': all_people_qs,
                 'name_matches': matches.order_by('user_id'),
+                'authorization_officer_sign_off_required': sign_off_required,
+                'can_set_authorization_officer_sign_off': False,
             }
             # If anonymous, we don't populate marshal-related context
             if request.user.is_anonymous:
@@ -353,6 +499,8 @@ def index(request):
         anon_context = {
             'all_people': all_people,
             'all_people_people': all_people_qs,
+            'authorization_officer_sign_off_required': sign_off_required,
+            'can_set_authorization_officer_sign_off': False,
         }
         if 'name_matches' in locals() and name_matches:
             anon_context['name_matches'] = name_matches
@@ -367,6 +515,7 @@ def index(request):
     kingdom_marshal = is_kingdom_marshal(request.user)
     kingdom_earl_marshal = is_kingdom_marshal(request.user, 'Earl Marshal')
     auth_officer = is_kingdom_authorization_officer(request.user)
+    can_manage_sanctions = _can_access_sanctions(request.user)
 
     # Are they in the branch marshal table at all?
     try:
@@ -404,7 +553,7 @@ def index(request):
             ).order_by('effective_expiration_date')
         if auth_officer:
             pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                status__name='Needs Kingdom Approval'
+                status__name__in=['Needs Kingdom Approval', 'Pending Background Check']
             ).order_by('effective_expiration_date')
 
     if request.method == 'POST':
@@ -413,6 +562,76 @@ def index(request):
             return redirect('login')
 
         action = request.POST.get('action')
+        if action == 'set_authorization_officer_sign_off':
+            if not auth_officer:
+                messages.error(request, 'Only the Kingdom Authorization Officer can change this setting.')
+                return redirect('index')
+            value = (request.POST.get('authorization_officer_sign_off') or '').strip().lower()
+            if value not in {'on', 'off'}:
+                messages.error(request, 'Invalid setting value.')
+                return redirect('index')
+            new_value = value == 'on'
+            previous_value = sign_off_required
+            AuthorizationPortalSetting.objects.update_or_create(
+                pk=1,
+                defaults={
+                    'require_kao_verification': new_value,
+                    'updated_by': request.user,
+                },
+            )
+            messages.success(
+                request,
+                f'Require Kingdom Authorization Officer Verification is now {"On" if new_value else "Off"}.',
+            )
+            if previous_value and not new_value:
+                auto_note = 'Automatic bulk approval after disabling Kingdom Authorization Officer Verification.'
+                total, approved, failures = _approve_all_needs_kingdom(request, action_note=auto_note)
+                _report_bulk_kingdom_approval_results(
+                    request,
+                    total,
+                    approved,
+                    failures,
+                    automatic=True,
+                )
+            return redirect('index')
+
+        if action == 'approve_all_kingdom_authorizations':
+            if not auth_officer:
+                messages.error(request, 'Only the Kingdom Authorization Officer can approve all pending kingdom authorizations.')
+                return redirect('index')
+            if not sign_off_required:
+                messages.error(request, 'Bulk Kingdom approval is only available while Kingdom verification is enabled.')
+                return redirect('index')
+
+            pending_key = 'pending_authorization_action'
+            pending_action = _get_pending_session(request, pending_key)
+            is_pending_submit = bool(
+                pending_action
+                and pending_action.get('action') == 'approve_all_kingdom_authorizations'
+            )
+
+            kingdom_pending = Authorization.objects.filter(status__name='Needs Kingdom Approval')
+            requires_note = kingdom_pending.filter(style__name__in=['Junior Marshal', 'Senior Marshal']).exists()
+            action_note = _get_action_note(request) if requires_note else ''
+            if requires_note and not action_note:
+                if is_pending_submit:
+                    messages.error(request, 'A note is required for marshal promotion actions.')
+                    return redirect('index')
+                request.session[pending_key] = {
+                    'action': 'approve_all_kingdom_authorizations',
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion approvals.')
+                return redirect('index')
+
+            total, approved, failures = _approve_all_needs_kingdom(request, action_note=action_note)
+            _report_bulk_kingdom_approval_results(request, total, approved, failures, automatic=False)
+            if pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+            return redirect('index')
+
         if action == 'clear_pending_authorization_action':
             pending_key = 'pending_authorization_action'
             if pending_key in request.session:
@@ -430,30 +649,19 @@ def index(request):
                 and pending_action.get('action') == 'approve_authorization'
                 and pending_action.get('authorization_id') == authorization.id
             )
-            pending_submit_as_user_id = pending_action.get('submit_as_user_id') if is_pending_submit else None
-            submit_as_user_id_raw = (request.POST.get('submit_as_user_id') or '').strip()
-            if pending_submit_as_user_id and not submit_as_user_id_raw:
-                mutable_post = request.POST.copy()
-                mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
-                request.POST = mutable_post
             requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
                     messages.error(request, 'A note is required for marshal promotion actions.')
                     return redirect('index')
-                submit_as_user, submit_as_error = _resolve_submit_as_user(request)
-                if submit_as_error:
-                    messages.error(request, submit_as_error)
-                    return redirect('index')
-                ok, msg = validate_approve_authorization(request.user, submit_as_user, authorization)
+                ok, msg = validate_approve_authorization(request.user, request.user, authorization)
                 if not ok:
                     messages.error(request, msg)
                     return redirect('index')
                 request.session[pending_key] = {
                     'action': 'approve_authorization',
                     'authorization_id': authorization.id,
-                    'submit_as_user_id': submit_as_user.id if submit_as_user else None,
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
@@ -505,9 +713,6 @@ def index(request):
 
 
     pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
-    selected_submit_as_user_id = None
-    if pending_authorization_action and pending_authorization_action.get('action') == 'approve_authorization':
-        selected_submit_as_user_id = pending_authorization_action.get('submit_as_user_id')
 
     base_context = {
         'senior_marshal': senior_marshal,
@@ -516,11 +721,13 @@ def index(request):
         'kingdom_marshal': kingdom_marshal,
         'kingdom_earl_marshal': kingdom_earl_marshal,
         'auth_officer': auth_officer,
+        'can_manage_sanctions': can_manage_sanctions,
         'pending_authorizations': pending_authorizations,
         'all_people': all_people,
         'all_people_people': all_people_qs,
+        'authorization_officer_sign_off_required': sign_off_required,
+        'can_set_authorization_officer_sign_off': auth_officer,
         'pending_authorization_action': pending_authorization_action,
-        'selected_submit_as_user_id': selected_submit_as_user_id,
     }
 
     # Include potential duplicate results for logged-in users
@@ -1108,6 +1315,40 @@ def _flatten_pdf_template(template, data, watermark_text=FIGHTER_CARD_WATERMARK,
     return template
 
 
+def _build_search_csv_response(authorizations):
+    """Export search table rows as CSV using current filters without pagination."""
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="authorizations_search.csv"'
+    # UTF-8 BOM helps Excel detect Unicode correctly on Windows.
+    response.write('\ufeff')
+    writer = csv.writer(response)
+    writer.writerow([
+        'SCA Name',
+        'Region',
+        'Branch',
+        'Discipline',
+        'Weapon Style',
+        'Marshal',
+        'Expiration',
+        'Minor',
+    ])
+    for auth in authorizations:
+        region_name = ''
+        if auth.person.branch and auth.person.branch.region:
+            region_name = auth.person.branch.region.name
+        writer.writerow([
+            auth.person.sca_name or '',
+            region_name,
+            auth.person.branch.name if auth.person.branch else '',
+            auth.style.discipline.name if auth.style and auth.style.discipline else '',
+            auth.style.name if auth.style else '',
+            auth.marshal.sca_name if auth.marshal else '',
+            auth.effective_expiration.isoformat() if auth.effective_expiration else '',
+            auth.person.minor_status,
+        ])
+    return response
+
+
 def search(request):
     """
     Handles both the search form display and the search results display.
@@ -1196,6 +1437,7 @@ def search(request):
     # First, get all authorizations that match the filter.
     # We use this as a base for both views.
     matching_authorizations = Authorization.objects.with_effective_expiration().filter(dynamic_filter).exclude(person__user_id=11968)
+    download_format = (request.GET.get('download') or '').strip().lower()
 
     if view_mode == 'card':
         # --- CARD VIEW LOGIC ---
@@ -1239,6 +1481,9 @@ def search(request):
             'marshal'
         ).order_by(user_sort)
 
+        if download_format == 'csv':
+            return _build_search_csv_response(authorization_list)
+
         items_per_page = int(request.GET.get('items_per_page', 25))
         paginator = Paginator(authorization_list, items_per_page)
         page_obj = paginator.get_page(request.GET.get('page', 1))
@@ -1247,6 +1492,8 @@ def search(request):
     query_params = request.GET.copy()
     if 'page' in query_params:
         query_params.pop('page')
+    if 'download' in query_params:
+        query_params.pop('download')
     for param in invalid_query_params:
         if param in query_params:
             query_params.pop(param)
@@ -1297,15 +1544,52 @@ def fighter(request, person_id):
     user = person.user
     auth_officer = is_kingdom_authorization_officer(request.user) if request.user.is_authenticated else False
     earl_marshal = is_kingdom_earl_marshal(request.user) if request.user.is_authenticated else False
+    can_manage_sanctions = _can_access_sanctions(request.user) if request.user.is_authenticated else False
+    can_manage_marshal_offices = can_manage_any_branch_marshal_office(request.user) if request.user.is_authenticated else False
     can_manage_officer_comments = auth_officer or earl_marshal
 
     # If there is a post, confirm that they are authenticated.
     if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'send_login_instructions':
+            ip_address = _get_client_ip(request)
+            person_key = f"fighter-login-instructions:person:{person_id}"
+            ip_key = f"fighter-login-instructions:ip:{ip_address}"
+            sender_email = settings.DEFAULT_FROM_EMAIL
+            throttled = _throttle_request(person_key, FIGHTER_LOGIN_INSTRUCTIONS_PERSON_LIMIT, FIGHTER_LOGIN_INSTRUCTIONS_WINDOW_SECONDS) or \
+                _throttle_request(ip_key, FIGHTER_LOGIN_INSTRUCTIONS_IP_LIMIT, FIGHTER_LOGIN_INSTRUCTIONS_WINDOW_SECONDS)
+
+            if not throttled:
+                login_path = reverse('login')
+                login_url = f"{settings.SITE_URL}{login_path}"
+                reset_link = _build_password_reset_link(user)
+                try:
+                    send_mail(
+                        'An Tir Authorization: Login Instructions',
+                        f'Login instructions were requested for your fighter record.\n\n'
+                        f'Username: {user.username}\n'
+                        f'Password Reset Link: {reset_link}\n'
+                        f'Login URL: {login_url}\n\n'
+                        f'If you did not request this, you can ignore this email.',
+                        sender_email,
+                        [user.email],
+                        fail_silently=False,
+                    )
+                except Exception:
+                    logger.exception('Error sending fighter login instructions for user_id=%s', user.id)
+
+            messages.success(
+                request,
+                f'Login instructions have been sent to the email on file. '
+                f'Please check your spam folder for an email from {sender_email}. '
+                f'If you did not receive the email please contact the Database Officer at {sender_email} to update your email.',
+            )
+            return redirect('fighter', person_id=person_id)
+
         if not request.user.is_authenticated:
             messages.error(request, 'You must be logged in to perform this action.')
             return redirect('login')
 
-        action = request.POST.get('action')
         if action == 'add_authorization':
             return add_authorization(request, person_id)
         elif action == 'clear_pending_authorization':
@@ -1481,11 +1765,12 @@ def fighter(request, person_id):
             active_status = AuthorizationStatus.objects.get(name='Active')
             pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
             needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
+            sign_off_required = authorization_officer_sign_off_enabled()
 
             def waiver_current(u):
                 return bool(u.waiver_expiration and u.waiver_expiration > date.today())
 
-            status_to_set = needs_kingdom_status if AUTHORIZATION_OFFICER_SIGN_OFF else (
+            status_to_set = needs_kingdom_status if sign_off_required else (
                 active_status if waiver_current(authorization.person.user) else pending_waiver_status
             )
 
@@ -1497,12 +1782,12 @@ def fighter(request, person_id):
                 pending.updated_by = submit_as_user
                 pending.save()
 
-            if not AUTHORIZATION_OFFICER_SIGN_OFF and status_to_set == active_status:
+            if not sign_off_required and status_to_set == active_status:
                 if (not authorization.person.user.waiver_expiration) or (authorization.person.user.waiver_expiration < new_expiration):
                     authorization.person.user.waiver_expiration = new_expiration
                     authorization.person.user.save()
 
-            if AUTHORIZATION_OFFICER_SIGN_OFF:
+            if sign_off_required:
                 messages.success(request, 'Concurrence recorded. Authorization submitted to Kingdom for approval.')
             elif status_to_set == pending_waiver_status:
                 messages.success(request, 'Concurrence recorded. Authorization pending waiver.')
@@ -1674,10 +1959,22 @@ def fighter(request, person_id):
             messages.error(request, 'You don\'t have the required authorizations to view this card.')
             return redirect('fighter', person_id=person_id)
 
-    try:
-        branch_officer = BranchMarshal.objects.get(person=person, end_date__gte=date.today())
-    except BranchMarshal.DoesNotExist:
-        branch_officer = None
+    branch_officers = list(
+        BranchMarshal.objects.filter(person=person, end_date__gte=date.today())
+        .select_related('branch', 'discipline')
+        .order_by('branch__name', 'discipline__name', 'end_date')
+    )
+    for office in branch_officers:
+        effective_expiration = marshal_office_effective_expiration(office)
+        office.effective_expiration = effective_expiration
+        lower_than_warrant = bool(effective_expiration and effective_expiration < office.end_date)
+        viewer_is_self = (
+            request.user.is_authenticated
+            and office.person
+            and office.person.user_id == request.user.id
+        )
+        viewer_is_superior = _viewer_is_superior_for_office(request.user, office)
+        office.show_effective_expiration = lower_than_warrant and (viewer_is_self or viewer_is_superior)
 
     if request.user.is_anonymous:
         return render(
@@ -1691,8 +1988,10 @@ def fighter(request, person_id):
                 'youth': youth,
                 'fighter': fighter,
                 'is_marshal': False,
-                'branch_officer': branch_officer,
+                'branch_officers': branch_officers,
                 'sanctions': sanctions,
+                'can_manage_sanctions': False,
+                'can_manage_marshal_offices': False,
                 'pending_waivers': pending_waivers,
                 'today': date.today(),
             },
@@ -1754,9 +2053,11 @@ def fighter(request, person_id):
             'is_marshal': is_senior_marshal(request.user) or auth_officer,
             'auth_form': CreateAuthorizationForm(user=request.user, show_all=auth_officer),
             'auth_officer': auth_officer,
+            'can_manage_sanctions': can_manage_sanctions,
+            'can_manage_marshal_offices': can_manage_marshal_offices,
             'can_manage_officer_comments': can_manage_officer_comments,
             'officer_notes': officer_notes,
-            'branch_officer': branch_officer,
+            'branch_officers': branch_officers,
             'branch_choices': branch_choices,
             'discipline_choices': discipline_choices,
             'sanctions': sanctions,
@@ -2052,6 +2353,7 @@ def add_authorization(request, person_id):
             pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
             needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
             needs_concurrence_status = AuthorizationStatus.objects.get(name='Needs Concurrence')
+            sign_off_required = authorization_officer_sign_off_enabled()
             pending_key = f'pending_authorization_{person_id}'
             is_pending_submit = request.POST.get('pending_authorization') == '1'
             pending_concurring_fighter_user_id = None
@@ -2247,7 +2549,7 @@ def add_authorization(request, person_id):
                                     if requires_concurrence(update_auth.style):
                                         if concurring_fighter:
                                             update_auth.concurring_fighter = concurring_fighter
-                                            if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                            if sign_off_required:
                                                 update_auth.status = needs_kingdom_status
                                                 messages.success(
                                                     request,
@@ -2271,11 +2573,18 @@ def add_authorization(request, person_id):
                                             messages.success(request, f'Authorization for {update_auth.style.name} requires concurrence from another authorized fighter.')
                                     else:
                                         update_auth.concurring_fighter = None
-                                        update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
-                                        if update_auth.status == active_status:
-                                            messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                        if sign_off_required:
+                                            update_auth.status = needs_kingdom_status
+                                            messages.success(
+                                                request,
+                                                f'Authorization for {update_auth.style.name} submitted to Kingdom for approval.'
+                                            )
                                         else:
-                                            messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
+                                            update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
+                                            if update_auth.status == active_status:
+                                                messages.success(request, f'Existing authorization for {update_auth.style.name} updated successfully!')
+                                            else:
+                                                messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
                                 
                                 update_auth.expiration = calculate_authorization_expiration(person, update_auth.style)
                                 update_auth.updated_by = authorizing_marshal
@@ -2303,7 +2612,7 @@ def add_authorization(request, person_id):
                                     expiration = calculate_authorization_expiration(person, style)
                                     if requires_concurrence(style):
                                         if concurring_fighter:
-                                            if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                            if sign_off_required:
                                                 status_to_set = needs_kingdom_status
                                                 success_message = f'Concurrence recorded for {style.name}. Authorization submitted to Kingdom for approval.'
                                             else:
@@ -2322,7 +2631,7 @@ def add_authorization(request, person_id):
                                                 created_by=authorizing_marshal,
                                                 updated_by=authorizing_marshal,
                                             )
-                                            if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                            if (not sign_off_required) and status_to_set == active_status:
                                                 if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
                                                     person.user.waiver_expiration = expiration
                                                     person.user.save()
@@ -2340,7 +2649,7 @@ def add_authorization(request, person_id):
                                             )
                                             messages.success(request, f'Authorization for {style.name} requires concurrence from another authorized fighter.')
                                     else:
-                                        if AUTHORIZATION_OFFICER_SIGN_OFF:
+                                        if sign_off_required:
                                             new_auth = Authorization.objects.create(
                                                 person=person,
                                                 style=style,
@@ -2367,7 +2676,7 @@ def add_authorization(request, person_id):
                                             else:
                                                 messages.success(request, f'Authorization for {style.name} pending waiver.')
                                         # Only push waiver when the new auth is Active
-                                        if (not AUTHORIZATION_OFFICER_SIGN_OFF) and status_to_set == active_status:
+                                        if (not sign_off_required) and status_to_set == active_status:
                                             if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
                                                 person.user.waiver_expiration = expiration
                                                 person.user.save()
@@ -2548,6 +2857,10 @@ def user_account(request, user_id):
                 messages.error(request, 'Invalid discipline selected.')
                 return redirect('user_account', user_id=user_id)
 
+            if discipline.name == 'Earl Marshal' and not branch.is_region():
+                messages.error(request, 'Earl Marshal offices may only be appointed at regional or kingdom level.')
+                return redirect('user_account', user_id=user_id)
+
             if action == 'self_set_regional':
                 # Validate requirements only for setting (not removing)
                 # Skip Senior Marshal requirement for Authorization Officer discipline
@@ -2660,6 +2973,13 @@ def user_account(request, user_id):
             return redirect('index')
         else:
             messages.error(request, 'Please correct the errors with the form.')
+            for field, errors in form.errors.items():
+                for error in errors:
+                    if field == '__all__':
+                        messages.error(request, error)
+                    else:
+                        field_label = form.fields[field].label if field in form.fields else field
+                        messages.error(request, f"{field_label}: {error}")
     else:
         form = CreatePersonForm(initial=initial_data, user_instance=user, request=request)
 
@@ -2714,25 +3034,24 @@ def sign_waiver(request, user_id):
         return render(request, 'authorizations/waiver.html')
 
 def reject_authorization(request, authorization):
-    auth_discipline = authorization.style.discipline.name
     requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
     action_note = _get_action_note(request) if requires_note else ''
     if requires_note and not action_note:
         return False, 'A note is required for marshal promotion actions.'
-    if is_regional_marshal(request.user, auth_discipline):
-        rejected_status = AuthorizationStatus.objects.get(name='Rejected')
-        authorization.status = rejected_status
-        authorization.save()
-        if requires_note:
-            AuthorizationNote.objects.create(
-                authorization=authorization,
-                created_by=request.user,
-                action='marshal_rejected',
-                note=action_note,
-            )
-        return True, 'Authorization rejected.'
-    else:
-        return False, 'You do not have authority to reject this authorization.'
+    ok, msg = validate_reject_authorization(request.user, authorization)
+    if not ok:
+        return False, msg
+    rejected_status = AuthorizationStatus.objects.get(name='Rejected')
+    authorization.status = rejected_status
+    authorization.save()
+    if requires_note:
+        AuthorizationNote.objects.create(
+            authorization=authorization,
+            created_by=request.user,
+            action='marshal_rejected',
+            note=action_note,
+        )
+    return True, 'Authorization rejected.'
 
 @login_required
 def manage_sanctions(request):
@@ -2740,10 +3059,14 @@ def manage_sanctions(request):
     Handles displaying the sanctions search form, and showing the results
     in either a table or a card view grouped by person.
     """
+    if not _can_access_sanctions(request.user):
+        raise PermissionDenied
+    sanctions_supervisor = _is_sanctions_supervisor(request.user)
+    allowed_disciplines = _sanctionable_disciplines_for_user(request.user)
+    allowed_discipline_ids = list(allowed_disciplines.values_list('id', flat=True))
+
     # Handle POST requests first to lift sanctions.
     if request.method == 'POST':
-        if not is_kingdom_authorization_officer(request.user) and not is_kingdom_marshal(request.user, 'Earl Marshal'):
-            raise PermissionDenied
         return_url = request.POST.get('return_url')
         if request.POST.get('action') == 'clear_pending_sanction_lift':
             pending_key = 'pending_sanction_lift'
@@ -2767,9 +3090,15 @@ def manage_sanctions(request):
                 if is_pending_submit:
                     messages.error(request, 'A note is required to lift a sanction.')
                     return redirect('manage_sanctions')
-                exists = Authorization.objects.filter(id=authorization_id, status__name='Revoked').exists()
-                if not exists:
+                authorization = Authorization.objects.select_related('style__discipline').filter(
+                    id=authorization_id,
+                    status__name='Revoked',
+                ).first()
+                if not authorization:
                     messages.error(request, "Could not find the specified sanction to lift.")
+                    return redirect('manage_sanctions')
+                if not _can_manage_sanctions_for_discipline(request.user, authorization.style.discipline):
+                    messages.error(request, 'You do not have permission to manage this sanction.')
                     return redirect('manage_sanctions')
                 request.session[pending_key] = {
                     'authorization_id': authorization_id,
@@ -2779,7 +3108,13 @@ def manage_sanctions(request):
                 messages.info(request, 'Eligibility verified. Please add a note to finalize lifting the sanction.')
                 return redirect(return_url or 'manage_sanctions')
             try:
-                authorization = Authorization.objects.get(id=authorization_id, status__name='Revoked')
+                authorization = Authorization.objects.select_related('style__discipline').get(
+                    id=authorization_id,
+                    status__name='Revoked',
+                )
+                if not _can_manage_sanctions_for_discipline(request.user, authorization.style.discipline):
+                    messages.error(request, 'You do not have permission to manage this sanction.')
+                    return redirect('manage_sanctions')
                 # Instead of deleting, it's often better to change the status.
                 # If you truly want to delete, you can keep authorization.delete().
                 # For this example, let's assume lifting a sanction means making it 'Active' again.
@@ -2806,6 +3141,11 @@ def manage_sanctions(request):
 
     # Get dropdown options for the search form
     revoked_auths = Authorization.objects.filter(status__name='Revoked')
+    if not sanctions_supervisor:
+        if not allowed_discipline_ids:
+            revoked_auths = revoked_auths.none()
+        else:
+            revoked_auths = revoked_auths.filter(style__discipline_id__in=allowed_discipline_ids)
     sca_name_options = Person.objects.filter(authorization__in=revoked_auths).distinct().order_by('sca_name').values_list('sca_name', flat=True)
     discipline_options = Discipline.objects.filter(weaponstyle__authorization__in=revoked_auths).distinct().order_by('name').values_list('name', flat=True)
     style_options = WeaponStyle.objects.filter(authorization__in=revoked_auths).distinct().order_by('name').values_list('name', flat=True)
@@ -2836,6 +3176,11 @@ def manage_sanctions(request):
         dynamic_filter &= Q(style__name=style)
 
     matching_authorizations = Authorization.objects.filter(dynamic_filter).exclude(person__user_id=11968)
+    if not sanctions_supervisor:
+        if not allowed_discipline_ids:
+            matching_authorizations = matching_authorizations.none()
+        else:
+            matching_authorizations = matching_authorizations.filter(style__discipline_id__in=allowed_discipline_ids)
     view_mode = request.GET.get('view', 'table')
     page_obj = None
 
@@ -2868,20 +3213,21 @@ def manage_sanctions(request):
 
 @login_required()
 def issue_sanctions(request, person_id):
-    """Allows the authorization officer or Earl Marshal to issue a sanction."""
-    if not is_kingdom_authorization_officer(request.user) and not is_kingdom_marshal(request.user, 'Earl Marshal'):
+    """Allows eligible kingdom marshals to issue sanctions by discipline scope."""
+    if not _can_access_sanctions(request.user):
         raise PermissionDenied
 
     person = get_object_or_404(Person, user_id=person_id)
 
-    all_disciplines = Discipline.objects.all().exclude(name__in=['Earl Marshal', 'Authorization Officer'])
+    all_disciplines = _sanctionable_disciplines_for_user(request.user)
 
     discipline = None
     styles = []
     discipline_name = request.GET.get('discipline')
     if discipline_name:
-        discipline = Discipline.objects.filter(id=discipline_name).first() or Discipline.objects.filter(name=discipline_name).first()
-        if discipline:
+        selected_discipline = Discipline.objects.filter(id=discipline_name).first() or Discipline.objects.filter(name=discipline_name).first()
+        if selected_discipline and _can_manage_sanctions_for_discipline(request.user, selected_discipline):
+            discipline = selected_discipline
             styles = WeaponStyle.objects.filter(discipline=discipline)
 
     pending_key = f'pending_sanction_issue_{person_id}'
@@ -2890,8 +3236,9 @@ def issue_sanctions(request, person_id):
     if pending_sanction_issue:
         discipline_id = pending_sanction_issue.get('discipline_id')
         if discipline_id:
-            discipline = Discipline.objects.filter(id=discipline_id).first() or discipline
-            if discipline:
+            pending_discipline = Discipline.objects.filter(id=discipline_id).first()
+            if pending_discipline and _can_manage_sanctions_for_discipline(request.user, pending_discipline):
+                discipline = pending_discipline
                 styles = WeaponStyle.objects.filter(discipline=discipline)
         pending_style_id = pending_sanction_issue.get('style_id')
 
@@ -2920,11 +3267,35 @@ def issue_sanctions(request, person_id):
                 if return_url:
                     return redirect(return_url)
                 return redirect('issue_sanctions', person_id=person_id)
+            if sanction_type == 'discipline':
+                selected_discipline = Discipline.objects.filter(id=discipline_id).first()
+                if not selected_discipline:
+                    messages.error(request, 'Invalid discipline')
+                    if return_url:
+                        return redirect(return_url)
+                    return redirect('issue_sanctions', person_id=person_id)
+                if not _can_manage_sanctions_for_discipline(request.user, selected_discipline):
+                    messages.error(request, 'You do not have permission to sanction this discipline.')
+                    if return_url:
+                        return redirect(return_url)
+                    return redirect('issue_sanctions', person_id=person_id)
             if sanction_type == 'style' and not style_id:
                 messages.error(request, 'Please select a style before sanctioning.')
                 if return_url:
                     return redirect(return_url)
                 return redirect('issue_sanctions', person_id=person_id)
+            if sanction_type == 'style':
+                selected_style = WeaponStyle.objects.select_related('discipline').filter(id=style_id).first()
+                if not selected_style:
+                    messages.error(request, 'Invalid style')
+                    if return_url:
+                        return redirect(return_url)
+                    return redirect('issue_sanctions', person_id=person_id)
+                if not _can_manage_sanctions_for_discipline(request.user, selected_style.discipline):
+                    messages.error(request, 'You do not have permission to sanction this discipline.')
+                    if return_url:
+                        return redirect(return_url)
+                    return redirect('issue_sanctions', person_id=person_id)
             if sanction_type not in ['discipline', 'style']:
                 messages.error(request, 'Invalid sanction type')
                 if return_url:
@@ -2987,7 +3358,11 @@ def create_sanction(request, person):
             return False, 'No discipline provided'
 
         # Create sanctions for all styles in the discipline
-        discipline = Discipline.objects.get(id=discipline_id)
+        discipline = Discipline.objects.filter(id=discipline_id).first()
+        if not discipline:
+            return False, 'Invalid discipline'
+        if not _can_manage_sanctions_for_discipline(request.user, discipline):
+            return False, 'You do not have permission to sanction this discipline.'
         styles = WeaponStyle.objects.filter(discipline_id=discipline_id)
         for style in styles:
             # Check if the authorization already exists.
@@ -3019,7 +3394,11 @@ def create_sanction(request, person):
             return False, 'No style provided'
 
         # Create sanction for one discipline
-        style = WeaponStyle.objects.get(id=style_id)
+        style = WeaponStyle.objects.select_related('discipline').filter(id=style_id).first()
+        if not style:
+            return False, 'Invalid style'
+        if not _can_manage_sanctions_for_discipline(request.user, style.discipline):
+            return False, 'You do not have permission to sanction this discipline.'
         # Check if the authorization already exists.
         if Authorization.objects.filter(person=person, style=style).exists():
             # If it does, change the expiration date to the current date and the status to Revoked.
@@ -3576,16 +3955,20 @@ def branch_marshals(request):
     # --- POST Logic: Handle appointment changes first ---
     if request.user.is_authenticated:
         auth_officer = is_kingdom_authorization_officer(request.user)
+        can_manage_marshal_offices = can_manage_any_branch_marshal_office(request.user)
     else:
         auth_officer = False
+        can_manage_marshal_offices = False
     if request.method == 'POST':
-        if not auth_officer:
+        if not can_manage_marshal_offices:
             raise PermissionDenied
 
         action = request.POST.get('action')
         branch_officer_id = request.POST.get('branch_officer_id')
         try:
-            branch_officer = BranchMarshal.objects.get(id=branch_officer_id)
+            branch_officer = BranchMarshal.objects.select_related('branch', 'discipline', 'person').get(id=branch_officer_id)
+            if not can_manage_branch_marshal_office(request.user, branch_officer.branch, branch_officer.discipline):
+                raise PermissionDenied
             if action == 'extend_appointment':
                 branch_officer.end_date += relativedelta(years=1)
                 messages.success(request, f'Appointment for {branch_officer.person.sca_name} has been extended one year.')
@@ -3634,6 +4017,7 @@ def branch_marshals(request):
     matching_appointments = BranchMarshal.objects.filter(dynamic_filter).exclude(person__user_id=11968)
     view_mode = request.GET.get('view', 'table')
     page_obj = None
+    show_manage_actions = False
 
     if view_mode == 'card':
         # CARD VIEW: Paginate by Person
@@ -3648,6 +4032,14 @@ def branch_marshals(request):
         
         paginator = Paginator(people_list, 10)
         page_obj = paginator.get_page(request.GET.get('page', 1))
+        for marshal_person in page_obj.object_list:
+            for appointment in getattr(marshal_person, 'current_appointments', []):
+                appointment.can_manage = (
+                    request.user.is_authenticated
+                    and can_manage_branch_marshal_office(request.user, appointment.branch, appointment.discipline)
+                )
+                if appointment.can_manage:
+                    show_manage_actions = True
 
     else: # 'table' view is the default
        # UPDATED: Added 'branch__region' to efficiently fetch the region name
@@ -3656,13 +4048,324 @@ def branch_marshals(request):
         ).order_by('person__sca_name', 'branch__name')
         paginator = Paginator(marshals_list, 25)
         page_obj = paginator.get_page(request.GET.get('page', 1))
+        for appointment in page_obj.object_list:
+            appointment.can_manage = (
+                request.user.is_authenticated
+                and can_manage_branch_marshal_office(request.user, appointment.branch, appointment.discipline)
+            )
+            if appointment.can_manage:
+                show_manage_actions = True
 
     context = {
         'page_obj': page_obj,
         'view_mode': view_mode,
         'auth_officer': auth_officer,
+        'can_manage_marshal_offices': can_manage_marshal_offices,
+        'show_manage_actions': show_manage_actions,
     }
     return render(request, 'authorizations/branch_marshals.html', context)
+
+
+def _period_label(period):
+    if not period:
+        return 'N/A'
+    return f'Q{period.quarter} {period.year}'
+
+
+def _previous_period_for(selected_period, periods_desc):
+    if not selected_period:
+        return None
+    for idx, period in enumerate(periods_desc):
+        if period.id == selected_period.id:
+            if idx + 1 < len(periods_desc):
+                return periods_desc[idx + 1]
+            return None
+    return None
+
+
+def _build_report_rows(report_family, current_period, compare_period):
+    current_qs = ReportValue.objects.filter(
+        reporting_period=current_period,
+        report_family=report_family,
+    ).order_by('display_order', 'region_name', 'subject_name', 'metric_name')
+    compare_qs = ReportValue.objects.filter(
+        reporting_period=compare_period,
+        report_family=report_family,
+    ).order_by('display_order', 'region_name', 'subject_name', 'metric_name') if compare_period else ReportValue.objects.none()
+
+    def row_key(item):
+        return (
+            item.region_name or '',
+            item.subject_name,
+            item.metric_name,
+        )
+
+    compare_map = {row_key(item): item.value for item in compare_qs}
+    current_map = {row_key(item): item.value for item in current_qs}
+    seen_keys = set()
+    ordered_keys = []
+
+    for item in current_qs:
+        key = row_key(item)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        ordered_keys.append(key)
+
+    for item in compare_qs:
+        key = row_key(item)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        ordered_keys.append(key)
+
+    rows = []
+    for region_name, subject_name, metric_name in ordered_keys:
+        current_value = current_map.get((region_name, subject_name, metric_name))
+        compare_value = compare_map.get((region_name, subject_name, metric_name))
+        change = None
+        if current_value is not None and compare_value is not None:
+            change = current_value - compare_value
+        rows.append(
+            {
+                'region_name': region_name,
+                'subject_name': subject_name,
+                'metric_name': metric_name,
+                'current_value': current_value,
+                'compare_value': compare_value,
+                'change': change,
+            }
+        )
+    return rows
+
+
+def _build_rows_from_values(current_values, compare_values):
+    def row_key(item):
+        return (item['region_name'] or '', item['subject_name'], item['metric_name'])
+
+    compare_map = {row_key(item): item['value'] for item in compare_values}
+    current_map = {row_key(item): item['value'] for item in current_values}
+
+    current_sorted = sorted(
+        current_values,
+        key=lambda item: (item.get('display_order', 0), item['region_name'], item['subject_name'], item['metric_name']),
+    )
+    compare_sorted = sorted(
+        compare_values,
+        key=lambda item: (item.get('display_order', 0), item['region_name'], item['subject_name'], item['metric_name']),
+    )
+
+    seen_keys = set()
+    ordered_keys = []
+    for item in current_sorted:
+        key = row_key(item)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        ordered_keys.append(key)
+    for item in compare_sorted:
+        key = row_key(item)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        ordered_keys.append(key)
+
+    rows = []
+    for region_name, subject_name, metric_name in ordered_keys:
+        current_value = current_map.get((region_name, subject_name, metric_name))
+        compare_value = compare_map.get((region_name, subject_name, metric_name))
+        change = None
+        if current_value is not None and compare_value is not None:
+            change = current_value - compare_value
+        rows.append(
+            {
+                'region_name': region_name,
+                'subject_name': subject_name,
+                'metric_name': metric_name,
+                'current_value': current_value,
+                'compare_value': compare_value,
+                'change': change,
+            }
+        )
+    return rows
+
+
+def _build_reports_csv_response(download_key, marshal_rows, regional_rows, equestrian_rows, show_compare_columns, current_label, compare_label):
+    export_specs = {
+        'quarterly_marshal': {
+            'rows': marshal_rows,
+            'base_headers': ['Discipline', 'Authorization Detail'],
+            'row_mapper': lambda row: [row['subject_name'], row['metric_name']],
+        },
+        'regional_breakdown': {
+            'rows': regional_rows,
+            'base_headers': ['Region', 'Description', 'Metric'],
+            'row_mapper': lambda row: [row['region_name'], row['subject_name'], row['metric_name']],
+        },
+        'equestrian': {
+            'rows': equestrian_rows,
+            'base_headers': ['Region', 'Authorization Type'],
+            'row_mapper': lambda row: [row['region_name'], row['subject_name']],
+        },
+    }
+    if download_key not in export_specs:
+        return None
+
+    spec = export_specs[download_key]
+    headers = list(spec['base_headers']) + [current_label]
+    if show_compare_columns:
+        headers.extend([compare_label, 'Change'])
+
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = f'attachment; filename="{download_key}_report.csv"'
+    # UTF-8 BOM helps Excel detect Unicode correctly on Windows.
+    response.write('\ufeff')
+    writer = csv.writer(response)
+    writer.writerow(headers)
+
+    for row in spec['rows']:
+        csv_row = spec['row_mapper'](row)
+        csv_row.append('' if row['current_value'] is None else row['current_value'])
+        if show_compare_columns:
+            csv_row.append('' if row['compare_value'] is None else row['compare_value'])
+            csv_row.append('' if row['change'] is None else row['change'])
+        writer.writerow(csv_row)
+
+    return response
+
+
+def reports_view(request):
+    periods = list(ReportingPeriod.objects.order_by('-year', '-quarter'))
+    if not periods:
+        return render(
+            request,
+            'reports.html',
+            {
+                'available_periods': [],
+                'selected_current_period': None,
+                'selected_compare_period': None,
+                'selected_current_period_label': 'N/A',
+                'selected_compare_period_label': 'N/A',
+                'marshal_rows': [],
+                'regional_rows': [],
+                'equestrian_rows': [],
+            },
+        )
+
+    latest_period = periods[0]
+    current_period_id = request.GET.get('current_period')
+    compare_period_id = request.GET.get('compare_period')
+
+    current_is_dynamic = current_period_id == 'current'
+    selected_current_period = None if current_is_dynamic else latest_period
+    if current_period_id and current_period_id != 'current':
+        selected_current_period = next((p for p in periods if str(p.id) == current_period_id), latest_period)
+
+    if current_is_dynamic:
+        default_compare = latest_period
+    else:
+        default_compare = _previous_period_for(selected_current_period, periods)
+
+    if 'compare_period' in request.GET:
+        if compare_period_id:
+            selected_compare_period = next((p for p in periods if str(p.id) == compare_period_id), None)
+        else:
+            selected_compare_period = None
+    else:
+        selected_compare_period = default_compare
+
+    if current_is_dynamic:
+        current_reporting_error = None
+        try:
+            current_snapshot = build_current_report_snapshot(as_of=date.today())
+        except ReportingConfigurationError as exc:
+            current_snapshot = {
+                ReportValue.ReportFamily.QUARTERLY_MARSHAL: [],
+                ReportValue.ReportFamily.REGIONAL_BREAKDOWN: [],
+                ReportValue.ReportFamily.EQUESTRIAN: [],
+            }
+            current_reporting_error = '; '.join(exc.messages)
+
+        compare_rows_by_family = defaultdict(list)
+        if selected_compare_period:
+            compare_qs = ReportValue.objects.filter(reporting_period=selected_compare_period)
+            for item in compare_qs:
+                compare_rows_by_family[item.report_family].append(
+                    {
+                        'region_name': item.region_name,
+                        'subject_name': item.subject_name,
+                        'metric_name': item.metric_name,
+                        'value': item.value,
+                        'display_order': item.display_order,
+                    }
+                )
+        marshal_rows = _build_rows_from_values(
+            current_snapshot[ReportValue.ReportFamily.QUARTERLY_MARSHAL],
+            compare_rows_by_family[ReportValue.ReportFamily.QUARTERLY_MARSHAL],
+        )
+        regional_rows = _build_rows_from_values(
+            current_snapshot[ReportValue.ReportFamily.REGIONAL_BREAKDOWN],
+            compare_rows_by_family[ReportValue.ReportFamily.REGIONAL_BREAKDOWN],
+        )
+        equestrian_rows = _build_rows_from_values(
+            current_snapshot[ReportValue.ReportFamily.EQUESTRIAN],
+            compare_rows_by_family[ReportValue.ReportFamily.EQUESTRIAN],
+        )
+        selected_current_period_label = f'Current ({date.today().isoformat()})'
+        selected_current_officer_name = 'Computed from current database state'
+    else:
+        current_reporting_error = None
+        marshal_rows = _build_report_rows(
+            ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+            selected_current_period,
+            selected_compare_period,
+        )
+        regional_rows = _build_report_rows(
+            ReportValue.ReportFamily.REGIONAL_BREAKDOWN,
+            selected_current_period,
+            selected_compare_period,
+        )
+        equestrian_rows = _build_report_rows(
+            ReportValue.ReportFamily.EQUESTRIAN,
+            selected_current_period,
+            selected_compare_period,
+        )
+        selected_current_period_label = _period_label(selected_current_period)
+        selected_current_officer_name = selected_current_period.authorization_officer_name if selected_current_period else 'N/A'
+
+    show_compare_columns = selected_compare_period is not None
+    selected_compare_period_label = _period_label(selected_compare_period)
+
+    download_key = (request.GET.get('download') or '').strip()
+    if download_key:
+        download_response = _build_reports_csv_response(
+            download_key,
+            marshal_rows,
+            regional_rows,
+            equestrian_rows,
+            show_compare_columns,
+            selected_current_period_label,
+            selected_compare_period_label,
+        )
+        if download_response is not None:
+            return download_response
+
+    context = {
+        'available_periods': periods,
+        'current_is_dynamic': current_is_dynamic,
+        'selected_current_period': selected_current_period,
+        'selected_compare_period': selected_compare_period,
+        'show_compare_columns': show_compare_columns,
+        'selected_current_period_label': selected_current_period_label,
+        'selected_compare_period_label': selected_compare_period_label,
+        'selected_current_officer_name': selected_current_officer_name,
+        'current_reporting_error': current_reporting_error,
+        'marshal_rows': marshal_rows,
+        'regional_rows': regional_rows,
+        'equestrian_rows': equestrian_rows,
+    }
+    return render(request, 'reports.html', context)
+
 
 def changelog_view(request):
     """Render the local CHANGELOG.md as HTML on the changelog page.
@@ -3705,7 +4408,7 @@ def get_client_ip(request):
 
 class TitleModelChoiceField(forms.ModelChoiceField):
     def label_from_instance(self, obj):
-        # show "Duke (Ducal)" etc.
+        # show "Duke (Duchy)" etc.
         return f"{obj.name} ({obj.rank})"
 
 class CreatePersonForm(forms.Form):
@@ -3747,9 +4450,17 @@ class CreatePersonForm(forms.Form):
     state_province = forms.ChoiceField(
         label='State/Province',
         choices=[('', '-- select one --')] + state_province_choices,
-        required=True
+        required=True,
+        error_messages={
+            'required': 'State/Province is required.',
+            'invalid_choice': 'Select a valid state/province from the list.',
+        }
     )
-    postal_code = forms.CharField(label='Postal Code', required=True)
+    postal_code = forms.CharField(
+        label='Postal Code',
+        required=True,
+        error_messages={'required': 'Postal code is required.'},
+    )
     country = forms.ChoiceField(
         label='Country',
         choices=[('', '-- select one --'), ('Canada', 'Canada'), ('United States', 'United States')],
@@ -3823,7 +4534,7 @@ class CreatePersonForm(forms.Form):
         
         if not valid:
             raise forms.ValidationError(
-                'Postal code must be within An Tir.'
+                'Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).'
             )
             
         return postal_code
@@ -3843,7 +4554,7 @@ class CreatePersonForm(forms.Form):
         
         if not valid:
             raise forms.ValidationError(
-                'State/Province must be within An Tir.'
+                'State/Province must be within An Tir (Oregon, Washington, Idaho, or British Columbia).'
             )
         
         return state_province
@@ -3948,7 +4659,7 @@ class CreateAuthorizationForm(forms.Form):
             self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
         elif user:
             # Filter disciplines based on the user's senior marshal authorizations
-            if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name__in=['Authorization Officer', 'Earl Marshal']).exists():
+            if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name='Authorization Officer').exists():
                 self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
             else:
                 senior_authorizations = Authorization.objects.with_effective_expiration().filter(
@@ -3959,3 +4670,6 @@ class CreateAuthorizationForm(forms.Form):
 
                 # Update the discipline queryset with the filtered disciplines
                 self.fields['discipline'].queryset = Discipline.objects.filter(id__in=senior_authorizations)
+
+
+

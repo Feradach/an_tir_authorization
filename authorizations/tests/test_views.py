@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
+from django.conf import settings
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.messages import get_messages
 from django.core.cache import cache
@@ -16,13 +17,17 @@ from authorizations.models import (
     Authorization,
     AuthorizationNote,
     AuthorizationStatus,
+    AuthorizationPortalSetting,
     Branch,
     BranchMarshal,
     Discipline,
     Person,
+    ReportValue,
+    ReportingPeriod,
     User,
     WeaponStyle,
 )
+from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER
 
 
 class ViewTestBase(TestCase):
@@ -32,6 +37,7 @@ class ViewTestBase(TestCase):
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
         cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        cls.status_pending_background_check = AuthorizationStatus.objects.create(name='Pending Background Check')
         cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Pending Waiver')
         cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
@@ -193,6 +199,292 @@ class ViewTestBase(TestCase):
 
 
 class IndexViewTests(ViewTestBase):
+    @override_settings(AUTHZ_TEST_FEATURES=False)
+    def test_header_uses_standard_logo_when_test_features_disabled(self):
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '/static/AnTirWebLogo.png')
+        self.assertNotContains(response, '/static/AnTirWebLogo_Proto.png')
+
+    @override_settings(AUTHZ_TEST_FEATURES=True)
+    def test_header_uses_proto_logo_when_test_features_enabled(self):
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '/static/AnTirWebLogo_Proto.png')
+        self.assertNotContains(response, '/static/AnTirWebLogo.png')
+
+    def test_index_hides_authorization_officer_sign_off_for_non_kao_when_disabled(self):
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Require Kingdom Authorization Officer Verification')
+        self.assertNotContains(response, 'Kingdom Authorization Officer Verification Is Enabled')
+
+    def test_index_shows_enabled_notice_for_non_kao_when_enabled(self):
+        AuthorizationPortalSetting.objects.create(require_kao_verification=True)
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Kingdom Authorization Officer Verification Is Enabled')
+        self.assertNotContains(response, 'name="authorization_officer_sign_off"')
+
+    def test_index_kao_sees_authorization_officer_sign_off_dropdown_with_current_state(self):
+        kao_user, kao_person = self.make_person('index_setting_kao_view', 'Index Setting KAO View')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Require Kingdom Authorization Officer Verification')
+        self.assertContains(response, 'name="authorization_officer_sign_off"')
+        self.assertContains(response, '<option value="off" selected>Off</option>', html=True)
+
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+        response_on = self.client.get(reverse('index'))
+        self.assertContains(response_on, '<option value="on" selected>On</option>', html=True)
+
+    def test_non_kao_cannot_change_authorization_officer_sign_off_setting(self):
+        user, _ = self.make_person('index_setting_non_kao', 'Index Setting Non KAO')
+        self.client.login(username=user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_authorization_officer_sign_off',
+                'authorization_officer_sign_off': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Only the Kingdom Authorization Officer can change this setting.')
+        self.assertFalse(AuthorizationPortalSetting.objects.exists())
+
+    def test_kao_can_change_authorization_officer_sign_off_setting(self):
+        kao_user, kao_person = self.make_person('index_setting_kao', 'Index Setting KAO')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+
+        on_response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_authorization_officer_sign_off',
+                'authorization_officer_sign_off': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(on_response.status_code, 200)
+        self.assertContains(on_response, 'Require Kingdom Authorization Officer Verification is now On.')
+        setting = AuthorizationPortalSetting.objects.get(pk=1)
+        self.assertTrue(setting.require_kao_verification)
+        self.assertEqual(setting.updated_by, kao_user)
+
+        off_response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_authorization_officer_sign_off',
+                'authorization_officer_sign_off': 'off',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(off_response.status_code, 200)
+        self.assertContains(off_response, 'Require Kingdom Authorization Officer Verification is now Off.')
+        setting.refresh_from_db()
+        self.assertFalse(setting.require_kao_verification)
+
+    def test_bulk_approve_button_only_shows_for_kao_when_sign_off_enabled(self):
+        kao_user, kao_person = self.make_person('index_bulk_btn_kao', 'Index Bulk Button KAO')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bulk_btn_prop', 'Index Bulk Button Prop')
+        target_user, target_person = self.make_person(
+            'index_bulk_btn_target',
+            'Index Bulk Button Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        enabled_response = self.client.get(reverse('index'))
+        self.assertContains(enabled_response, 'Approve All Needs Kingdom Approval')
+
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        disabled_response = self.client.get(reverse('index'))
+        self.assertNotContains(disabled_response, 'Approve All Needs Kingdom Approval')
+
+    def test_kao_can_bulk_approve_needs_kingdom_with_marshal_note_flow(self):
+        kao_user, kao_person = self.make_person('index_bulk_flow_kao', 'Index Bulk Flow KAO')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bulk_flow_prop', 'Index Bulk Flow Prop')
+        target_user, target_person = self.make_person(
+            'index_bulk_flow_target',
+            'Index Bulk Flow Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+
+        pending_jm = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+        pending_weapon = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        first = self.client.post(
+            reverse('index'),
+            {'action': 'approve_all_kingdom_authorizations'},
+            follow=True,
+        )
+
+        self.assertContains(first, 'Eligibility verified. Please add a note to finalize the marshal promotion approvals.')
+        self.assertIn('pending_authorization_action', self.client.session)
+        pending_jm.refresh_from_db()
+        pending_weapon.refresh_from_db()
+        self.assertEqual(pending_jm.status, self.status_kingdom)
+        self.assertEqual(pending_weapon.status, self.status_kingdom)
+
+        second = self.client.post(
+            reverse('index'),
+            {
+                'action': 'approve_all_kingdom_authorizations',
+                'action_note': 'Bulk kingdom approval note',
+                'pending_authorization_action': '1',
+            },
+            follow=True,
+        )
+
+        pending_jm.refresh_from_db()
+        pending_weapon.refresh_from_db()
+        self.assertEqual(pending_jm.status, self.status_active)
+        self.assertEqual(pending_weapon.status, self.status_active)
+        self.assertNotIn('pending_authorization_action', self.client.session)
+        self.assertContains(second, 'Approved all 2 authorizations waiting for Kingdom approval.')
+
+    def test_turning_sign_off_off_auto_approves_needs_kingdom(self):
+        kao_user, kao_person = self.make_person('index_bulk_auto_kao', 'Index Bulk Auto KAO')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bulk_auto_prop', 'Index Bulk Auto Prop')
+        target_user, target_person = self.make_person(
+            'index_bulk_auto_target',
+            'Index Bulk Auto Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+
+        pending_jm = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+        pending_weapon = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_authorization_officer_sign_off',
+                'authorization_officer_sign_off': 'off',
+            },
+            follow=True,
+        )
+
+        pending_jm.refresh_from_db()
+        pending_weapon.refresh_from_db()
+        self.assertEqual(pending_jm.status, self.status_active)
+        self.assertEqual(pending_weapon.status, self.status_active)
+        self.assertContains(response, 'Require Kingdom Authorization Officer Verification is now Off.')
+        self.assertContains(response, 'Automatically approved all 2 authorizations waiting for Kingdom approval.')
+
+    def test_authorization_officer_queue_shows_only_kingdom_and_pending_background_check(self):
+        ao_user, ao_person = self.make_person('index_queue_ao', 'Index Queue AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_queue_prop', 'Index Queue Prop')
+        target_user, target_person = self.make_person(
+            'index_queue_target',
+            'Index Queue Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+
+        self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+        self.grant_authorization(
+            target_person,
+            self.style_single_rapier,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+        self.grant_authorization(
+            target_person,
+            self.style_sm_armored,
+            status=self.status_regional,
+            marshal=proposer_person,
+        )
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        self.assertContains(response, 'Needs Kingdom Approval')
+        self.assertContains(response, 'Pending Background Check')
+        self.assertNotContains(response, 'Needs Regional Approval')
+        self.assertNotContains(response, 'Approve As (optional):')
+        self.assertNotContains(response, 'btn btn-danger">Reject')
+
+    def test_pending_background_check_row_uses_go_to_page_action(self):
+        ao_user, ao_person = self.make_person('index_bg_ao', 'Index BG AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bg_prop', 'Index BG Prop')
+        target_user, target_person = self.make_person('index_bg_target', 'Index BG Target')
+
+        self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+        self.grant_authorization(
+            target_person,
+            self.style_single_rapier,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        self.assertContains(response, 'Pending Background Check')
+        self.assertContains(response, 'Needs Kingdom Approval')
+        self.assertContains(response, 'Go To Page')
+        self.assertContains(response, f'href="{reverse("user_account", kwargs={"user_id": target_user.id})}"')
+        self.assertContains(response, 'class="btn btn-primary">Go To Page')
+        self.assertNotContains(response, 'btn btn-danger">Reject')
+
     def test_unique_name_redirects_to_fighter_page(self):
         unique_user, _ = self.make_person('unique_index_user', 'Unique Fighter')
 
@@ -337,12 +629,44 @@ class SearchViewTests(ViewTestBase):
         self.assertIn('type="text"', content)
         self.assertIn('maxlength="20"', content)
 
+    def test_table_view_download_csv_respects_filters_and_includes_all_pages(self):
+        _, fighter_a = self.make_person('search_csv_a', 'Search CSV A', branch=self.branch_lg)
+        _, fighter_b = self.make_person('search_csv_b', 'Search CSV B', branch=self.branch_lg)
+        _, fighter_c = self.make_person('search_csv_c', 'Search CSV C', branch=self.branch_gd)
+        self.grant_authorization(fighter_a, self.style_weapon_armored, status=self.status_active)
+        self.grant_authorization(fighter_b, self.style_weapon_armored, status=self.status_active)
+        self.grant_authorization(fighter_c, self.style_weapon_armored, status=self.status_active)
+
+        response = self.client.get(
+            reverse('search'),
+            {
+                'branch': self.branch_lg.name,
+                'items_per_page': '1',
+                'download': 'csv',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response['Content-Type'].startswith('text/csv'))
+        self.assertIn('attachment; filename=\"authorizations_search.csv\"', response['Content-Disposition'])
+        self.assertTrue(response.content.startswith(b'\xef\xbb\xbf'))
+        content = response.content.decode('utf-8-sig')
+        self.assertIn('SCA Name,Region,Branch,Discipline,Weapon Style,Marshal,Expiration,Minor', content)
+        self.assertIn('Search CSV A', content)
+        self.assertIn('Search CSV B', content)
+        self.assertNotIn('Search CSV C', content)
+        self.assertNotIn('<a ', content)
+
 class RegisterViewTests(ViewTestBase):
     def test_register_get_renders_template(self):
         response = self.client.get(reverse('register'))
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'authorizations/register.html')
+        self.assertContains(
+            response,
+            'letters, digits, and the symbols @, ., +, -, and _.'
+        )
 
     @patch('authorizations.views.send_mail')
     def test_register_post_creates_user_and_person(self, mock_send_mail):
@@ -385,6 +709,26 @@ class RegisterViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Must have both a membership number and expiration or neither.')
+
+    def test_register_shows_explicit_state_and_postal_errors(self):
+        payload = self.registration_payload(
+            username='register_bad_location',
+            email='register_bad_location@example.com',
+            state_province='California',
+            postal_code='12345',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'State/Province must be within An Tir (Oregon, Washington, Idaho, or British Columbia).',
+        )
+        self.assertContains(
+            response,
+            'Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).',
+        )
 
     def test_register_rejects_duplicate_membership(self):
         self.make_person('register_existing_member', 'Register Existing Member', membership='9999999999')
@@ -522,6 +866,47 @@ class TombstoneBehaviorTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': survivor_user.id}))
+
+    @patch('authorizations.views.send_mail')
+    def test_fighter_login_instructions_can_be_requested_anonymously(self, mock_send_mail):
+        target_user, _ = self.make_person('fighter_login_target', 'Fighter Login Target')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'send_login_instructions',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 1)
+        email_body = mock_send_mail.call_args[0][1]
+        self.assertIn(target_user.username, email_body)
+        response_messages = self.messages_for(response)
+        self.assertTrue(any('Login instructions have been sent to the email on file.' in message for message in response_messages))
+        self.assertTrue(any(settings.DEFAULT_FROM_EMAIL in message for message in response_messages))
+
+    @patch('authorizations.views.send_mail')
+    def test_fighter_login_instructions_does_not_send_for_merged_record(self, mock_send_mail):
+        survivor_user, _ = self.make_person('fighter_login_survivor', 'Fighter Login Survivor')
+        source_user, _ = self._create_merged_user(
+            'fighter_login_source_merged',
+            'Fighter Login Source',
+            merged_into=survivor_user,
+            email='fighter_login_source_merged@example.com',
+        )
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': source_user.id}),
+            {
+                'action': 'send_login_instructions',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': survivor_user.id}))
+        self.assertEqual(mock_send_mail.call_count, 0)
 
     @patch('authorizations.views.send_mail')
     def test_username_recovery_excludes_merged_accounts(self, mock_send_mail):
@@ -717,6 +1102,19 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'authorizations/user_account.html')
 
+    def test_parent_account_lists_child_account_links(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Child Accounts')
+        self.assertContains(response, 'Child of Owner (account_child)')
+        self.assertContains(
+            response,
+            reverse('user_account', kwargs={'user_id': self.child_user.id}),
+        )
+
     def test_non_owner_non_parent_non_ao_is_forbidden(self):
         self.client.login(username=self.other_user.username, password='StrongPass!123')
 
@@ -769,6 +1167,42 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.owner_user.background_check_expiration, bg_date)
 
+    def test_account_update_surfaces_explicit_state_and_postal_errors(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            state_province='California',
+            postal_code='12345',
+            city='Seattle',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        messages = self.messages_for(response)
+        self.assertIn('Please correct the errors with the form.', messages)
+        self.assertIn(
+            'State/Province: State/Province must be within An Tir (Oregon, Washington, Idaho, or British Columbia).',
+            messages,
+        )
+        self.assertIn(
+            'Postal Code: Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).',
+            messages,
+        )
+        self.assertContains(
+            response,
+            'State/Province must be within An Tir (Oregon, Washington, Idaho, or British Columbia).',
+        )
+        self.assertContains(
+            response,
+            'Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).',
+        )
+
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_self_set_regional_is_blocked_when_testing_disabled(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
@@ -794,6 +1228,7 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
+    @override_settings(AUTHZ_TEST_FEATURES=True)
     def test_self_set_regional_requires_current_membership(self):
         self.owner_user.membership = None
         self.owner_user.membership_expiration = None
@@ -822,6 +1257,7 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
+    @override_settings(AUTHZ_TEST_FEATURES=True)
     def test_self_set_regional_local_branch_allows_junior_or_senior(self):
         self.grant_authorization(self.owner_person, self.style_jm_armored, status=self.status_active)
 
@@ -846,6 +1282,7 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
+    @override_settings(AUTHZ_TEST_FEATURES=True)
     def test_self_set_regional_region_branch_requires_senior(self):
         self.grant_authorization(self.owner_person, self.style_jm_armored, status=self.status_active)
 
@@ -870,6 +1307,503 @@ class UserAccountViewTests(ViewTestBase):
                 end_date__gte=date.today(),
             ).exists()
         )
+
+class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_rapier)
+
+        cls.kao_user = User.objects.create_user(
+            username='office_kao',
+            password='StrongPass!123',
+            email='office_kao@example.com',
+            first_name='Office',
+            last_name='KAO',
+            membership='5656565656',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.kao_person = Person.objects.create(
+            user=cls.kao_user,
+            sca_name='Office KAO',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.kao_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_auth_officer,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+
+        cls.kem_user = User.objects.create_user(
+            username='office_kem',
+            password='StrongPass!123',
+            email='office_kem@example.com',
+            first_name='Office',
+            last_name='KEM',
+            membership='5757575757',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.kem_person = Person.objects.create(
+            user=cls.kem_user,
+            sca_name='Office KEM',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.kem_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_earl_marshal,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=cls.kem_person,
+            style=cls.style_sm_armored,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.kem_person,
+        )
+
+        cls.krapier_user = User.objects.create_user(
+            username='office_krapier',
+            password='StrongPass!123',
+            email='office_krapier@example.com',
+            first_name='Office',
+            last_name='KRapier',
+            membership='5858585858',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.krapier_person = Person.objects.create(
+            user=cls.krapier_user,
+            sca_name='Office Kingdom Rapier',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.krapier_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_rapier,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=cls.krapier_person,
+            style=cls.style_sm_rapier,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.krapier_person,
+        )
+
+        cls.candidate_rapier_user = User.objects.create_user(
+            username='office_candidate_rapier',
+            password='StrongPass!123',
+            email='office_candidate_rapier@example.com',
+            first_name='Candidate',
+            last_name='Rapier',
+            membership='5959595959',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.candidate_rapier_person = Person.objects.create(
+            user=cls.candidate_rapier_user,
+            sca_name='Office Candidate Rapier',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        Authorization.objects.create(
+            person=cls.candidate_rapier_person,
+            style=cls.style_sm_rapier,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.krapier_person,
+        )
+
+        cls.candidate_armored_user = User.objects.create_user(
+            username='office_candidate_armored',
+            password='StrongPass!123',
+            email='office_candidate_armored@example.com',
+            first_name='Candidate',
+            last_name='Armored',
+            membership='6060606060',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.candidate_armored_person = Person.objects.create(
+            user=cls.candidate_armored_user,
+            sca_name='Office Candidate Armored',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        Authorization.objects.create(
+            person=cls.candidate_armored_person,
+            style=cls.style_sm_armored,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.krapier_person,
+        )
+
+        cls.candidate_earl_user = User.objects.create_user(
+            username='office_candidate_earl',
+            password='StrongPass!123',
+            email='office_candidate_earl@example.com',
+            first_name='Candidate',
+            last_name='Earl',
+            membership='6161616161',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.candidate_earl_person = Person.objects.create(
+            user=cls.candidate_earl_user,
+            sca_name='Office Candidate Earl',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        Authorization.objects.create(
+            person=cls.candidate_earl_person,
+            style=cls.style_sm_armored,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.krapier_person,
+        )
+
+        cls.candidate_ao_user = User.objects.create_user(
+            username='office_candidate_ao',
+            password='StrongPass!123',
+            email='office_candidate_ao@example.com',
+            first_name='Candidate',
+            last_name='AO',
+            membership='6262626262',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.candidate_ao_person = Person.objects.create(
+            user=cls.candidate_ao_user,
+            sca_name='Office Candidate AO',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+
+    def _appointment_payload(self, person, branch, discipline):
+        return {
+            'action': 'appoint_branch_marshal',
+            'person': person.sca_name,
+            'branch': branch.name,
+            'discipline': discipline.name,
+            'start_date': date.today().isoformat(),
+        }
+
+    def test_kingdom_discipline_marshal_can_appoint_regional_same_discipline(self):
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}),
+            self._appointment_payload(self.candidate_rapier_person, self.region_summits, self.discipline_rapier),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=self.candidate_rapier_person,
+                branch=self.region_summits,
+                discipline=self.discipline_rapier,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kingdom_discipline_marshal_can_appoint_branch_same_discipline(self):
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}),
+            self._appointment_payload(self.candidate_rapier_person, self.branch_lg, self.discipline_rapier),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=self.candidate_rapier_person,
+                branch=self.branch_lg,
+                discipline=self.discipline_rapier,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kingdom_discipline_marshal_cannot_appoint_other_discipline(self):
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            self._appointment_payload(self.candidate_armored_person, self.branch_lg, self.discipline_armored),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.candidate_armored_person,
+                branch=self.branch_lg,
+                discipline=self.discipline_armored,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+        self.assertIn('You do not have authority to appoint this marshal office.', self.messages_for(response))
+
+    def test_kingdom_discipline_marshal_cannot_appoint_kingdom_level_office(self):
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}),
+            self._appointment_payload(self.candidate_rapier_person, self.branch_an_tir, self.discipline_rapier),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.candidate_rapier_person,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_rapier,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kingdom_earl_marshal_can_appoint_kingdom_discipline_marshal(self):
+        self.client.login(username=self.kem_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}),
+            self._appointment_payload(self.candidate_rapier_person, self.branch_an_tir, self.discipline_rapier),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=self.candidate_rapier_person,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_rapier,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kingdom_earl_marshal_cannot_appoint_kingdom_earl_marshal(self):
+        self.client.login(username=self.kem_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_earl_user.id}),
+            self._appointment_payload(self.candidate_earl_person, self.branch_an_tir, self.discipline_earl_marshal),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.candidate_earl_person,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_earl_marshal,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kingdom_authorization_officer_can_appoint_kingdom_earl_marshal(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_earl_user.id}),
+            self._appointment_payload(self.candidate_earl_person, self.branch_an_tir, self.discipline_earl_marshal),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=self.candidate_earl_person,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_earl_marshal,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kingdom_authorization_officer_can_appoint_second_authorization_officer(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            self._appointment_payload(self.candidate_ao_person, self.branch_an_tir, self.discipline_auth_officer),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=self.candidate_ao_person,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_auth_officer,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kingdom_discipline_marshal_can_end_lower_same_discipline_office(self):
+        appointment = BranchMarshal.objects.create(
+            person=self.candidate_rapier_person,
+            branch=self.region_summits,
+            discipline=self.discipline_rapier,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('branch_marshals'),
+            {'action': 'end_appointment', 'branch_officer_id': str(appointment.id)},
+            follow=True,
+        )
+
+        appointment.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(appointment.end_date, date.today())
+
+    def test_kingdom_discipline_marshal_cannot_end_kingdom_office(self):
+        appointment = BranchMarshal.objects.create(
+            person=self.candidate_rapier_person,
+            branch=self.branch_an_tir,
+            discipline=self.discipline_rapier,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('branch_marshals'),
+            {'action': 'end_appointment', 'branch_officer_id': str(appointment.id)},
+        )
+
+        appointment.refresh_from_db()
+        self.assertEqual(response.status_code, 403)
+        self.assertGreaterEqual(appointment.end_date, date.today())
+
+    def test_kingdom_earl_marshal_cannot_end_kingdom_earl_marshal_office(self):
+        appointment = BranchMarshal.objects.create(
+            person=self.candidate_earl_person,
+            branch=self.branch_an_tir,
+            discipline=self.discipline_earl_marshal,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kem_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('branch_marshals'),
+            {'action': 'end_appointment', 'branch_officer_id': str(appointment.id)},
+        )
+
+        appointment.refresh_from_db()
+        self.assertEqual(response.status_code, 403)
+        self.assertGreaterEqual(appointment.end_date, date.today())
+
+    def test_kingdom_authorization_officer_can_end_kingdom_earl_marshal_office(self):
+        appointment = BranchMarshal.objects.create(
+            person=self.candidate_earl_person,
+            branch=self.branch_an_tir,
+            discipline=self.discipline_earl_marshal,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('branch_marshals'),
+            {'action': 'end_appointment', 'branch_officer_id': str(appointment.id)},
+            follow=True,
+        )
+
+        appointment.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(appointment.end_date, date.today())
+
+    def test_cannot_appoint_branch_level_earl_marshal(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_earl_user.id}),
+            self._appointment_payload(self.candidate_earl_person, self.branch_lg, self.discipline_earl_marshal),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.candidate_earl_person,
+                branch=self.branch_lg,
+                discipline=self.discipline_earl_marshal,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+        self.assertIn(
+            'Earl Marshal offices may only be appointed at regional or kingdom level.',
+            self.messages_for(response),
+        )
+
+    def test_fighter_shows_limited_office_expiration_for_officer_self(self):
+        limited_date = date.today() + timedelta(days=20)
+        self.candidate_rapier_user.membership_expiration = limited_date
+        self.candidate_rapier_user.save(update_fields=['membership_expiration'])
+        BranchMarshal.objects.create(
+            person=self.candidate_rapier_person,
+            branch=self.branch_lg,
+            discipline=self.discipline_rapier,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+
+        self.client.login(username=self.candidate_rapier_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        formatted_limited_date = f'({limited_date.strftime("%B")} {limited_date.day}, {limited_date.year})'
+        self.assertContains(response, formatted_limited_date)
+
+    def test_fighter_shows_limited_office_expiration_for_superior(self):
+        limited_date = date.today() + timedelta(days=25)
+        self.candidate_rapier_user.membership_expiration = limited_date
+        self.candidate_rapier_user.save(update_fields=['membership_expiration'])
+        BranchMarshal.objects.create(
+            person=self.candidate_rapier_person,
+            branch=self.branch_lg,
+            discipline=self.discipline_rapier,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        formatted_limited_date = f'({limited_date.strftime("%B")} {limited_date.day}, {limited_date.year})'
+        self.assertContains(response, formatted_limited_date)
+
+    def test_fighter_hides_limited_office_expiration_for_non_superior(self):
+        limited_date = date.today() + timedelta(days=30)
+        self.candidate_rapier_user.membership_expiration = limited_date
+        self.candidate_rapier_user.save(update_fields=['membership_expiration'])
+        BranchMarshal.objects.create(
+            person=self.candidate_rapier_person,
+            branch=self.branch_lg,
+            discipline=self.discipline_rapier,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+
+        viewer_user, _ = self.make_person('office_unrelated_viewer', 'Office Unrelated Viewer')
+        self.client.login(username=viewer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        formatted_limited_date = f'({limited_date.strftime("%B")} {limited_date.day}, {limited_date.year})'
+        self.assertNotContains(response, formatted_limited_date)
+
 
 class WaiverWorkflowTests(ViewTestBase):
     @classmethod
@@ -1071,13 +2005,94 @@ class SanctionsWorkflowTests(ViewTestBase):
             start_date=date.today() - timedelta(days=1),
             end_date=date.today() + relativedelta(years=1),
         )
+        cls.kingdom_armored_user = User.objects.create_user(
+            username='sanction_kingdom_armored',
+            password='StrongPass!123',
+            email='sanction_kingdom_armored@example.com',
+            first_name='Kingdom',
+            last_name='Armored',
+            membership='5454545454',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.kingdom_armored_person = Person.objects.create(
+            user=cls.kingdom_armored_user,
+            sca_name='Sanction Kingdom Armored',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        BranchMarshal.objects.create(
+            person=cls.kingdom_armored_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_armored,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=cls.kingdom_armored_person,
+            style=cls.style_sm_armored,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.ao_person,
+        )
 
-    def test_issue_sanctions_requires_authorization_officer_or_earl_marshal(self):
+    def test_issue_sanctions_requires_kingdom_sanctions_role(self):
         self.client.login(username=self.normal_user.username, password='StrongPass!123')
 
         response = self.client.get(reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}))
 
         self.assertEqual(response.status_code, 403)
+
+    def test_kingdom_marshal_can_issue_sanction_in_own_discipline(self):
+        self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}),
+            {
+                'sanction_type': 'style',
+                'style_id': str(self.style_weapon_armored.id),
+                'action_note': 'Issued by kingdom armored marshal',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        auth = Authorization.objects.get(person=self.target_person, style=self.style_weapon_armored)
+        self.assertEqual(auth.status, self.status_revoked)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=auth,
+                action='sanction_issued',
+                created_by=self.kingdom_armored_user,
+            ).exists()
+        )
+
+    def test_kingdom_marshal_cannot_issue_sanction_outside_discipline(self):
+        self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}),
+            {
+                'sanction_type': 'style',
+                'style_id': str(self.style_single_rapier.id),
+                'action_note': 'Attempted cross-discipline sanction',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Authorization.objects.filter(
+                person=self.target_person,
+                style=self.style_single_rapier,
+                status=self.status_revoked,
+            ).exists()
+        )
+        self.assertIn(
+            'You do not have permission to sanction this discipline.',
+            self.messages_for(response),
+        )
 
     def test_issue_style_sanction_creates_revoked_authorization_and_note(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
@@ -1150,6 +2165,78 @@ class SanctionsWorkflowTests(ViewTestBase):
             ).exists()
         )
 
+    def test_kingdom_marshal_can_lift_sanction_in_own_discipline(self):
+        self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
+        revoked_auth = Authorization.objects.create(
+            person=self.target_person,
+            style=self.style_weapon_armored,
+            status=self.status_revoked,
+            expiration=date.today(),
+            marshal=self.ao_person,
+        )
+
+        first_response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'lift_sanction',
+                'authorization_id': str(revoked_auth.id),
+            },
+            follow=True,
+        )
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize lifting the sanction.',
+            self.messages_for(first_response),
+        )
+
+        second_response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'lift_sanction',
+                'authorization_id': str(revoked_auth.id),
+                'action_note': 'Lifted by kingdom armored marshal',
+            },
+            follow=True,
+        )
+
+        revoked_auth.refresh_from_db()
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(revoked_auth.status, self.status_active)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=revoked_auth,
+                action='sanction_lifted',
+                created_by=self.kingdom_armored_user,
+            ).exists()
+        )
+
+    def test_kingdom_marshal_cannot_lift_sanction_outside_discipline(self):
+        self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
+        revoked_auth = Authorization.objects.create(
+            person=self.target_person,
+            style=self.style_single_rapier,
+            status=self.status_revoked,
+            expiration=date.today(),
+            marshal=self.ao_person,
+        )
+
+        response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'lift_sanction',
+                'authorization_id': str(revoked_auth.id),
+                'action_note': 'Attempted out-of-discipline lift',
+            },
+            follow=True,
+        )
+
+        revoked_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(revoked_auth.status, self.status_revoked)
+        self.assertIn(
+            'You do not have permission to manage this sanction.',
+            self.messages_for(response),
+        )
+
 
 class ApiStylesViewTests(ViewTestBase):
     def test_get_weapon_styles_returns_only_matching_discipline(self):
@@ -1169,3 +2256,226 @@ class ApiStylesViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'styles': []})
+
+
+class ReportsViewTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.q2_2025 = ReportingPeriod.objects.create(
+            year=2025,
+            quarter=2,
+            authorization_officer_name='Officer Q2',
+        )
+        cls.q3_2025 = ReportingPeriod.objects.create(
+            year=2025,
+            quarter=3,
+            authorization_officer_name='Officer Q3',
+        )
+        cls.q4_2025 = ReportingPeriod.objects.create(
+            year=2025,
+            quarter=4,
+            authorization_officer_name='Officer Q4',
+        )
+
+        ReportValue.objects.create(
+            reporting_period=cls.q4_2025,
+            report_family=ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+            region_name='',
+            subject_name='Armored Combat',
+            metric_name='Total Participants',
+            value=595,
+            display_order=1,
+        )
+        ReportValue.objects.create(
+            reporting_period=cls.q3_2025,
+            report_family=ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+            region_name='',
+            subject_name='Armored Combat',
+            metric_name='Total Participants',
+            value=608,
+            display_order=1,
+        )
+        ReportValue.objects.create(
+            reporting_period=cls.q2_2025,
+            report_family=ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+            region_name='',
+            subject_name='Armored Combat',
+            metric_name='Total Participants',
+            value=643,
+            display_order=1,
+        )
+
+        ReportValue.objects.create(
+            reporting_period=cls.q4_2025,
+            report_family=ReportValue.ReportFamily.REGIONAL_BREAKDOWN,
+            region_name='Central',
+            subject_name='Armored Combat',
+            metric_name='Combatants',
+            value=220,
+            display_order=10,
+        )
+        ReportValue.objects.create(
+            reporting_period=cls.q3_2025,
+            report_family=ReportValue.ReportFamily.REGIONAL_BREAKDOWN,
+            region_name='Central',
+            subject_name='Armored Combat',
+            metric_name='Combatants',
+            value=230,
+            display_order=10,
+        )
+
+        ReportValue.objects.create(
+            reporting_period=cls.q4_2025,
+            report_family=ReportValue.ReportFamily.EQUESTRIAN,
+            region_name='An Tir',
+            subject_name='General Riding',
+            metric_name='Reporting Quarter',
+            value=45,
+            display_order=10,
+        )
+        ReportValue.objects.create(
+            reporting_period=cls.q3_2025,
+            report_family=ReportValue.ReportFamily.EQUESTRIAN,
+            region_name='An Tir',
+            subject_name='General Riding',
+            metric_name='Reporting Quarter',
+            value=49,
+            display_order=10,
+        )
+
+    def test_reports_defaults_to_latest_and_previous_quarters(self):
+        response = self.client.get(reverse('reports'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['selected_current_period'], self.q4_2025)
+        self.assertEqual(response.context['selected_compare_period'], self.q3_2025)
+        self.assertContains(response, 'Q4 2025')
+        self.assertContains(response, 'Q3 2025')
+        self.assertContains(response, 'Armored Combat')
+        self.assertContains(response, '-13')
+
+    def test_reports_allows_explicit_quarter_selection(self):
+        response = self.client.get(
+            reverse('reports'),
+            {'current_period': str(self.q3_2025.id), 'compare_period': str(self.q2_2025.id)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['selected_current_period'], self.q3_2025)
+        self.assertEqual(response.context['selected_compare_period'], self.q2_2025)
+        self.assertContains(response, 'Q3 2025')
+        self.assertContains(response, 'Q2 2025')
+        self.assertContains(response, '-35')
+
+    def test_reports_compare_none_disables_compare_columns(self):
+        response = self.client.get(
+            reverse('reports'),
+            {'current_period': str(self.q4_2025.id), 'compare_period': ''},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['selected_current_period'], self.q4_2025)
+        self.assertIsNone(response.context['selected_compare_period'])
+        self.assertFalse(response.context['show_compare_columns'])
+        self.assertNotContains(response, '<th>Change</th>', html=True)
+
+    def test_reports_supports_current_dynamic_period_without_persisting_rows(self):
+        status_active, _ = AuthorizationStatus.objects.get_or_create(name='Active')
+        branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        for region_name in REGION_ORDER:
+            Branch.objects.create(name=region_name, type='Region', region=branch_an_tir)
+        region_central = Branch.objects.get(name='Central')
+        local_branch = Branch.objects.create(name='Central Local', type='Barony', region=region_central)
+
+        discipline_map = {}
+        for discipline_name, _ in QUARTERLY_DISCIPLINE_MAP:
+            discipline_map[discipline_name] = Discipline.objects.create(name=discipline_name)
+        equestrian = discipline_map['Equestrian']
+        for style_name in EQUESTRIAN_TYPE_ORDER:
+            WeaponStyle.objects.create(name=style_name, discipline=equestrian)
+
+        discipline = discipline_map['Armored Combat']
+        style = WeaponStyle.objects.create(name='Weapon & Shield', discipline=discipline)
+        marshal_style = WeaponStyle.objects.create(name='Junior Marshal', discipline=discipline)
+        user = User.objects.create_user(
+            username='current_report_user',
+            password='StrongPass!123',
+            email='current_report_user@example.com',
+            first_name='Current',
+            last_name='Report',
+            membership='999000111',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        person = Person.objects.create(user=user, sca_name='Current Report User', branch=local_branch, is_minor=False)
+        Authorization.objects.create(
+            person=person,
+            style=style,
+            status=status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=person,
+        )
+        Authorization.objects.create(
+            person=person,
+            style=marshal_style,
+            status=status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=person,
+        )
+
+        response = self.client.get(
+            reverse('reports'),
+            {'current_period': 'current', 'compare_period': ''},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['current_is_dynamic'])
+        self.assertIsNone(response.context['selected_compare_period'])
+        self.assertFalse(response.context['show_compare_columns'])
+        self.assertContains(response, 'Current')
+        participants_row = next(
+            row for row in response.context['marshal_rows']
+            if row['subject_name'] == 'Armored Combat' and row['metric_name'] == 'Total Participants'
+        )
+        self.assertEqual(participants_row['current_value'], 1)
+
+    def test_reports_current_mode_handles_configuration_mismatch_without_crash(self):
+        response = self.client.get(
+            reverse('reports'),
+            {'current_period': 'current', 'compare_period': ''},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context['current_is_dynamic'])
+        self.assertContains(response, 'Current report could not be generated safely')
+
+    def test_reports_download_quarterly_csv_includes_compare_columns(self):
+        response = self.client.get(
+            reverse('reports'),
+            {'download': 'quarterly_marshal'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response['Content-Type'].startswith('text/csv'))
+        self.assertIn('attachment; filename="quarterly_marshal_report.csv"', response['Content-Disposition'])
+        self.assertTrue(response.content.startswith(b'\xef\xbb\xbf'))
+        content = response.content.decode('utf-8-sig')
+        self.assertIn('Discipline,Authorization Detail,Q4 2025,Q3 2025,Change', content)
+        self.assertIn('Armored Combat,Total Participants,595,608,-13', content)
+
+    def test_reports_download_quarterly_csv_omits_compare_columns_when_none_selected(self):
+        response = self.client.get(
+            reverse('reports'),
+            {
+                'current_period': str(self.q4_2025.id),
+                'compare_period': '',
+                'download': 'quarterly_marshal',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content.startswith(b'\xef\xbb\xbf'))
+        content = response.content.decode('utf-8-sig').splitlines()
+        self.assertEqual(content[0], 'Discipline,Authorization Detail,Q4 2025')
+        self.assertIn('Armored Combat,Total Participants,595', content)

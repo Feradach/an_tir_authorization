@@ -33,7 +33,7 @@
                                     <br><small class="text-muted">Region: {{ appointment.branch.region.name }}</small>
                                     <br><small>Term Ends: {{ appointment.end_date }}</small>
                                 </div>
-                                {% if auth_officer %}
+                                {% if appointment.can_manage %}
                                 <div class="mt-2">
                                     <form method="post" action="{% url 'branch_marshals' %}" class="d-inline-block me-1">
                                         {% csrf_token %}<input type="hidden" name="action" value="extend_appointment"><input type="hidden" name="branch_officer_id" value="{{ appointment.id }}"><button type="submit" class="btn btn-success btn-sm">Extend</button>
@@ -62,7 +62,7 @@
                         <th>Discipline</th>
                         <th>Start Date</th>
                         <th>End Date</th>
-                        {% if auth_officer %}<th>Actions</th>{% endif %}
+                        {% if show_manage_actions %}<th>Actions</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -74,19 +74,21 @@
                         <td>{{ appointment.discipline.name }}</td>
                         <td>{{ appointment.start_date }}</td>
                         <td>{{ appointment.end_date }}</td>
-                        {% if auth_officer %}
+                        {% if show_manage_actions %}
                         <td>
-                            <form method="post" action="{% url 'branch_marshals' %}" class="d-inline-block me-1">
-                                {% csrf_token %}<input type="hidden" name="action" value="extend_appointment"><input type="hidden" name="branch_officer_id" value="{{ appointment.id }}"><button type="submit" class="btn btn-success btn-sm">Extend</button>
-                            </form>
-                            <form method="post" action="{% url 'branch_marshals' %}" class="d-inline-block">
-                                {% csrf_token %}<input type="hidden" name="action" value="end_appointment"><input type="hidden" name="branch_officer_id" value="{{ appointment.id }}"><button type="submit" class="btn btn-danger btn-sm">End Now</button>
-                            </form>
+                            {% if appointment.can_manage %}
+                                <form method="post" action="{% url 'branch_marshals' %}" class="d-inline-block me-1">
+                                    {% csrf_token %}<input type="hidden" name="action" value="extend_appointment"><input type="hidden" name="branch_officer_id" value="{{ appointment.id }}"><button type="submit" class="btn btn-success btn-sm">Extend</button>
+                                </form>
+                                <form method="post" action="{% url 'branch_marshals' %}" class="d-inline-block">
+                                    {% csrf_token %}<input type="hidden" name="action" value="end_appointment"><input type="hidden" name="branch_officer_id" value="{{ appointment.id }}"><button type="submit" class="btn btn-danger btn-sm">End Now</button>
+                                </form>
+                            {% endif %}
                         </td>
                         {% endif %}
                     </tr>
                     {% empty %}
-                    <tr><td colspan="{% if auth_officer %}7{% else %}6{% endif %}" class="text-center">No branch marshals found.</td></tr>
+                    <tr><td colspan="{% if show_manage_actions %}7{% else %}6{% endif %}" class="text-center">No branch marshals found.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

@@ -1,6 +1,8 @@
+from datetime import date
+
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
-from django.core.validators import RegexValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 from django.db.models import Case, When, F
 from django.db.models.functions import Coalesce, Least
@@ -22,7 +24,7 @@ BRANCH_TYPE_CHOICES = [
 ]
 
 TITLE_RANK_CHOICES = [
-    ('Ducal', 'Ducal'),
+    ('Duchy', 'Duchy'),
     ('County', 'County'),
     ('Viscounty', 'Viscounty'),
     ('Peerage', 'Peerage'),
@@ -97,6 +99,23 @@ class User(AbstractUser):
                 name='unique_user_first_last_email',
             ),
         ]
+
+
+class AuthorizationPortalSetting(models.Model):
+    """Persisted portal-level configuration toggles."""
+    require_kao_verification = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='authorization_portal_settings_updated',
+    )
+
+    class Meta:
+        verbose_name = 'authorization portal setting'
+        verbose_name_plural = 'authorization portal settings'
 
 class BranchManager(models.Manager):
     def regions(self):
@@ -442,4 +461,100 @@ class UserNote(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('User notes cannot be deleted.')
+
+
+class ReportingPeriod(models.Model):
+    """Quarterly reporting period for legacy and generated aggregate reports."""
+
+    year = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(2019), MaxValueValidator(9999)]
+    )
+    quarter = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(4)]
+    )
+    authorization_officer_name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def start_date(self):
+        month = ((self.quarter - 1) * 3) + 1
+        return date(self.year, month, 1)
+
+    @property
+    def end_date(self):
+        month = self.quarter * 3
+        if month == 3:
+            day = 31
+        elif month == 6:
+            day = 30
+        elif month == 9:
+            day = 30
+        else:
+            day = 31
+        return date(self.year, month, day)
+
+    def __str__(self):
+        return f'Q{self.quarter} {self.year}'
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['year', 'quarter'],
+                name='unique_reporting_period_year_quarter',
+            ),
+        ]
+        ordering = ['-year', '-quarter']
+        verbose_name = 'reporting period'
+        verbose_name_plural = 'reporting periods'
+
+
+class ReportValue(models.Model):
+    """One aggregate report metric for a reporting period."""
+
+    class ReportFamily(models.TextChoices):
+        QUARTERLY_MARSHAL = 'quarterly_marshal', 'Quarterly Marshal Report'
+        REGIONAL_BREAKDOWN = 'regional_breakdown', 'Regional Breakdown'
+        EQUESTRIAN = 'equestrian', 'Equestrian Report'
+
+    reporting_period = models.ForeignKey(
+        ReportingPeriod,
+        on_delete=models.CASCADE,
+        related_name='report_values',
+    )
+    report_family = models.CharField(max_length=50, choices=ReportFamily.choices)
+    region_name = models.CharField(max_length=150, blank=True, default='')
+    subject_name = models.CharField(max_length=150)
+    metric_name = models.CharField(max_length=150)
+    value = models.PositiveIntegerField()
+    display_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return (
+            f'{self.reporting_period} | {self.report_family} | '
+            f'{self.region_name or "Kingdom"} | {self.subject_name} | {self.metric_name} = {self.value}'
+        )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'reporting_period',
+                    'report_family',
+                    'region_name',
+                    'subject_name',
+                    'metric_name',
+                ],
+                name='unique_report_value_for_period_dimension',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['report_family', 'region_name']),
+            models.Index(fields=['reporting_period', 'report_family', 'display_order']),
+        ]
+        ordering = ['report_family', 'region_name', 'display_order', 'subject_name', 'metric_name']
+        verbose_name = 'report value'
+        verbose_name_plural = 'report values'
 

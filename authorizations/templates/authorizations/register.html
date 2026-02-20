@@ -20,7 +20,7 @@
             <h5 class="mb-2">Before you begin</h5>
             <ul class="mb-0">
                 <li>Email, username, first name, last name, address, city, state/province, postal code, and branch are required.</li>
-                <li>Username must be unique (no duplicates). You can use the same email as another user.</li>
+                <li>Username must be unique (no duplicates), use 150 characters or fewer, and may contain letters, digits, and the symbols @, ., +, -, and _. You can use the same email as another user.</li>
                 <li>Phone number must be 10 digits; formatting is applied automatically.</li>
                 <li>Postal code must be within An Tir:
                     Canadian codes starting with <code>V</code>, or U.S. ZIPs starting with <code>97</code>, <code>98</code>,
@@ -41,6 +41,13 @@
             {{ person_form.honeypot.label_tag }}
             {{ person_form.honeypot }}
         </div>
+        {% if person_form.non_field_errors %}
+            <div class="alert alert-danger" role="alert">
+                {% for error in person_form.non_field_errors %}
+                    <div>{{ error }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
         {% for field in person_form %}
             {% if field.name != 'background_check_expiration' and field.name != 'honeypot' %}
                 {% if field.name == 'state_province' or field.name == 'title' or field.name == 'branch' or field.name == 'parent_id' %}
@@ -53,7 +60,9 @@
                             {% endif %}
                             {% if field.errors %}
                                 <div class="invalid-feedback d-block">
-                                    {{ field.errors.0 }}
+                                    {% for error in field.errors %}
+                                        <div>{{ error }}</div>
+                                    {% endfor %}
                                 </div>
                             {% endif %}
                         </div>
@@ -67,7 +76,9 @@
                         {% endif %}
                         {% if field.errors %}
                             <div class="invalid-feedback d-block">
-                                {{ field.errors.0 }}
+                                {% for error in field.errors %}
+                                    <div>{{ error }}</div>
+                                {% endfor %}
                             </div>
                         {% endif %}
                     </div>
@@ -83,7 +94,9 @@
                 {% endif %}
                 {% if person_form.background_check_expiration.errors %}
                     <div class="invalid-feedback d-block">
-                        {{ person_form.background_check_expiration.errors.0 }}
+                        {% for error in person_form.background_check_expiration.errors %}
+                            <div>{{ error }}</div>
+                        {% endfor %}
                     </div>
                 {% endif %}
             </div>

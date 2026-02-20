@@ -15,7 +15,13 @@
     <!-- Navbar -->
 <div class="sticky-header">
     <header class="navbar navbar-dark bg-dark">
-        <a class="navbar-brand ms-3" href="https://antir.org/"><img src="{% static 'AnTirWebLogo.png' %}" alt="Kingdom of An Tir" class="logo"></a>
+        <a class="navbar-brand ms-3" href="https://antir.org/">
+            {% if TEST_FEATURES_ENABLED %}
+                <img src="{% static 'AnTirWebLogo_Proto.png' %}" alt="Kingdom of An Tir" class="logo">
+            {% else %}
+                <img src="{% static 'AnTirWebLogo.png' %}" alt="Kingdom of An Tir" class="logo">
+            {% endif %}
+        </a>
         <!-- Desktop Navigation -->
         <nav class="desktop-nav">
             {% block navbar %}

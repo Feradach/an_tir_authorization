@@ -1,4 +1,34 @@
 ﻿
+## [0.1.6] - 2026-02-20
+### Added
+- Added ability to request a username from the fighter page.
+- Header logo now indicates whether the site is in test mode or production mode.
+- Clarified register page guidance to list allowed username characters.
+- Parent account page now lists linked child accounts with direct links.
+- Added a homepage control for Kingdom Authorization Officers to turn "Require Kingdom Authorization Officer Verification" on or off.
+- Added a Kingdom Authorization Officer bulk action on the authorizations homepage to approve all "Needs Kingdom Approval" records at once.
+- Modified the way that reports are displayed so that they pull from data on the new system rather than from legacy reports.
+- Added the ability to create a report for the current data.
+- Added a safety check for Current reports so if expected report categories/regions have changed, the page shows a warning instead of crashing.
+- Updated Current report region handling so Principalities are treated like Regions and additional An Tir region-level groups are included automatically.
+- Added CSV download buttons to each report table on the reports page.
+- Added CSV download for the authorizations search table view using the active filters across all result pages.
+- Updated CSV downloads to use UTF-8 BOM so special characters display correctly in Excel more reliably.
+
+### Fixed
+- Enforced region matching for regional marshal approvals when the fighter belongs to a local branch (using the branch's parent region).
+- Enforced the same region-scoped checks for marshal-promotion rejection actions.
+- Added error logging when fighter region data cannot be resolved during regional marshal approve/reject checks.
+- Removed Kingdom Earl Marshal blanket elevation for issuing authorizations; issuance now requires normal Senior Marshal qualification in the discipline.
+- Updated sanctions permissions: kingdom discipline marshals can issue/lift only within their discipline, while Kingdom Earl Marshal and Kingdom Authorization Officer can issue/lift across all disciplines.
+- Updated marshal-office appointment/removal permissions so kingdom discipline marshals can manage lower same-discipline offices, kingdom earl marshal can manage all marshal offices except kingdom earl/auth officer, and kingdom authorization officer can also manage kingdom earl marshal and additional kingdom authorization officers.
+- Marshal-officer capability checks now use the effective minimum of membership, marshal-status validity, and warrant end date; fighter page shows the calculated limiting date (in red, parenthetical) to the officer or their chain-of-command superiors when it shortens the warrant.
+- Improved account-edit and registration form feedback so state/province and postal-code validation errors are explicit and shown inline on the form.
+- Enforced Authorization Officer sign-off behavior for existing non-marshal authorization renewals when sign-off is enabled, and added coverage tests for sign-off enabled/disabled flows.
+- Turning Kingdom Authorization Officer verification from On to Off now automatically processes all "Needs Kingdom Approval" records through the normal approval flow.
+- Authorization Officer queue on the authorizations homepage now shows only "Needs Kingdom Approval" and "Pending Background Check", with a "Go To Page" action for background-check cases.
+
+
 ## [0.1.5] - 2026-02-07
 ### Added
 - Changed the way some of the drop downs behave to be more user friendly.

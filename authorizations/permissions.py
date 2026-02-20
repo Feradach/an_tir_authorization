@@ -1,14 +1,27 @@
 from datetime import date, datetime
+import logging
 from dateutil.relativedelta import relativedelta
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, Max
+from django.db.utils import OperationalError, ProgrammingError
 from typing import Optional
 
 from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
-    Person, Discipline, AuthorizationNote
+    Person, Discipline, AuthorizationNote, AuthorizationPortalSetting
 
-# Variable to determine whether we need to have the Authorization officer sign off on all authorizations. Uses status "Needs Kingdom Approval.
-AUTHORIZATION_OFFICER_SIGN_OFF = False
+logger = logging.getLogger(__name__)
+
+def authorization_officer_sign_off_enabled() -> bool:
+    """Return whether Kingdom AO sign-off is currently required for applicable approvals."""
+    try:
+        setting_value = AuthorizationPortalSetting.objects.order_by('id').values_list(
+            'require_kao_verification',
+            flat=True,
+        ).first()
+    except (OperationalError, ProgrammingError):
+        # Migration not applied yet; default to disabled.
+        return False
+    return bool(setting_value) if setting_value is not None else False
 
 def membership_is_current(user):
     if not user.membership:
@@ -19,14 +32,69 @@ def membership_is_current(user):
         return False
     return True
 
+
+def _marshal_status_expiration_for_office(person: Person, discipline: Discipline, today: Optional[date] = None):
+    """Return the latest marshal-status expiration that satisfies an office requirement."""
+    if today is None:
+        today = date.today()
+    if not person or not discipline:
+        return None
+
+    query = Authorization.objects.with_effective_expiration().filter(
+        person=person,
+        status__name='Active',
+    )
+
+    if discipline.name == 'Authorization Officer':
+        return today + relativedelta(years=100)
+    if discipline.name == 'Earl Marshal':
+        query = query.filter(style__name='Senior Marshal')
+    else:
+        query = query.filter(
+            style__discipline=discipline,
+            style__name__in=['Junior Marshal', 'Senior Marshal'],
+        )
+
+    return query.aggregate(Max('effective_expiration_date'))['effective_expiration_date__max']
+
+
+def marshal_office_effective_expiration(office: BranchMarshal, today: Optional[date] = None):
+    """
+    Effective officer capability expiration:
+    min(warrant end, membership expiration, marshal status expiration requirement).
+    """
+    if today is None:
+        today = date.today()
+    if not office or not office.person or not office.discipline:
+        return None
+
+    person = office.person
+    user = getattr(person, 'user', None)
+    if not user:
+        return None
+    if not user.membership or not user.membership_expiration:
+        return None
+
+    marshal_status_expiration = _marshal_status_expiration_for_office(person, office.discipline, today=today)
+    if not marshal_status_expiration:
+        return None
+
+    return min(office.end_date, user.membership_expiration, marshal_status_expiration)
+
+
+def _has_active_office(query):
+    today = date.today()
+    offices = query.select_related('person__user', 'discipline')
+    for office in offices:
+        effective = marshal_office_effective_expiration(office, today=today)
+        if effective and effective >= today:
+            return True
+    return False
+
 def is_senior_marshal(user, discipline=None):
     """
     Checks if the user has an active Senior Marshal status for the given discipline.
     """
-
-    if is_kingdom_earl_marshal(user):
-        return True
-
     query = Authorization.objects.with_effective_expiration().filter(
         person__user=user,
         style__name='Senior Marshal',
@@ -59,19 +127,13 @@ def is_branch_marshal(user, branch=None, discipline=None):
     if branch:
         query = query.filter(branch__name=branch)
 
-    if not membership_is_current(user):
-        return False
-
-    return query.exists()
+    return _has_active_office(query)
 
 
 def is_regional_marshal(user, discipline=None, region=None):
     """
     Checks if the user is a current Regional Marshal for the given discipline or is the Earl Marshal.
     """
-    if not membership_is_current(user):
-        return False
-
     if is_kingdom_earl_marshal(user):
         return True
 
@@ -109,7 +171,7 @@ def is_regional_marshal(user, discipline=None, region=None):
     if discipline:
         query = query.filter(discipline__name__in=[discipline, 'Earl Marshal'])
 
-    return query.exists()
+    return _has_active_office(query)
 
 def is_kingdom_marshal(user, discipline=None):
     """
@@ -128,10 +190,7 @@ def is_kingdom_marshal(user, discipline=None):
     if discipline:
         query = query.filter(discipline__name=discipline)
 
-    if not membership_is_current(user):
-        return False
-
-    return query.exists()
+    return _has_active_office(query)
 
 
 def is_kingdom_authorization_officer(user):
@@ -150,10 +209,7 @@ def is_kingdom_authorization_officer(user):
         end_date__gte=date.today(),
     )
 
-    if not membership_is_current(user):
-        return False
-
-    return query.exists()
+    return _has_active_office(query)
 
 
 def is_kingdom_earl_marshal(user):
@@ -167,10 +223,7 @@ def is_kingdom_earl_marshal(user):
         end_date__gte=date.today(),
     )
 
-    if not membership_is_current(user):
-        return False
-
-    return query.exists()
+    return _has_active_office(query)
 
 
 def waiver_signed(user):
@@ -410,6 +463,39 @@ def authorization_requires_concurrence(person: Person, style: WeaponStyle, today
         return True
     return max_effective < cutoff
 
+
+def _authorization_region_name(authorization: Authorization) -> Optional[str]:
+    """Resolve the fighter's region name for region-scoped authorization actions."""
+    person = getattr(authorization, 'person', None)
+    branch = getattr(person, 'branch', None)
+    if not branch:
+        return None
+    if branch.is_region():
+        return branch.name
+    if branch.region:
+        return branch.region.name
+    return None
+
+
+def _log_unresolved_authorization_region(action: str, authorization: Authorization, acting_user: Optional[User] = None) -> None:
+    """Log region-resolution failures to support follow-up data correction."""
+    person = getattr(authorization, 'person', None)
+    branch = getattr(person, 'branch', None)
+    parent_region = getattr(branch, 'region', None) if branch else None
+    logger.error(
+        'Could not resolve fighter region during %s: authorization_id=%s acting_user_id=%s fighter_user_id=%s '
+        'branch_id=%s branch_name=%s branch_type=%s parent_region_id=%s parent_region_name=%s',
+        action,
+        getattr(authorization, 'id', None),
+        getattr(acting_user, 'id', None),
+        getattr(person, 'user_id', None),
+        getattr(branch, 'id', None),
+        getattr(branch, 'name', None),
+        getattr(branch, 'type', None),
+        getattr(parent_region, 'id', None),
+        getattr(parent_region, 'name', None),
+    )
+
 def approve_authorization(request):
     """Add a concurance to a pending marshal authorization."""
     def _display_name_for_user(user: User) -> str:
@@ -467,7 +553,7 @@ def approve_authorization(request):
     if submit_as_error:
         return False, submit_as_error
     authorization = Authorization.objects.get(id=request.POST['authorization_id'])
-    auth_region = authorization.person.branch.name if authorization.person.branch.is_region() else None
+    auth_region = _authorization_region_name(authorization)
     discipline = authorization.style.discipline.name
     requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
     note = get_action_note() if requires_note else ''
@@ -487,6 +573,8 @@ def approve_authorization(request):
     # Helper: determine if waiver is current strictly by waiver_expiration
     def waiver_current(u: User):
         return bool(u.waiver_expiration and u.waiver_expiration > date.today())
+
+    sign_off_required = authorization_officer_sign_off_enabled()
 
     if authorization.status.name == 'Pending':
         # Rule 2: must be a senior marshal in the discipline to approve (exception for missile marshal concurence).
@@ -508,7 +596,7 @@ def approve_authorization(request):
         
         # Rule 4a: If a junior marshal is approved it becomes active (or pending waiver).
         if authorization.style.name == 'Junior Marshal':
-            if AUTHORIZATION_OFFICER_SIGN_OFF:
+            if sign_off_required:
                 authorization.status = kingdom_status
                 save_authorization(authorization)
                 record_note(authorization, 'marshal_concurred', note)
@@ -523,6 +611,9 @@ def approve_authorization(request):
 
     # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored can approve Missile).
     elif authorization.status.name == 'Needs Regional Approval':
+        if not auth_region:
+            _log_unresolved_authorization_region('regional approval', authorization, request_user)
+            return False, 'Could not determine the fighter region for regional approval.'
         if not is_regional_marshal(marshal, region=auth_region):
             return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
         if authorization.style.discipline.name == 'Missile':
@@ -532,7 +623,7 @@ def approve_authorization(request):
             if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
         # Rule 5: If the regional marshal approves a senior marshal, it becomes active (or pending waiver).
-        if AUTHORIZATION_OFFICER_SIGN_OFF:
+        if sign_off_required:
             authorization.status = kingdom_status
             save_authorization(authorization)
             record_note(authorization, 'marshal_approved', note)
@@ -607,11 +698,13 @@ def approve_authorization(request):
 
 def validate_approve_authorization(request_user: User, marshal: User, authorization: Authorization):
     """Validate approval rules without persisting changes."""
-    auth_region = authorization.person.branch.name if authorization.person.branch.is_region() else None
+    auth_region = _authorization_region_name(authorization)
     discipline = authorization.style.discipline.name
 
     def waiver_current(u: User):
         return bool(u.waiver_expiration and u.waiver_expiration > date.today())
+
+    sign_off_required = authorization_officer_sign_off_enabled()
 
     if authorization.status.name == 'Needs Kingdom Approval':
         if not is_kingdom_authorization_officer(request_user):
@@ -630,13 +723,16 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
             if not membership_is_current(authorization.person.user):
                 return False, 'Marshal authorizations require a current membership.'
         if authorization.style.name == 'Junior Marshal':
-            if AUTHORIZATION_OFFICER_SIGN_OFF:
+            if sign_off_required:
                 return True, 'OK'
             if not membership_is_current(authorization.person.user):
                 return False, 'Marshal authorizations require a current membership.'
         return True, 'OK'
 
     if authorization.status.name == 'Needs Regional Approval':
+        if not auth_region:
+            _log_unresolved_authorization_region('regional approval validation', authorization, request_user)
+            return False, 'Could not determine the fighter region for regional approval.'
         if not is_regional_marshal(marshal, region=auth_region):
             return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
         if authorization.style.discipline.name == 'Missile':
@@ -645,7 +741,7 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
         else:
             if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
-        if AUTHORIZATION_OFFICER_SIGN_OFF:
+        if sign_off_required:
             return True, 'OK'
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
             if not membership_is_current(authorization.person.user):
@@ -660,51 +756,138 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
 
 def validate_reject_authorization(marshal: User, authorization: Authorization):
     auth_discipline = authorization.style.discipline.name
-    if is_regional_marshal(marshal, auth_discipline):
-        return True, 'OK'
-    return False, 'You do not have authority to reject this authorization.'
+    auth_region = _authorization_region_name(authorization)
+
+    if not auth_region:
+        _log_unresolved_authorization_region('regional rejection validation', authorization, marshal)
+        return False, 'Could not determine the fighter region for regional rejection.'
+    if not is_regional_marshal(marshal, region=auth_region):
+        return False, 'You must be a regional marshal in the same region as the fighter to reject this authorization.'
+    if auth_discipline == 'Missile':
+        if not is_regional_marshal(marshal, 'Missile', auth_region) and not is_regional_marshal(marshal, 'Armored', auth_region):
+            return False, 'You must be a regional missile marshal or the regional armored marshal to reject this authorization.'
+    elif not is_regional_marshal(marshal, auth_discipline, auth_region):
+        return False, 'You must be a regional marshal in this discipline to reject this authorization.'
+    return True, 'OK'
+
+
+def can_manage_branch_marshal_office(user: User, branch: Branch, discipline: Discipline) -> bool:
+    """Return whether the user can appoint/remove the specified marshal office."""
+    # Permission matrix for marshal-office management (appoint/remove):
+    # - Kingdom Authorization Officer:
+    #   - May manage any marshal office.
+    #   - Is the only role that may manage Kingdom Earl Marshal (An Tir + Earl Marshal).
+    #   - Is the only role that may manage Authorization Officer offices (An Tir only).
+    # - Kingdom Earl Marshal:
+    #   - May manage all marshal offices except:
+    #     - Kingdom Earl Marshal office.
+    #     - Authorization Officer office.
+    # - Kingdom Discipline Marshal:
+    #   - May manage only same-discipline offices below kingdom level
+    #     (not An Tir, not Earl Marshal, not Authorization Officer).
+    # - Regional/Branch marshals:
+    #   - No office-management authority in this helper.
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if not branch or not discipline:
+        return False
+
+    branch_name = branch.name
+    discipline_name = discipline.name
+
+    # Only the Kingdom Authorization Officer can manage Authorization Officer offices,
+    # and those offices may only exist at Kingdom level.
+    if discipline_name == 'Authorization Officer':
+        return branch_name == 'An Tir' and is_kingdom_authorization_officer(user)
+
+    # Only the Kingdom Authorization Officer can manage the Kingdom Earl Marshal office.
+    if discipline_name == 'Earl Marshal' and branch_name == 'An Tir':
+        return is_kingdom_authorization_officer(user)
+
+    if is_kingdom_authorization_officer(user):
+        return True
+
+    if is_kingdom_earl_marshal(user):
+        return True
+
+    # Kingdom discipline marshals can manage lower offices in their own discipline only.
+    if discipline_name in ['Earl Marshal', 'Authorization Officer']:
+        return False
+    if branch_name == 'An Tir':
+        return False
+    return is_kingdom_marshal(user, discipline_name)
+
+
+def can_manage_any_branch_marshal_office(user: User) -> bool:
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    return (
+        is_kingdom_authorization_officer(user)
+        or is_kingdom_earl_marshal(user)
+        or is_kingdom_marshal(user)
+    )
 
 @login_required
 def appoint_branch_marshal(request):
-    """Adds a new branch marshal to the database. Only available to branch marshals or the authorization officer.
-    Each branch can have at most two branch marshals for each discipline, a deputy and an actual.
-    The system does not distinguish between the two."""
+    """Adds a new marshal office appointment."""
 
     # Get the data from the request.
     try:
         person = Person.objects.get(sca_name=request.POST['person'])
         branch = Branch.objects.get(name=request.POST['branch'])
         discipline = Discipline.objects.get(name=request.POST['discipline'])
-        start_date = request.POST['start_date']
-    except:
+        start_date_raw = request.POST['start_date']
+    except Exception:
         return False, 'Missing data'
+    try:
+        start_date = datetime.strptime(start_date_raw, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return False, 'Invalid start date'
+
+    if branch.type == 'Other':
+        return False, 'Selected branch type is not eligible for marshal appointments.'
 
     # Must be a current member.
     if not membership_is_current(person.user):
         return False, 'Must be a current member to be a branch marshal.'
 
-    # Rule 0: Only the authorization officer can appoint branch marshals
-    if not is_kingdom_authorization_officer(request.user):
-        return False, 'Only the authorization officer can appoint branch marshals.'
+    # Rule 0: Must have appointment authority for this office.
+    if not can_manage_branch_marshal_office(request.user, branch, discipline):
+        return False, 'You do not have authority to appoint this marshal office.'
 
-    # Rule 1: A branch marshal can only serve as one position at a time
-    # Check if they are currently a branch marshal.
-    branch_marshal_status = BranchMarshal.objects.filter(
+    # Rule 1: Prevent duplicate active appointments for the exact same office/person.
+    active_same_office = BranchMarshal.objects.filter(
         person=person,
+        branch=branch,
+        discipline=discipline,
         end_date__gte=date.today(),
     ).exists()
-    if branch_marshal_status:
+    if active_same_office:
+        return False, 'This fighter already holds this active marshal office.'
+
+    # Rule 1b: One person may only hold one active marshal office at a time.
+    # Multiple different people may still hold the same office concurrently.
+    has_other_active_office = BranchMarshal.objects.filter(
+        person=person,
+        end_date__gte=date.today(),
+    ).exclude(
+        branch=branch,
+        discipline=discipline,
+    ).exists()
+    if has_other_active_office:
         return False, 'Can only serve as one branch marshal position at a time.'
 
-    # Rule 2: An Tir is the only branch that can have the authorization officer.
+    # Rule 2: Authorization Officer offices are only at Kingdom level.
     if discipline.name == 'Authorization Officer':
-        if not branch.name == 'An Tir':
+        if branch.name != 'An Tir':
             return False, 'An Tir is the only branch that can have the authorization officer.'
 
-    # Rule 3: The Authorization Officer doesn't need to be a senior marshal.
-    if discipline.name == 'Authorization Officer':
-        start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+    # Rule 2b: Earl Marshal offices are only allowed at region/kingdom level.
+    if discipline.name == 'Earl Marshal' and not branch.is_region():
+        return False, 'Earl Marshal offices may only be appointed at regional or kingdom level.'
 
+    # Rule 3: Authorization Officer appointment does not require marshal authorization.
+    if discipline.name == 'Authorization Officer':
         BranchMarshal.objects.create(
             person=person,
             branch=branch,
@@ -734,8 +917,6 @@ def appoint_branch_marshal(request):
     if not marshal_status:
         if not discipline.name == 'Earl Marshal':
             return False, 'Must be a marshal in the discipline to be a branch marshal.'
-
-    start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
 
     BranchMarshal.objects.create(
         person=person,

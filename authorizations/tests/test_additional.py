@@ -11,16 +11,19 @@ from authorizations.models import (
     Authorization,
     AuthorizationNote,
     AuthorizationStatus,
+    AuthorizationPortalSetting,
     Branch,
     BranchMarshal,
     Discipline,
     Person,
+    ReportValue,
+    ReportingPeriod,
     Title,
     User,
     WeaponStyle,
 )
 from authorizations.permissions import validate_reject_authorization
-from authorizations.views import CreatePersonForm
+from authorizations.views import CreateAuthorizationForm, CreatePersonForm
 
 
 class AdditionalCoverageBase(TestCase):
@@ -342,6 +345,275 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         messages = self.messages_for(response)
         self.assertIn('Cannot renew a revoked authorization.', messages)
 
+    def test_earl_marshal_office_alone_cannot_issue_authorizations(self):
+        earl_user, earl_person = self.make_person('addauth_earl_only', 'AddAuth Earl Only')
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+        target_user, target_person = self.make_person('addauth_target_earl_only', 'AddAuth Target Earl Only')
+
+        self.login(earl_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        messages = self.messages_for(response)
+        self.assertTrue(any('is not a senior marshal in Armored' in m for m in messages))
+        self.assertFalse(
+            Authorization.objects.filter(person=target_person, style=self.style_weapon_armored).exists()
+        )
+
+    def test_earl_marshal_can_issue_when_actually_senior_in_discipline(self):
+        earl_user, earl_person = self.make_person('addauth_earl_senior', 'AddAuth Earl Senior')
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+        self.grant_authorization(earl_person, self.style_sm_armored)
+
+        target_user, target_person = self.make_person(
+            'addauth_target_earl_senior',
+            'AddAuth Target Earl Senior',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        # Keep concurrence from triggering by ensuring target already has an active authorization in the discipline.
+        self.grant_authorization(target_person, self.style_polearm_armored, status=self.status_active, marshal=earl_person)
+
+        self.login(earl_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        created = Authorization.objects.get(person=target_person, style=self.style_weapon_armored)
+        self.assertEqual(created.marshal, earl_person)
+        self.assertEqual(created.status, self.status_active)
+        self.assertEqual(response.status_code, 200)
+
+
+class AuthorizationOfficerSignOffFlagTests(AdditionalCoverageBase):
+    def _set_sign_off(self, enabled: bool):
+        AuthorizationPortalSetting.objects.update_or_create(
+            pk=1,
+            defaults={'require_kao_verification': enabled},
+        )
+
+    def test_sign_off_disabled_new_non_marshal_can_become_active(self):
+        acting_user, acting_person = self.make_person('signoff_off_actor', 'Signoff Off Actor')
+        self.grant_authorization(acting_person, self.style_sm_armored)
+
+        target_user, target_person = self.make_person(
+            'signoff_off_target',
+            'Signoff Off Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(target_person, self.style_polearm_armored, status=self.status_active, marshal=acting_person)
+
+        self.login(acting_user)
+        self._set_sign_off(False)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        created = Authorization.objects.get(person=target_person, style=self.style_weapon_armored)
+        self.assertEqual(created.status, self.status_active)
+        self.assertEqual(response.status_code, 200)
+
+    def test_sign_off_enabled_new_non_marshal_is_needs_kingdom_approval(self):
+        acting_user, acting_person = self.make_person('signoff_on_actor', 'Signoff On Actor')
+        self.grant_authorization(acting_person, self.style_sm_armored)
+
+        target_user, target_person = self.make_person(
+            'signoff_on_target',
+            'Signoff On Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(target_person, self.style_polearm_armored, status=self.status_active, marshal=acting_person)
+
+        self.login(acting_user)
+        self._set_sign_off(True)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        created = Authorization.objects.get(person=target_person, style=self.style_weapon_armored)
+        self.assertEqual(created.status, self.status_kingdom)
+        self.assertEqual(response.status_code, 200)
+
+    def test_sign_off_enabled_existing_non_marshal_update_is_needs_kingdom_approval(self):
+        acting_user, acting_person = self.make_person('signoff_upd_actor', 'Signoff Upd Actor')
+        self.grant_authorization(acting_person, self.style_sm_armored)
+
+        target_user, target_person = self.make_person(
+            'signoff_upd_target',
+            'Signoff Upd Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        existing = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_active,
+            marshal=acting_person,
+        )
+
+        self.login(acting_user)
+        self._set_sign_off(True)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        existing.refresh_from_db()
+        self.assertEqual(existing.status, self.status_kingdom)
+        self.assertEqual(response.status_code, 200)
+
+    def test_sign_off_enabled_requires_kao_for_final_approval(self):
+        proposer_user, proposer_person = self.make_person('signoff_final_prop', 'Signoff Final Prop')
+        approver_user, approver_person = self.make_person('signoff_final_non_kao', 'Signoff Final NonKAO')
+        kao_user, kao_person = self.make_person('signoff_final_kao', 'Signoff Final KAO')
+        target_user, target_person = self.make_person(
+            'signoff_final_target',
+            'Signoff Final Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+
+        self.grant_authorization(proposer_person, self.style_sm_armored)
+        self.grant_authorization(approver_person, self.style_sm_armored)
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        self.grant_authorization(target_person, self.style_polearm_armored, status=self.status_active, marshal=proposer_person)
+
+        self._set_sign_off(True)
+        self.login(proposer_user)
+        self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        pending = Authorization.objects.get(person=target_person, style=self.style_weapon_armored)
+        self.assertEqual(pending.status, self.status_kingdom)
+
+        self.login(approver_user)
+        non_kao_response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending.id),
+            },
+            follow=True,
+        )
+        self.assertIn(
+            'Only the Kingdom Authorization Officer can approve this authorization.',
+            self.messages_for(non_kao_response),
+        )
+
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, self.status_kingdom)
+
+        self.login(kao_user)
+        kao_response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending.id),
+            },
+            follow=True,
+        )
+
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, self.status_active)
+        self.assertEqual(kao_response.status_code, 200)
+
+    def test_sign_off_enabled_concurrence_flow_sets_needs_kingdom_approval(self):
+        proposer_user, proposer_person = self.make_person('signoff_concur_prop', 'Signoff Concur Prop')
+        target_user, target_person = self.make_person(
+            'signoff_concur_target',
+            'Signoff Concur Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        concurring_user, concurring_person = self.make_person('signoff_concur_helper', 'Signoff Concur Helper')
+
+        self.grant_authorization(proposer_person, self.style_sm_armored)
+        self.grant_authorization(concurring_person, self.style_weapon_armored)
+
+        pending_a = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_needs_concurrence,
+            marshal=proposer_person,
+        )
+        pending_b = self.grant_authorization(
+            target_person,
+            self.style_polearm_armored,
+            status=self.status_needs_concurrence,
+            marshal=proposer_person,
+        )
+
+        self.login(concurring_user)
+        self._set_sign_off(True)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'concur_authorization',
+                'authorization_id': str(pending_a.id),
+            },
+            follow=True,
+        )
+
+        pending_a.refresh_from_db()
+        pending_b.refresh_from_db()
+        self.assertEqual(pending_a.status, self.status_kingdom)
+        self.assertEqual(pending_b.status, self.status_kingdom)
+        self.assertEqual(pending_a.concurring_fighter, concurring_person)
+        self.assertEqual(pending_b.concurring_fighter, concurring_person)
+        self.assertEqual(response.status_code, 200)
+
+
+class AuthorizationFormDisciplineTests(AdditionalCoverageBase):
+    def test_earl_marshal_form_is_limited_to_actual_senior_disciplines(self):
+        earl_user, earl_person = self.make_person('form_earl_only', 'Form Earl Only')
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+
+        form = CreateAuthorizationForm(user=earl_user)
+        discipline_names = list(form.fields['discipline'].queryset.values_list('name', flat=True))
+        self.assertNotIn('Armored', discipline_names)
+
+    def test_earl_marshal_form_includes_disciplines_where_user_is_senior(self):
+        earl_user, earl_person = self.make_person('form_earl_senior', 'Form Earl Senior')
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+        self.grant_authorization(earl_person, self.style_sm_armored)
+
+        form = CreateAuthorizationForm(user=earl_user)
+        discipline_names = list(form.fields['discipline'].queryset.values_list('name', flat=True))
+        self.assertIn('Armored', discipline_names)
+
 class PendingNoteFlowTests(AdditionalCoverageBase):
     def test_marshal_proposal_two_step_flow_sets_and_clears_pending_session(self):
         acting_user, acting_person = self.make_person('note_propose_actor', 'Note Propose Actor')
@@ -505,6 +777,7 @@ class PendingNoteFlowTests(AdditionalCoverageBase):
         target_user, target_person = self.make_person('note_reject_target', 'Note Reject Target', branch=self.branch_gd)
 
         self.grant_authorization(proposer_person, self.style_sm_armored)
+        self.grant_authorization(regional_person, self.style_sm_armored)
         self.appoint(regional_person, self.region_summits, self.discipline_armored)
 
         pending_auth = self.grant_authorization(
@@ -549,6 +822,50 @@ class PendingNoteFlowTests(AdditionalCoverageBase):
         )
         self.assertNotIn('pending_authorization_action', self.client.session)
         self.assertEqual(second.status_code, 200)
+
+    def test_reject_authorization_blocks_out_of_region_regional_marshal(self):
+        proposer_user, proposer_person = self.make_person('note_reject_proposer_oob', 'Note Reject Proposer OOB')
+        regional_user, regional_person = self.make_person('note_reject_other_region', 'Note Reject Other Region')
+        target_user, target_person = self.make_person(
+            'note_reject_target_oob',
+            'Note Reject Target OOB',
+            branch=self.branch_gd,
+        )
+
+        self.grant_authorization(proposer_person, self.style_sm_armored)
+        self.appoint(regional_person, self.region_tir_righ, self.discipline_armored)
+
+        pending_auth = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_pending,
+            marshal=proposer_person,
+        )
+
+        self.login(regional_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_auth.id),
+                'action_note': 'Reject note',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(pending_auth.status, self.status_pending)
+        self.assertIn(
+            'You must be a regional marshal in the same region as the fighter to reject this authorization.',
+            self.messages_for(response),
+        )
+        self.assertFalse(
+            AuthorizationNote.objects.filter(
+                authorization=pending_auth,
+                action='marshal_rejected',
+                created_by=regional_user,
+            ).exists()
+        )
 
     def test_issue_sanction_two_step_flow_requires_note_and_clears_pending_session(self):
         ao_user, ao_person = self.make_person('note_sanction_ao', 'Note Sanction AO')
@@ -608,13 +925,14 @@ class RejectValidationTests(AdditionalCoverageBase):
         ok, msg = validate_reject_authorization(requester_user, pending_auth)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'You do not have authority to reject this authorization.')
+        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to reject this authorization.')
 
     def test_validate_reject_authorization_true_for_regional_marshal(self):
         regional_user, regional_person = self.make_person('reject_validate_regional', 'Reject Validate Regional')
         proposer_user, proposer_person = self.make_person('reject_validate_prop2', 'Reject Validate Prop2')
         target_user, target_person = self.make_person('reject_validate_tgt2', 'Reject Validate Tgt2')
 
+        self.grant_authorization(regional_person, self.style_sm_armored)
         self.appoint(regional_person, self.region_summits, self.discipline_armored)
         self.grant_authorization(proposer_person, self.style_sm_armored)
         pending_auth = self.grant_authorization(
@@ -628,6 +946,29 @@ class RejectValidationTests(AdditionalCoverageBase):
 
         self.assertTrue(ok)
         self.assertEqual(msg, 'OK')
+
+    def test_validate_reject_authorization_false_for_wrong_region(self):
+        regional_user, regional_person = self.make_person('reject_validate_other_region', 'Reject Validate Other Region')
+        proposer_user, proposer_person = self.make_person('reject_validate_prop3', 'Reject Validate Prop3')
+        target_user, target_person = self.make_person(
+            'reject_validate_tgt3',
+            'Reject Validate Tgt3',
+            branch=self.branch_gd,
+        )
+
+        self.appoint(regional_person, self.region_tir_righ, self.discipline_armored)
+        self.grant_authorization(proposer_person, self.style_sm_armored)
+        pending_auth = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_pending,
+            marshal=proposer_person,
+        )
+
+        ok, msg = validate_reject_authorization(regional_user, pending_auth)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to reject this authorization.')
 
 class ConcurrenceFlowTests(AdditionalCoverageBase):
     def setUp(self):
@@ -979,6 +1320,7 @@ class SearchFilteringAndPaginationTests(AdditionalCoverageBase):
         self.assertEqual(page_ids, [minor_auth.id])
 
 
+@override_settings(AUTHZ_TEST_FEATURES=True)
 class UserSelfAppointmentEdgeTests(AdditionalCoverageBase):
     def setUp(self):
         super().setUp()
@@ -1287,4 +1629,67 @@ class UserModelConstraintTests(AdditionalCoverageBase):
                 email='unique.constraint@example.com',
                 first_name='Unique',
                 last_name='Constraint',
+            )
+
+
+class ReportingModelsTests(TestCase):
+    def test_reporting_period_derives_start_and_end_dates_from_quarter(self):
+        period = ReportingPeriod.objects.create(
+            year=2025,
+            quarter=1,
+            authorization_officer_name="Countess Example",
+        )
+
+        self.assertEqual(period.start_date, date(2025, 1, 1))
+        self.assertEqual(period.end_date, date(2025, 3, 31))
+
+    def test_reporting_period_rejects_invalid_quarter(self):
+        period = ReportingPeriod(
+            year=2025,
+            quarter=5,
+            authorization_officer_name="Countess Example",
+        )
+
+        with self.assertRaises(ValidationError):
+            period.full_clean()
+
+    def test_reporting_period_is_unique_for_year_and_quarter(self):
+        ReportingPeriod.objects.create(
+            year=2025,
+            quarter=1,
+            authorization_officer_name="Countess Example",
+        )
+
+        with self.assertRaises(IntegrityError):
+            ReportingPeriod.objects.create(
+                year=2025,
+                quarter=1,
+                authorization_officer_name="Duke Example",
+            )
+
+    def test_report_value_unique_constraint_prevents_duplicate_dimension_rows(self):
+        period = ReportingPeriod.objects.create(
+            year=2025,
+            quarter=1,
+            authorization_officer_name="Countess Example",
+        )
+        ReportValue.objects.create(
+            reporting_period=period,
+            report_family=ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+            region_name='',
+            subject_name='Armored Combat',
+            metric_name='Total Participants',
+            value=651,
+            display_order=1,
+        )
+
+        with self.assertRaises(IntegrityError):
+            ReportValue.objects.create(
+                reporting_period=period,
+                report_family=ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+                region_name='',
+                subject_name='Armored Combat',
+                metric_name='Total Participants',
+                value=652,
+                display_order=2,
             )

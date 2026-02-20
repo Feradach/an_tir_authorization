@@ -7,6 +7,27 @@
 
 {% block body %}
 <h1>Authorization Portal</h1>
+    {% if can_set_authorization_officer_sign_off %}
+        <form method="post" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="set_authorization_officer_sign_off">
+            <label for="authorization_officer_sign_off"><strong>Require Kingdom Authorization Officer Verification</strong></label>
+            <div class="d-flex align-items-center gap-2 mt-1">
+                <select
+                    id="authorization_officer_sign_off"
+                    name="authorization_officer_sign_off"
+                    class="form-control"
+                    style="max-width: 220px;"
+                >
+                    <option value="on"{% if authorization_officer_sign_off_required %} selected{% endif %}>On</option>
+                    <option value="off"{% if not authorization_officer_sign_off_required %} selected{% endif %}>Off</option>
+                </select>
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    {% elif authorization_officer_sign_off_required %}
+        <p><strong>Kingdom Authorization Officer Verification Is Enabled</strong></p>
+    {% endif %}
     <p>Welcome to the Authorization portal for An Tir.
     <br>Below you will find a selection of actions that you can perform.</p>
     <p>The actions you will be able to perform will depend on whether you are logged in and your marshal role.</p>
@@ -18,7 +39,7 @@
         <p><a href="{% url 'merge_accounts' %}" class="btn btn-primary">Merge Accounts</a></p>
     {% endif %}
     <p><a href="{% url 'branch_marshals' %}" class="btn btn-primary">View Branch Marshals</a></p>
-    {% if auth_officer or kingdom_earl_marshal %}
+    {% if can_manage_sanctions %}
         <p><a href="{% url 'manage_sanctions' %}" class="btn btn-primary">Manage Sanctions</a></p>
     {% endif %}
     <div class="col-md-3">
@@ -57,16 +78,16 @@
     {% endif %}
     {% if pending_authorizations %}
         <h3>Authorizations Needing Approval</h3>
-        {% if auth_officer %}
-            <div class="col-md-4 mb-3">
-                <label for="kao_submit_as_control"><strong>Approve As (optional):</strong></label>
-                <select id="kao_submit_as_control" class="form-control">
-                    <option value="">My own account</option>
-                    {% for person in all_people_people %}
-                        <option value="{{ person.user.id }}"{% if selected_submit_as_user_id and selected_submit_as_user_id|stringformat:"s" == person.user.id|stringformat:"s" %} selected{% endif %}>{{ person }}</option>
-                    {% endfor %}
-                </select>
-            </div>
+        {% if auth_officer and authorization_officer_sign_off_required %}
+            <form method="post" class="mb-3"{% if pending_authorization_action and pending_authorization_action.action == 'approve_all_kingdom_authorizations' %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
+                {% csrf_token %}
+                <input type="hidden" name="action" value="approve_all_kingdom_authorizations">
+                <input type="hidden" name="action_note" value="">
+                {% if pending_authorization_action and pending_authorization_action.action == 'approve_all_kingdom_authorizations' %}
+                    <input type="hidden" name="pending_authorization_action" value="1">
+                {% endif %}
+                <button type="submit" class="btn btn-success">Approve All Needs Kingdom Approval</button>
+            </form>
         {% endif %}
          <table>
                 <tr>
@@ -86,20 +107,22 @@
                         <td>{{ authorization.style.discipline.name }}</td>
                         <td>{{ authorization.style.name }}</td>
                         <td>{{ authorization.status.name }}</td>
-                        <td><form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
-                            {% csrf_token %}
-                            <input type="hidden" name="action" value="approve_authorization">
-                            <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
-                            <input type="hidden" name="action_note" value="">
-                            {% if auth_officer %}
-                                <input type="hidden" name="submit_as_user_id" value="">
-                            {% endif %}
-                            {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %}
-                                <input type="hidden" name="pending_authorization_action" value="1">
-                            {% endif %}
-                            <button type="submit" class="btn btn-success">Approve</button>
-                        </form>
-                    {% if regional_marshal %}
+                        <td>
+                    {% if auth_officer and authorization.status.name == "Pending Background Check" %}
+                        <a href="{% url 'user_account' user_id=authorization.person.user_id %}" class="btn btn-primary">Go To Page</a>
+                    {% else %}
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="approve_authorization">
+                                <input type="hidden" name="authorization_id" value="{{ authorization.id }}">
+                                <input type="hidden" name="action_note" value="">
+                                {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %}
+                                    <input type="hidden" name="pending_authorization_action" value="1">
+                                {% endif %}
+                                <button type="submit" class="btn btn-success">Approve</button>
+                            </form>
+                    {% endif %}
+                    {% if regional_marshal and not auth_officer %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                         {% csrf_token %}
                         <input type="hidden" name="action" value="reject_authorization">
@@ -109,8 +132,9 @@
                             <input type="hidden" name="pending_authorization_action" value="1">
                         {% endif %}
                         <button type="submit" class="btn btn-danger">Reject</button>
-                        </form></td>
+                        </form>
                     {% endif %}
+                        </td>
                     </tr>
                 {% endfor %}
             </table>
@@ -170,33 +194,6 @@
                 });
             }
 
-            const submitAsControl = document.getElementById('kao_submit_as_control');
-            if (submitAsControl && typeof Choices !== 'undefined') {
-                new Choices(submitAsControl, {
-                    removeItemButton: true,
-                    shouldSort: false,
-                    searchEnabled: true,
-                    searchResultLimit: 20,
-                    fuseOptions: {
-                        threshold: 0.3,
-                    },
-                    itemSelectText: '',
-                });
-            }
-
-            const approvalForms = document.querySelectorAll('form[data-kao-submit-as="1"]');
-            approvalForms.forEach(function (form) {
-                form.addEventListener('submit', function () {
-                    if (!submitAsControl) {
-                        return;
-                    }
-                    const fieldName = form.dataset.submitAsField || 'submit_as_user_id';
-                    const hiddenInput = form.querySelector(`input[name="${fieldName}"]`);
-                    if (hiddenInput) {
-                        hiddenInput.value = submitAsControl.value || '';
-                    }
-                });
-            });
         });
     </script>
 {% endblock %}

@@ -310,6 +310,7 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
 
     def test_is_regional_marshal_checks_region_and_discipline(self):
         user, marshal = self.make_person('regional_user', 'Regional User')
+        self.grant_authorization(marshal, self.style_sm_armored)
         self.appoint(marshal, self.region_summits, self.discipline_armored)
 
         self.assertTrue(is_regional_marshal(user, 'Armored', 'Summits'))
@@ -317,6 +318,7 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
 
     def test_is_kingdom_marshal_by_branch_assignment(self):
         user, marshal = self.make_person('kingdom_user', 'Kingdom User')
+        self.grant_authorization(marshal, self.style_sm_armored)
         self.appoint(marshal, self.branch_an_tir, self.discipline_armored)
 
         self.assertTrue(is_kingdom_marshal(user, 'Armored'))
@@ -332,6 +334,12 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
         user.save()
 
         self.assertFalse(is_kingdom_authorization_officer(user))
+
+    def test_earl_marshal_office_does_not_grant_senior_marshal_status(self):
+        user, marshal = self.make_person('earl_no_sm', 'Earl No SM')
+        self.appoint(marshal, self.branch_an_tir, self.discipline_earl_marshal)
+
+        self.assertFalse(is_senior_marshal(user, 'Armored'))
 
 
 class AuthorizationRuleTests(AuthorizationTestBase):
@@ -518,6 +526,31 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertEqual(msg, 'Armored Senior Marshal authorization ready for regional approval!')
         self.assertEqual(pending_auth.status, self.status_regional)
 
+    def test_kingdom_earl_marshal_cannot_concur_pending_without_senior_marshal(self):
+        proposer_user, proposer = self.make_person('earl_pending_prop', 'Earl Pending Prop')
+        earl_user, earl_person = self.make_person('earl_pending_actor', 'Earl Pending Actor')
+        _, fighter = self.make_person('earl_pending_target', 'Earl Pending Target')
+        self.grant_authorization(proposer, self.style_sm_armored)
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+
+        pending_auth = self.grant_authorization(
+            fighter,
+            self.style_jm_armored,
+            status=self.status_pending,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(pending_auth.id), 'action_note': 'Attempting concurrence as Earl Marshal'},
+        )
+        request.user = earl_user
+
+        ok, msg = approve_authorization(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You must be a senior marshal in this discipline to approve this authorization.')
+
     def test_cannot_concur_with_own_pending_authorization(self):
         _, fighter = self.make_person('self_concur_target', 'Self Concur Target')
         proposer_user, proposer = self.make_person('self_concur_proposer', 'Self Concur Proposer')
@@ -564,6 +597,132 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         self.assertFalse(ok)
         self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+
+    def test_regional_approval_requires_same_region_when_fighter_branch_is_local_branch(self):
+        proposer_user, proposer = self.make_person('regional_local_proposer', 'Regional Local Proposer')
+        approver_user, approver = self.make_person('regional_local_wrong', 'Regional Local Wrong')
+        _, fighter = self.make_person('regional_local_target', 'Regional Local Target', branch=self.branch_gd)
+
+        self.appoint(approver, self.region_tir_righ, self.discipline_armored)
+        needs_regional = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_regional,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_regional.id), 'action_note': 'Attempting out-of-region approval'},
+        )
+        request.user = approver_user
+
+        ok, msg = approve_authorization(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+
+    def test_regional_earl_marshal_can_do_regional_confirmation_any_discipline_in_region(self):
+        proposer_user, proposer = self.make_person('regional_earl_prop', 'Regional Earl Prop')
+        earl_user, earl_person = self.make_person('regional_earl_actor', 'Regional Earl Actor')
+        _, fighter = self.make_person('regional_earl_target', 'Regional Earl Target', branch=self.branch_gd)
+        self.grant_authorization(earl_person, self.style_sm_armored)
+        self.appoint(earl_person, self.region_summits, self.discipline_earl_marshal)
+
+        needs_regional = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_regional,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_regional.id), 'action_note': 'Regional Earl confirmation'},
+        )
+        request.user = earl_user
+
+        ok, msg = approve_authorization(request)
+
+        needs_regional.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        self.assertEqual(needs_regional.status, self.status_active)
+
+    def test_regional_earl_marshal_cannot_do_regional_confirmation_outside_region(self):
+        proposer_user, proposer = self.make_person('regional_earl_oor_prop', 'Regional Earl OOR Prop')
+        earl_user, earl_person = self.make_person('regional_earl_oor_actor', 'Regional Earl OOR Actor')
+        _, fighter = self.make_person('regional_earl_oor_target', 'Regional Earl OOR Target', branch=self.branch_lg)
+        self.appoint(earl_person, self.region_summits, self.discipline_earl_marshal)
+
+        needs_regional = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_regional,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_regional.id), 'action_note': 'Regional Earl out-of-region attempt'},
+        )
+        request.user = earl_user
+
+        ok, msg = approve_authorization(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+
+    def test_kingdom_earl_marshal_can_do_regional_confirmation_any_region(self):
+        proposer_user, proposer = self.make_person('kingdom_earl_prop', 'Kingdom Earl Prop')
+        earl_user, earl_person = self.make_person('kingdom_earl_actor', 'Kingdom Earl Actor')
+        _, fighter = self.make_person('kingdom_earl_target', 'Kingdom Earl Target', branch=self.branch_lg)
+        self.grant_authorization(earl_person, self.style_sm_armored)
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+
+        needs_regional = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_regional,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_regional.id), 'action_note': 'Kingdom Earl regional confirmation'},
+        )
+        request.user = earl_user
+
+        ok, msg = approve_authorization(request)
+
+        needs_regional.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        self.assertEqual(needs_regional.status, self.status_active)
+
+    def test_kingdom_earl_marshal_cannot_do_kingdom_confirmation(self):
+        proposer_user, proposer = self.make_person('kingdom_earl_kingdom_prop', 'Kingdom Earl Kingdom Prop')
+        earl_user, earl_person = self.make_person('kingdom_earl_kingdom_actor', 'Kingdom Earl Kingdom Actor')
+        _, fighter = self.make_person('kingdom_earl_kingdom_target', 'Kingdom Earl Kingdom Target')
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+
+        needs_kingdom = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_kingdom,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_kingdom.id), 'action_note': 'Kingdom Earl kingdom confirmation attempt'},
+        )
+        request.user = earl_user
+
+        ok, msg = approve_authorization(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Only the Kingdom Authorization Officer can approve this authorization.')
 
     def test_authorization_officer_final_approval_sets_active_and_removes_junior(self):
         ao_user, ao_person = self.make_person('ao_approver', 'AO Approver')
@@ -666,7 +825,7 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         ok, msg = appoint_branch_marshal(request)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'Only the authorization officer can appoint branch marshals.')
+        self.assertEqual(msg, 'You do not have authority to appoint this marshal office.')
 
     def test_authorization_officer_can_appoint_local_branch_marshal_with_junior(self):
         ao_user, ao_person = self.make_person('appoint_ao_user', 'Appoint AO User')
@@ -744,6 +903,68 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
 
         self.assertFalse(ok)
         self.assertEqual(msg, 'Can only serve as one branch marshal position at a time.')
+
+    def test_duplicate_active_branch_marshal_position_is_blocked(self):
+        ao_user, ao_person = self.make_person('appoint_ao_user_duplicate', 'Appoint AO User Duplicate')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        _, candidate = self.make_person('appoint_duplicate_candidate', 'Appoint Duplicate Candidate')
+        self.grant_authorization(candidate, self.style_sm_armored)
+        self.appoint(candidate, self.branch_gd, self.discipline_armored)
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.branch_gd.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'This fighter already holds this active marshal office.')
+
+    def test_two_people_can_hold_same_active_branch_marshal_office(self):
+        ao_user, ao_person = self.make_person('appoint_ao_user_shared', 'Appoint AO User Shared')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        _, candidate_one = self.make_person('appoint_shared_candidate_one', 'Appoint Shared Candidate One')
+        _, candidate_two = self.make_person('appoint_shared_candidate_two', 'Appoint Shared Candidate Two')
+        self.grant_authorization(candidate_one, self.style_sm_armored)
+        self.grant_authorization(candidate_two, self.style_sm_armored)
+
+        request_one = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate_one.sca_name,
+                'branch': self.branch_gd.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request_one.user = ao_user
+        ok_one, msg_one = appoint_branch_marshal(request_one)
+
+        request_two = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate_two.sca_name,
+                'branch': self.branch_gd.name,
+                'discipline': self.discipline_armored.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request_two.user = ao_user
+        ok_two, msg_two = appoint_branch_marshal(request_two)
+
+        self.assertTrue(ok_one)
+        self.assertEqual(msg_one, 'Branch marshal appointed.')
+        self.assertTrue(ok_two)
+        self.assertEqual(msg_two, 'Branch marshal appointed.')
 
     def test_candidate_must_have_current_membership(self):
         ao_user, ao_person = self.make_person('appoint_ao_user_membership', 'Appoint AO User Membership')
