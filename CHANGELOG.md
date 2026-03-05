@@ -6,6 +6,7 @@
 - Sanctions now have their own records with start and end dates, and sanction notes automatically include the selected end date.
 - Kingdom Authorization Officers can now upload the Society membership CSV directly from the account page, replacing the entire membership roster in one step.
 - Kingdom Authorization Officers can now apply a documented membership-validation bypass during account updates when Society data needs manual correction.
+- The register page now shows production-specific account creation guidance for membership name matching, simplified An Tir postal wording, and the waiver-signing next step, while test mode keeps its existing detailed guidance.
 
 ### Fixed
 - Note attribution now prefers the currently relevant office for the action, falls back to the acting marshal status when no office applies, and logs data problems if someone incorrectly has multiple active offices.

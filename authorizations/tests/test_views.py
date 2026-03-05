@@ -693,6 +693,7 @@ class SearchViewTests(ViewTestBase):
         self.assertNotIn('Search CSV C', content)
         self.assertNotIn('<a ', content)
 
+@override_settings(AUTHZ_TEST_FEATURES=False)
 class RegisterViewTests(ViewTestBase):
     def test_register_get_renders_template(self):
         response = self.client.get(reverse('register'))
@@ -868,12 +869,35 @@ class RegisterViewTests(ViewTestBase):
         response = self.client.get(reverse('register'))
 
         self.assertContains(response, 'name="background_check_expiration"')
+        self.assertContains(response, 'Membership number must be between 1 and 20 digits.')
+        self.assertContains(
+            response,
+            'Postal code must be within An Tir:'
+        )
+        self.assertContains(
+            response,
+            'After you set your password, log in and go to "My Account" to sign your waiver. After that you will be able to add authorizations to yourself.'
+        )
 
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_background_check_field_hidden_when_feature_disabled(self):
         response = self.client.get(reverse('register'))
 
         self.assertNotContains(response, 'name="background_check_expiration"')
+        self.assertContains(
+            response,
+            'If entering a membership number, your First and Last name must match what is listed in your SCA membership account'
+        )
+        self.assertContains(response, 'Postal code must be within An Tir.')
+        self.assertContains(
+            response,
+            'After you set your password, log in and go to "My Account" to sign your waiver.'
+        )
+        self.assertNotContains(response, 'Membership number must be between 1 and 20 digits.')
+        self.assertNotContains(
+            response,
+            'After you set your password, log in and go to "My Account" to sign your waiver. After that you will be able to add authorizations to yourself.'
+        )
 
 
 class TombstoneBehaviorTests(ViewTestBase):
@@ -1077,6 +1101,7 @@ class TombstoneBehaviorTests(ViewTestBase):
         self.assertNotIn(merged_user.id, returned_ids)
 
 
+@override_settings(AUTHZ_TEST_FEATURES=False)
 class UserAccountViewTests(ViewTestBase):
     @classmethod
     def setUpTestData(cls):

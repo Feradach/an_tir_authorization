@@ -1140,6 +1140,7 @@ class ConcurrenceFlowTests(AdditionalCoverageBase):
         self.assertNotContains(non_ao_response, 'Concurring Fighter:')
 
 
+@override_settings(AUTHZ_TEST_FEATURES=False)
 class ModelValidationAndConstraintTests(AdditionalCoverageBase):
     def test_person_clean_raises_for_minor_without_birthday(self):
         user = User.objects.create_user(
