@@ -18,6 +18,8 @@ from authorizations.models import (
     Person,
     ReportValue,
     ReportingPeriod,
+    Sanction,
+    MembershipRosterEntry,
     Title,
     User,
     WeaponStyle,
@@ -325,11 +327,19 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         messages = self.messages_for(response)
         self.assertIn('Cannot renew a pending authorization.', messages)
 
-    def test_revoked_duplicate_is_rejected_in_add_authorization(self):
-        acting_user, acting_person = self.make_person('addauth_revoked_actor', 'Revoked Actor')
+    def test_sanctioned_duplicate_is_rejected_in_add_authorization(self):
+        acting_user, acting_person = self.make_person('addauth_sanctioned_actor', 'Sanctioned Actor')
         self.grant_authorization(acting_person, self.style_sm_armored)
-        target_user, target_person = self.make_person('addauth_revoked_target', 'Revoked Target')
-        self.grant_authorization(target_person, self.style_weapon_armored, status=self.status_revoked, marshal=acting_person)
+        target_user, target_person = self.make_person('addauth_sanctioned_target', 'Sanctioned Target')
+        Sanction.objects.create(
+            person=target_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today(),
+            end_date=date.today() + relativedelta(days=30),
+            issue_note='Sanctioned for add auth test.',
+            issued_by=acting_user,
+        )
 
         self.login(acting_user)
         response = self.client.post(
@@ -343,7 +353,7 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         )
 
         messages = self.messages_for(response)
-        self.assertIn('Cannot renew a revoked authorization.', messages)
+        self.assertIn('Cannot issue an authorization while a sanction is active for this style or discipline.', messages)
 
     def test_earl_marshal_office_alone_cannot_issue_authorizations(self):
         earl_user, earl_person = self.make_person('addauth_earl_only', 'AddAuth Earl Only')
@@ -879,6 +889,7 @@ class PendingNoteFlowTests(AdditionalCoverageBase):
             {
                 'sanction_type': 'style',
                 'style_id': str(self.style_weapon_armored.id),
+                'sanction_end_date': (date.today() + relativedelta(days=45)).isoformat(),
             },
             follow=True,
         )
@@ -896,15 +907,9 @@ class PendingNoteFlowTests(AdditionalCoverageBase):
             follow=True,
         )
 
-        revoked = Authorization.objects.get(person=target_person, style=self.style_weapon_armored)
-        self.assertEqual(revoked.status, self.status_revoked)
-        self.assertTrue(
-            AuthorizationNote.objects.filter(
-                authorization=revoked,
-                action='sanction_issued',
-                created_by=ao_user,
-            ).exists()
-        )
+        sanction = Sanction.objects.get(person=target_person, style=self.style_weapon_armored, lifted_at__isnull=True)
+        self.assertEqual(sanction.end_date, date.today() + relativedelta(days=45))
+        self.assertIn((date.today() + relativedelta(days=45)).isoformat(), sanction.issue_note)
         self.assertNotIn(pending_key, self.client.session)
         self.assertEqual(second.status_code, 200)
 
@@ -1194,8 +1199,15 @@ class ModelValidationAndConstraintTests(AdditionalCoverageBase):
         self.assertIsNone(user.membership)
         self.assertIsNone(user.membership_expiration)
 
-    def test_user_save_sets_waiver_to_at_least_membership_expiration(self):
+    def test_user_save_sets_waiver_to_at_least_membership_expiration_when_roster_waiver_is_yes(self):
         exp = date.today() + relativedelta(years=1)
+        MembershipRosterEntry.objects.create(
+            membership_number='123999',
+            first_name='Waiver',
+            last_name='FromMembership',
+            membership_expiration=exp,
+            has_society_waiver=True,
+        )
         user = User.objects.create_user(
             username='user_waiver_from_membership',
             password='StrongPass!123',
@@ -1203,6 +1215,56 @@ class ModelValidationAndConstraintTests(AdditionalCoverageBase):
             first_name='Waiver',
             last_name='FromMembership',
             membership='123999',
+            membership_expiration=exp,
+            waiver_expiration=None,
+            state_province='Oregon',
+            country='United States',
+            address='123 Main St',
+            city='Portland',
+            postal_code='97201',
+            phone_number='(503) 555-1212',
+        )
+        user.refresh_from_db()
+        self.assertEqual(user.waiver_expiration, exp)
+
+    def test_user_save_does_not_set_waiver_from_membership_when_roster_waiver_not_yes(self):
+        exp = date.today() + relativedelta(years=1)
+        MembershipRosterEntry.objects.create(
+            membership_number='123998',
+            first_name='Waiver',
+            last_name='NoMembershipWaiver',
+            membership_expiration=exp,
+            has_society_waiver=False,
+        )
+        user = User.objects.create_user(
+            username='user_no_waiver_from_membership',
+            password='StrongPass!123',
+            email='user_no_waiver_from_membership@example.com',
+            first_name='Waiver',
+            last_name='NoMembershipWaiver',
+            membership='123998',
+            membership_expiration=exp,
+            waiver_expiration=None,
+            state_province='Oregon',
+            country='United States',
+            address='123 Main St',
+            city='Portland',
+            postal_code='97201',
+            phone_number='(503) 555-1212',
+        )
+        user.refresh_from_db()
+        self.assertIsNone(user.waiver_expiration)
+
+    @override_settings(AUTHZ_TEST_FEATURES=True)
+    def test_user_save_sets_waiver_from_membership_in_test_mode_without_roster_row(self):
+        exp = date.today() + relativedelta(years=1)
+        user = User.objects.create_user(
+            username='user_test_mode_waiver_from_membership',
+            password='StrongPass!123',
+            email='user_test_mode_waiver_from_membership@example.com',
+            first_name='TestMode',
+            last_name='MembershipWaiver',
+            membership='424242',
             membership_expiration=exp,
             waiver_expiration=None,
             state_province='Oregon',

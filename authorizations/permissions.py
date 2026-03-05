@@ -7,7 +7,7 @@ from django.db.utils import OperationalError, ProgrammingError
 from typing import Optional
 
 from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
-    Person, Discipline, AuthorizationNote, AuthorizationPortalSetting
+    Person, Discipline, AuthorizationNote, AuthorizationPortalSetting, Sanction
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +40,8 @@ def _marshal_status_expiration_for_office(person: Person, discipline: Discipline
     if not person or not discipline:
         return None
 
-    query = Authorization.objects.with_effective_expiration().filter(
+    query = Authorization.objects.effectively_active(today=today).filter(
         person=person,
-        status__name='Active',
     )
 
     if discipline.name == 'Authorization Officer':
@@ -95,11 +94,9 @@ def is_senior_marshal(user, discipline=None):
     """
     Checks if the user has an active Senior Marshal status for the given discipline.
     """
-    query = Authorization.objects.with_effective_expiration().filter(
+    query = Authorization.objects.effectively_active().filter(
         person__user=user,
         style__name='Senior Marshal',
-        effective_expiration_date__gte=date.today(),
-        status__name = 'Active'
     )
 
     if not membership_is_current(user):
@@ -109,6 +106,39 @@ def is_senior_marshal(user, discipline=None):
         query = query.filter(style__discipline__name=discipline)
 
     return query.exists()
+
+
+def active_sanctions(person: Person, today: Optional[date] = None):
+    if today is None:
+        today = date.today()
+    if not person:
+        return Sanction.objects.none()
+    return Sanction.objects.filter(
+        person=person,
+        start_date__lte=today,
+        end_date__gte=today,
+        lifted_at__isnull=True,
+    )
+
+
+def active_sanction_for_style(person: Person, style: WeaponStyle, today: Optional[date] = None):
+    if today is None:
+        today = date.today()
+    if not person or not style:
+        return None
+    sanctions = active_sanctions(person, today=today).filter(
+        Q(style=style) | (Q(style__isnull=True) & Q(discipline=style.discipline))
+    ).select_related('discipline', 'style')
+    exact_style = sanctions.filter(style=style).order_by('-end_date', '-id').first()
+    if exact_style:
+        return exact_style
+    return sanctions.filter(style__isnull=True).order_by('-end_date', '-id').first()
+
+
+def authorization_is_sanctioned(authorization: Authorization, today: Optional[date] = None) -> bool:
+    if not authorization or not authorization.person or not authorization.style:
+        return False
+    return active_sanction_for_style(authorization.person, authorization.style, today=today) is not None
 
 def is_branch_marshal(user, branch=None, discipline=None):
     """
@@ -247,6 +277,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     # Get information needed to enforce the rules
     style = WeaponStyle.objects.get(id=style_id)
     all_authorizations = Authorization.objects.filter(person=existing_fighter)
+    active_authorizations = Authorization.objects.effectively_active().filter(person=existing_fighter)
     if existing_fighter.is_minor:
         birthday = existing_fighter.user.birthday
         age = calculate_age(birthday)
@@ -275,15 +306,15 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     # Since these require single sword first, they rely on single sword being before the other combat styles so that they can be added in the same form submission.
     if not style.name in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
         if style.discipline.name == 'Rapier Combat':
-            if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier Combat', status__name='Active').exists():
+            if not active_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier Combat').exists():
                 return False, 'A fighter must be authorized with single sword as their first rapier authorization.'
         if style.discipline.name == 'Youth Rapier':
-            if not all_authorizations.filter(style__name='Single Sword', style__discipline__name='Youth Rapier', status__name='Active').exists():
+            if not active_authorizations.filter(style__name='Single Sword', style__discipline__name='Youth Rapier').exists():
                 return False, 'A fighter must be authorized with single sword as their first youth rapier authorization.'
     
     # Rule 5: A Cut & Thrust fighter cannot have spear as their first authorization.
     if style.discipline.name == 'Cut & Thrust' and style.name == 'Spear':
-        if not all_authorizations.filter(style__discipline__name='Cut & Thrust', status__name='Active').exists():
+        if not active_authorizations.filter(style__discipline__name='Cut & Thrust').exists():
             return False, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.'
 
     # Rule 6: Rapier fighters must be at lest 14 years old
@@ -332,18 +363,18 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
 
     # Rule 14: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':
-        if not (all_authorizations.filter(style__name='Senior Ground Crew', status__name='Active').exists() and all_authorizations.filter(style__name='General Riding', status__name='Active').exists()):
+        if not (active_authorizations.filter(style__name='Senior Ground Crew').exists() and active_authorizations.filter(style__name='General Riding').exists()):
             return False, 'Junior Equestrian marshal must have Senior Ground Crew and General Riding authorization.'
 
     # Rule 15: An Equestrian Senior marshal must already have Junior Marshal and Mounted Gaming Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Senior Marshal':
-        if not (all_authorizations.filter(style__name='Junior Marshal', style__discipline__name='Equestrian', status__name='Active').exists() and all_authorizations.filter(style__name='Mounted Gaming', status__name='Active').exists()):
+        if not (active_authorizations.filter(style__name='Junior Marshal', style__discipline__name='Equestrian').exists() and active_authorizations.filter(style__name='Mounted Gaming').exists()):
             return False, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.'
 
     # Rule 16: In order to authorize someone in Mounted Archery, Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting,
     # the Senior Marshal must have the same Authorizations.
     if style.name in ['Mounted Archery', 'Crest Combat', 'Mounted Heavy Combat', 'Driving', 'Foam-Tipped Jousting']:
-        if not Authorization.objects.filter(person=marshal.person, style__name=style.name, style__discipline__name="Equestrian", status__name='Active').exists():
+        if not Authorization.objects.effectively_active().filter(person=marshal.person, style__name=style.name, style__discipline__name="Equestrian").exists():
             return False, f'Must be authorized in {style.name} to authorize other participants.'
 
     # Rule 17: Junior and Senior marshals must be current members.
@@ -351,9 +382,9 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         if not membership_is_current(existing_fighter.user):
             return False, 'Must be a current member to be authorized as a marshal.'
 
-    # Rule 18: You cannot renew a revoked authorization.
-    if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name='Revoked').exists():
-        return False, 'Cannot renew a revoked authorization.'
+    # Rule 18: You cannot authorize while an active sanction covers the style or discipline.
+    if active_sanction_for_style(existing_fighter, style):
+        return False, 'Cannot issue an authorization while a sanction is active for this style or discipline.'
 
     # Rule 19: Cannot duplicate/renew a pending authorization.
     if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval', 'Needs Concurrence']).exists():
@@ -366,7 +397,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
             return False, 'Cannot make someone a junior marshal if they are already a senior marshal.'
 
         # Do they already have an active junior marshal?
-        if not all_authorizations.filter(style__name='Junior Marshal', style__discipline__name=style.discipline.name, status__name='Active').exists():
+        if not active_authorizations.filter(style__name='Junior Marshal', style__discipline__name=style.discipline.name).exists():
             # We now know this is a new junior marshal. They cannot get a new junior marshal if there is a pending senior marshal.
             if all_authorizations.filter(style__name='Senior Marshal', style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
                 return False, 'Cannot have a new junior marshal if a senior marshal is pending.'
@@ -441,11 +472,9 @@ def is_authorized_in_discipline(user: User, discipline) -> bool:
     if not user or not hasattr(user, 'person'):
         return False
     discipline_name = discipline.name if hasattr(discipline, 'name') else discipline
-    return Authorization.objects.with_effective_expiration().filter(
+    return Authorization.objects.effectively_active().filter(
         person__user=user,
         style__discipline__name=discipline_name,
-        effective_expiration_date__gte=date.today(),
-        status__name='Active',
     ).exists()
 
 def authorization_requires_concurrence(person: Person, style: WeaponStyle, today: Optional[date] = None) -> bool:
@@ -454,10 +483,11 @@ def authorization_requires_concurrence(person: Person, style: WeaponStyle, today
     if style.name in ['Junior Marshal', 'Senior Marshal']:
         return False
     cutoff = today - relativedelta(years=1)
-    max_effective = Authorization.objects.with_effective_expiration().filter(
+    max_effective = Authorization.objects.with_effective_expiration().with_sanction_flag(today=today).filter(
         person=person,
         style__discipline=style.discipline,
         status__name='Active',
+        has_active_sanction=False,
     ).aggregate(Max('effective_expiration_date'))['effective_expiration_date__max']
     if not max_effective:
         return True
@@ -496,6 +526,179 @@ def _log_unresolved_authorization_region(action: str, authorization: Authorizati
         getattr(parent_region, 'name', None),
     )
 
+
+def _active_note_offices(user: Optional[User], today: Optional[date] = None):
+    if today is None:
+        today = date.today()
+    if not user or not getattr(user, 'is_authenticated', False) or not hasattr(user, 'person'):
+        return []
+
+    offices = []
+    query = BranchMarshal.objects.filter(
+        person=user.person,
+        end_date__gte=today,
+    ).select_related('branch', 'discipline', 'person__user')
+    for office in query:
+        effective_expiration = marshal_office_effective_expiration(office, today=today)
+        if effective_expiration and effective_expiration >= today:
+            offices.append(office)
+    return offices
+
+
+def _format_authorization_note_office(office: BranchMarshal) -> str:
+    branch = getattr(office, 'branch', None)
+    discipline = getattr(office, 'discipline', None)
+    if not branch or not discipline:
+        return ''
+    discipline_label = discipline.name
+    if discipline_label.endswith(' Combat'):
+        discipline_label = discipline_label[:-7]
+    if discipline.name == 'Authorization Officer' and branch.name == 'An Tir':
+        return 'Kingdom Authorization Officer'
+    if discipline.name == 'Earl Marshal' and branch.name == 'An Tir':
+        return 'Kingdom Earl Marshal'
+    if branch.name == 'An Tir':
+        return f'Kingdom {discipline_label} Marshal'
+    if branch.is_region():
+        return f'Regional {discipline_label} Marshal'
+    return f'{branch.name} {discipline_label} Marshal'
+
+
+def _authorization_note_office_score(
+    office: BranchMarshal,
+    *,
+    authorization: Authorization,
+    action: str,
+    region_name: Optional[str],
+) -> int:
+    branch = getattr(office, 'branch', None)
+    discipline = getattr(office, 'discipline', None)
+    authorization_discipline = getattr(getattr(getattr(authorization, 'style', None), 'discipline', None), 'name', None)
+    status_name = getattr(getattr(authorization, 'status', None), 'name', '')
+
+    if not branch or not discipline or not authorization_discipline:
+        return 0
+
+    if discipline.name == authorization_discipline:
+        score = 100
+        if status_name == 'Needs Regional Approval' or action == 'marshal_rejected':
+            if branch.is_region() and branch.name == region_name:
+                score += 60
+            elif branch.name == 'An Tir':
+                score += 50
+            elif branch.region and branch.region.name == region_name:
+                score += 20
+            else:
+                score += 10
+        elif status_name == 'Needs Kingdom Approval' or action in ['sanction_issued', 'sanction_lifted']:
+            if branch.name == 'An Tir':
+                score += 60
+            elif branch.is_region():
+                score += 20
+            else:
+                score += 10
+        else:
+            if branch.name == 'An Tir':
+                score += 40
+            elif branch.is_region():
+                score += 30
+            else:
+                score += 20
+        return score
+
+    if discipline.name == 'Authorization Officer':
+        if status_name == 'Needs Kingdom Approval' or action in ['sanction_issued', 'sanction_lifted']:
+            return 200
+        return 0
+
+    if discipline.name == 'Earl Marshal':
+        if status_name == 'Needs Regional Approval' or action in ['marshal_rejected', 'sanction_issued', 'sanction_lifted']:
+            return 150 if branch.name == 'An Tir' else 140
+        if action in ['marshal_proposed', 'marshal_concurred', 'marshal_approved']:
+            return 80 if branch.name == 'An Tir' else 70
+        return 0
+
+    return 0
+
+
+def authorization_note_office_label(
+    user: Optional[User],
+    authorization: Authorization,
+    action: str,
+    *,
+    today: Optional[date] = None,
+) -> str:
+    if today is None:
+        today = date.today()
+
+    active_offices = _active_note_offices(user, today=today)
+    if len(active_offices) > 1:
+        logger.error(
+            'User has multiple active marshal offices while creating authorization note: '
+            'user_id=%s authorization_id=%s action=%s office_ids=%s',
+            getattr(user, 'id', None),
+            getattr(authorization, 'id', None),
+            action,
+            [office.id for office in active_offices],
+        )
+
+    region_name = _authorization_region_name(authorization)
+    scored_offices = [
+        (
+            _authorization_note_office_score(
+                office,
+                authorization=authorization,
+                action=action,
+                region_name=region_name,
+            ),
+            office,
+        )
+        for office in active_offices
+    ]
+    relevant_offices = [(score, office) for score, office in scored_offices if score > 0]
+    if relevant_offices:
+        relevant_offices.sort(
+            key=lambda item: (
+                item[0],
+                1 if item[1].branch and item[1].branch.name == 'An Tir' else 0,
+                getattr(item[1], 'id', 0),
+            ),
+            reverse=True,
+        )
+        top_score = relevant_offices[0][0]
+        top_offices = [office for score, office in relevant_offices if score == top_score]
+        if len(top_offices) > 1:
+            logger.error(
+                'Multiple equally relevant marshal offices while creating authorization note: '
+                'user_id=%s authorization_id=%s action=%s office_ids=%s',
+                getattr(user, 'id', None),
+                getattr(authorization, 'id', None),
+                action,
+                [office.id for office in top_offices],
+            )
+        return _format_authorization_note_office(top_offices[0])
+
+    discipline_name = getattr(getattr(getattr(authorization, 'style', None), 'discipline', None), 'name', None)
+    if discipline_name and is_senior_marshal(user, discipline_name):
+        return 'Senior Marshal'
+    return ''
+
+
+def create_authorization_note(
+    *,
+    authorization: Authorization,
+    created_by: Optional[User],
+    action: str,
+    note: str,
+) -> AuthorizationNote:
+    return AuthorizationNote.objects.create(
+        authorization=authorization,
+        created_by=created_by,
+        action=action,
+        office=authorization_note_office_label(created_by, authorization, action),
+        note=note,
+    )
+
 def approve_authorization(request):
     """Add a concurance to a pending marshal authorization."""
     def _display_name_for_user(user: User) -> str:
@@ -528,7 +731,7 @@ def approve_authorization(request):
     def record_note(authorization, action, note):
         if not requires_note:
             return
-        AuthorizationNote.objects.create(
+        create_authorization_note(
             authorization=authorization,
             created_by=marshal,
             action=action,
@@ -905,11 +1108,12 @@ def appoint_branch_marshal(request):
             return False, 'Must be a senior marshal to be a regional marshal.'
 
     # This captures whether the user is a Junior or Senior marshal in the discipline.
-    marshal_status = Authorization.objects.with_effective_expiration().filter(
+    marshal_status = Authorization.objects.with_effective_expiration().with_sanction_flag().filter(
         person=person,
         style__discipline=discipline,
         effective_expiration_date__gte=date.today(),
-        status__name = 'Active',
+        status__name='Active',
+        has_active_sanction=False,
         style__name__in=['Senior Marshal', 'Junior Marshal']
     ).exists()
 

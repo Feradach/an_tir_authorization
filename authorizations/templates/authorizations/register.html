@@ -35,17 +35,25 @@
         </div>
     </div>
 
-    <form method="post" id="register_form">
+    <form method="post" id="register_form" novalidate>
         {% csrf_token %}
         <div style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;" aria-hidden="true">
             {{ person_form.honeypot.label_tag }}
             {{ person_form.honeypot }}
         </div>
-        {% if person_form.non_field_errors %}
+        {% if person_form.errors %}
             <div class="alert alert-danger" role="alert">
-                {% for error in person_form.non_field_errors %}
-                    <div>{{ error }}</div>
-                {% endfor %}
+                <strong>Please correct the following errors:</strong>
+                <ul class="mb-0">
+                    {% for error in person_form.non_field_errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                    {% for field in person_form %}
+                        {% for error in field.errors %}
+                            <li>{{ field.label }}: {{ error }}</li>
+                        {% endfor %}
+                    {% endfor %}
+                </ul>
             </div>
         {% endif %}
         {% for field in person_form %}

@@ -1,10 +1,11 @@
 from datetime import date
 
+from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
-from django.db.models import Case, When, F
+from django.db.models import Case, When, F, Exists, OuterRef, Q
 from django.db.models.functions import Coalesce, Least
 
 BRANCH_TYPE_CHOICES = [
@@ -84,11 +85,18 @@ class User(AbstractUser):
             self.membership = None
             self.membership_expiration = None
 
-        # If a membership expiration is present, ensure waiver_expiration is at
-        # least as long. This treats current membership as an acceptable waiver.
-        if self.membership_expiration:
-            if not self.waiver_expiration or self.waiver_expiration < self.membership_expiration:
-                self.waiver_expiration = self.membership_expiration
+        # Only treat membership as waiver coverage if the current roster marks
+        # this membership row as having a Society waiver on file.
+        if self.membership and self.membership_expiration:
+            testing_enabled = getattr(settings, 'AUTHZ_TEST_FEATURES', False)
+            has_roster_waiver = testing_enabled or MembershipRosterEntry.objects.filter(
+                membership_number=self.membership,
+                membership_expiration=self.membership_expiration,
+                has_society_waiver=True,
+            ).exists()
+            if has_roster_waiver:
+                if not self.waiver_expiration or self.waiver_expiration < self.membership_expiration:
+                    self.waiver_expiration = self.membership_expiration
 
         super().save(*args, **kwargs)
 
@@ -116,6 +124,41 @@ class AuthorizationPortalSetting(models.Model):
     class Meta:
         verbose_name = 'authorization portal setting'
         verbose_name_plural = 'authorization portal settings'
+
+
+class MembershipRosterImport(models.Model):
+    """Metadata for the latest imported Society membership roster."""
+    source_filename = models.CharField(max_length=255)
+    imported_at = models.DateTimeField(auto_now=True)
+    imported_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='membership_roster_imports',
+    )
+    row_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = 'membership roster import'
+        verbose_name_plural = 'membership roster imports'
+
+
+class MembershipRosterEntry(models.Model):
+    """Current Society membership roster row used for account validation."""
+    membership_number = models.CharField(max_length=20, unique=True, db_index=True)
+    first_name = models.CharField(max_length=255)
+    last_name = models.CharField(max_length=255)
+    membership_expiration = models.DateField(db_index=True)
+    has_society_waiver = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'membership roster entry'
+        verbose_name_plural = 'membership roster entries'
+        indexes = [
+            models.Index(fields=['membership_number', 'membership_expiration']),
+        ]
 
 class BranchManager(models.Manager):
     def regions(self):
@@ -279,6 +322,29 @@ class AuthorizationQuerySet(models.QuerySet):
         )
         return self.annotate(effective_expiration_date=effective_expiration)
 
+    def with_sanction_flag(self, today=None):
+        if today is None:
+            today = date.today()
+        active_sanctions = Sanction.objects.filter(
+            person_id=OuterRef('person_id'),
+            start_date__lte=today,
+            end_date__gte=today,
+            lifted_at__isnull=True,
+        ).filter(
+            Q(style_id=OuterRef('style_id'))
+            | (Q(style__isnull=True) & Q(discipline_id=OuterRef('style__discipline_id')))
+        )
+        return self.annotate(has_active_sanction=Exists(active_sanctions))
+
+    def effectively_active(self, today=None):
+        if today is None:
+            today = date.today()
+        return self.with_effective_expiration().with_sanction_flag(today=today).filter(
+            status__name='Active',
+            effective_expiration_date__gte=today,
+            has_active_sanction=False,
+        )
+
 class Person(models.Model):
     """This is the public information about a person. It is attached to the user and the authorization."""
     user = models.OneToOneField(User, on_delete=models.CASCADE, primary_key=True, db_index=True)
@@ -381,6 +447,63 @@ class Authorization(models.Model):
         ]
 
 
+class Sanction(models.Model):
+    """Temporary sanction overlay applied to a discipline or a single style."""
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='sanctions', db_index=True)
+    discipline = models.ForeignKey(Discipline, on_delete=models.CASCADE, db_index=True)
+    style = models.ForeignKey(WeaponStyle, on_delete=models.CASCADE, null=True, blank=True, db_index=True)
+    start_date = models.DateField(db_index=True)
+    end_date = models.DateField(db_index=True)
+    issue_note = models.TextField()
+    issued_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sanctions_issued',
+    )
+    lifted_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    lift_note = models.TextField(blank=True, default='')
+    lifted_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sanctions_lifted',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sanctions_created',
+    )
+    updated_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sanctions_updated',
+    )
+
+    def save(self, *args, **kwargs):
+        if self.style_id:
+            self.discipline = self.style.discipline
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        scope = self.style.name if self.style_id else self.discipline.name
+        return f'{self.person.sca_name}: {scope} sanction through {self.end_date}'
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['person', 'discipline', 'style']),
+            models.Index(fields=['start_date', 'end_date', 'lifted_at']),
+        ]
+
+
 class BranchMarshal(models.Model):
     """These are the branch marshals. All branch marshals will get elevated privileges in the system."""
     branch = models.ForeignKey(Branch, on_delete=models.CASCADE)
@@ -424,6 +547,7 @@ class AuthorizationNote(models.Model):
     authorization = models.ForeignKey(Authorization, on_delete=models.CASCADE, related_name='notes')
     created_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, related_name='authorization_notes_created')
     action = models.CharField(max_length=50, choices=AUTHORIZATION_NOTE_ACTION_CHOICES)
+    office = models.CharField(max_length=255, blank=True, default='')
     note = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -283,7 +283,10 @@
                     {% endfor %}
                     </ul>
                     </p>
-                    <p><strong>Sanction Imposed:</strong><span class="past-expiration"> {{ data.earliest_expiration }}</span></p>
+                    <p><strong>Sanction Imposed:</strong><span class="past-expiration"> {{ data.start_date }}</span></p>
+                    {% if data.latest_sanction_end_date %}
+                    <p><strong>Sanction Ends:</strong><span class="future-expiration"> {{ data.latest_sanction_end_date }}</span></p>
+                    {% endif %}
                 </div>
             </div>
         {% endfor %}
@@ -456,6 +459,7 @@
                 <thead>
                     <tr>
                         <th>Submitted By</th>
+                        <th>Office</th>
                         <th>Discipline</th>
                         <th>Style</th>
                         <th>Type</th>
@@ -473,6 +477,7 @@
                                     Unknown
                                 {% endif %}
                             </td>
+                            <td>{{ note.office|default:"" }}</td>
                             <td>{{ note.authorization.style.discipline.name }}</td>
                             <td>{{ note.authorization.style.name }}</td>
                             <td>{{ note.get_action_display }}</td>

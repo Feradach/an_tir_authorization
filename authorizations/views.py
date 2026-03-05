@@ -23,8 +23,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note
 from itertools import groupby
 from collections import defaultdict
 from operator import attrgetter
@@ -142,6 +142,123 @@ def _resolve_submit_as_user(request, field_name='submit_as_user_id'):
     return submit_as, None
 
 
+MEMBERSHIP_INVALID_MESSAGE = (
+    'Invalid membership number or expiration date. '
+    'If you believe this is an error, please contact the Kingdom Authorization Officer.'
+)
+
+
+def _normalize_membership_name(value: str) -> str:
+    return re.sub(r'\s+', ' ', (value or '').strip()).casefold()
+
+
+def _membership_matches_current_roster(membership: str, first_name: str, last_name: str, membership_expiration: date) -> bool:
+    try:
+        roster_entry = MembershipRosterEntry.objects.get(membership_number=membership)
+    except MembershipRosterEntry.DoesNotExist:
+        return False
+
+    return (
+        _normalize_membership_name(roster_entry.first_name) == _normalize_membership_name(first_name)
+        and _normalize_membership_name(roster_entry.last_name) == _normalize_membership_name(last_name)
+        and roster_entry.membership_expiration == membership_expiration
+    )
+
+
+def _parse_membership_expiration(value: str, row_number: int) -> date:
+    if not value:
+        raise ValueError(f'Row {row_number}: Membership expiration date is required.')
+    raw = value.strip()
+    for fmt in ('%m/%d/%Y', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f'Row {row_number}: Invalid membership expiration date "{raw}".')
+
+
+def _csv_value(row: dict, row_number: int, field_names: list[str], *, required: bool = True, digits_only: bool = False) -> str:
+    value = ''
+    for field_name in field_names:
+        if field_name in row:
+            value = (row.get(field_name) or '').strip()
+            break
+    if required and not value:
+        raise ValueError(f'Row {row_number}: Missing required field ({field_names[0]}).')
+    if digits_only and value and not value.isdigit():
+        raise ValueError(f'Row {row_number}: Membership number must contain only digits.')
+    return value
+
+
+def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRosterEntry], int]:
+    decoded = uploaded_file.read().decode('utf-8-sig', errors='replace')
+    reader = csv.DictReader(decoded.splitlines())
+    if not reader.fieldnames:
+        raise ValueError('The uploaded file does not contain a header row.')
+
+    entries = []
+    seen_memberships = set()
+    skipped_rows = 0
+    for row_number, row in enumerate(reader, start=2):
+        membership_number = _csv_value(
+            row,
+            row_number,
+            ['Legacy ID (C)', 'Membership Number', 'Membership #'],
+            required=False,
+            digits_only=False,
+        )
+        first_name = _csv_value(row, row_number, ['First Name'], required=False)
+        last_name = _csv_value(row, row_number, ['Last Name'], required=False)
+        expiration_value = _csv_value(
+            row,
+            row_number,
+            ['Membership Expiration Date', 'Expiration'],
+            required=False,
+        )
+        waiver_value = _csv_value(
+            row,
+            row_number,
+            ['Waiver (C)', 'Waiver'],
+            required=False,
+        )
+        has_society_waiver = waiver_value.strip().casefold() == 'yes'
+
+        if not membership_number or not first_name or not last_name or not expiration_value:
+            skipped_rows += 1
+            continue
+        if not membership_number.isdigit():
+            skipped_rows += 1
+            continue
+        try:
+            membership_expiration = _parse_membership_expiration(expiration_value, row_number)
+        except ValueError:
+            skipped_rows += 1
+            continue
+
+        if membership_number in seen_memberships:
+            skipped_rows += 1
+            continue
+        seen_memberships.add(membership_number)
+
+        entries.append(
+            MembershipRosterEntry(
+                membership_number=membership_number,
+                first_name=first_name,
+                last_name=last_name,
+                membership_expiration=membership_expiration,
+                has_society_waiver=has_society_waiver,
+            )
+        )
+
+    if not entries:
+        raise ValueError('The uploaded file has no member rows.')
+    return entries, skipped_rows
+
+
+class MembershipRosterUploadForm(forms.Form):
+    membership_csv = forms.FileField(required=True)
+
+
 def _user_can_view_note(user, note) -> bool:
     if not user or not user.is_authenticated:
         return False
@@ -250,6 +367,155 @@ def _can_manage_sanctions_for_discipline(user, discipline) -> bool:
     return is_kingdom_marshal(user, discipline_name)
 
 
+def _active_sanction_issuing_office(user, discipline, today=None):
+    if today is None:
+        today = date.today()
+    if not user or not getattr(user, 'is_authenticated', False) or not hasattr(user, 'person'):
+        return None
+    if not discipline:
+        return None
+
+    target_discipline_names = [discipline.name]
+    if is_kingdom_authorization_officer(user):
+        target_discipline_names = ['Authorization Officer']
+    elif is_kingdom_earl_marshal(user):
+        target_discipline_names = ['Earl Marshal']
+
+    offices = BranchMarshal.objects.filter(
+        person=user.person,
+        branch__name='An Tir',
+        discipline__name__in=target_discipline_names,
+        end_date__gte=today,
+    ).select_related('person__user', 'discipline')
+
+    eligible_offices = []
+    for office in offices:
+        effective_expiration = marshal_office_effective_expiration(office, today=today)
+        if effective_expiration and effective_expiration >= today:
+            eligible_offices.append(office)
+
+    if not eligible_offices:
+        return None
+    return max(eligible_offices, key=lambda office: (office.end_date, office.id))
+
+
+def _normalize_sanction_end_date(user, discipline, sanction_end_date_raw):
+    sanction_end_date_raw = (sanction_end_date_raw or '').strip()
+    if not sanction_end_date_raw:
+        return False, 'Please select a sanction end date.', None, None
+
+    try:
+        sanction_end_date = datetime.strptime(sanction_end_date_raw, '%Y-%m-%d').date()
+    except (TypeError, ValueError):
+        return False, 'Please enter a valid sanction end date.', None, None
+
+    today = date.today()
+    if sanction_end_date < today:
+        return False, 'Sanction end date cannot be in the past.', None, None
+
+    issuing_office = _active_sanction_issuing_office(user, discipline, today=today)
+    if not issuing_office:
+        return False, 'You do not have an active marshal office that can issue this sanction.', None, None
+
+    warning_message = None
+    if sanction_end_date > issuing_office.end_date:
+        sanction_end_date = issuing_office.end_date
+        warning_message = (
+            'Sanction end date cannot exceed the marshal office expiration date. '
+            f'It was set to {sanction_end_date.isoformat()}.'
+        )
+
+    return True, '', sanction_end_date, warning_message
+
+
+def _prepare_sanction_request(user, post_data):
+    sanction_type = (post_data.get('sanction_type') or '').strip()
+    discipline_id = str(post_data.get('discipline_id') or '').strip()
+    style_id = str(post_data.get('style_id') or '').strip()
+    sanction_end_date_raw = post_data.get('sanction_end_date')
+
+    if sanction_type == 'discipline':
+        if not discipline_id:
+            return None, 'Please select a discipline before sanctioning.'
+        discipline = Discipline.objects.filter(id=discipline_id).first()
+        if not discipline:
+            return None, 'Invalid discipline.'
+        if not _can_manage_sanctions_for_discipline(user, discipline):
+            return None, 'You do not have permission to sanction this discipline.'
+        ok, message, sanction_end_date, warning_message = _normalize_sanction_end_date(
+            user,
+            discipline,
+            sanction_end_date_raw,
+        )
+        if not ok:
+            return None, message
+        return {
+            'sanction_type': sanction_type,
+            'discipline': discipline,
+            'style': None,
+            'sanction_end_date': sanction_end_date,
+            'warning_message': warning_message,
+        }, ''
+
+    if sanction_type == 'style':
+        if not style_id:
+            return None, 'Please select a style before sanctioning.'
+        style = WeaponStyle.objects.select_related('discipline').filter(id=style_id).first()
+        if not style:
+            return None, 'Invalid style.'
+        if not _can_manage_sanctions_for_discipline(user, style.discipline):
+            return None, 'You do not have permission to sanction this discipline.'
+        ok, message, sanction_end_date, warning_message = _normalize_sanction_end_date(
+            user,
+            style.discipline,
+            sanction_end_date_raw,
+        )
+        if not ok:
+            return None, message
+        return {
+            'sanction_type': sanction_type,
+            'discipline': style.discipline,
+            'style': style,
+            'sanction_end_date': sanction_end_date,
+            'warning_message': warning_message,
+        }, ''
+
+    return None, 'Invalid sanction type.'
+
+
+def _active_sanctions_queryset(today=None):
+    if today is None:
+        today = date.today()
+    return Sanction.objects.select_related(
+        'person__branch__region',
+        'discipline',
+        'style__discipline',
+        'issued_by__person',
+        'lifted_by__person',
+    ).filter(
+        start_date__lte=today,
+        end_date__gte=today,
+        lifted_at__isnull=True,
+    )
+
+
+def _sanction_note_with_end_date(note, end_date):
+    note = (note or '').strip()
+    suffix = f'Sanction end date: {end_date.isoformat()}'
+    return f'{note}\n\n{suffix}' if note else suffix
+
+
+def _sanction_extension_note(existing_note, note, end_date, updated_by):
+    note = (note or '').strip()
+    actor_name = getattr(getattr(updated_by, 'person', None), 'sca_name', '') or updated_by.username
+    entry = (
+        f'Extension by {actor_name} on {date.today().isoformat()}: {note}\n'
+        f'Sanction end date: {end_date.isoformat()}'
+    )
+    existing_note = (existing_note or '').strip()
+    return f'{existing_note}\n\n{entry}' if existing_note else entry
+
+
 @login_required
 def validate_authorization_rules(request):
     if request.method != 'POST':
@@ -320,45 +586,29 @@ def validate_sanction_action(request):
         return JsonResponse({'ok': False, 'message': 'You do not have permission to perform this action.'}, status=403)
 
     if action == 'lift_sanction':
-        authorization_id = request.POST.get('authorization_id')
-        if not authorization_id:
-            return JsonResponse({'ok': False, 'message': 'Missing authorization.'}, status=400)
-        authorization = Authorization.objects.select_related('style__discipline').filter(
-            id=authorization_id,
-            status__name='Revoked',
+        sanction_id = request.POST.get('sanction_id')
+        if not sanction_id:
+            return JsonResponse({'ok': False, 'message': 'Missing sanction.'}, status=400)
+        sanction = _active_sanctions_queryset().filter(
+            id=sanction_id,
         ).first()
-        if not authorization:
+        if not sanction:
             return JsonResponse({'ok': False, 'message': 'Could not find the specified sanction to lift.'})
-        if not _can_manage_sanctions_for_discipline(request.user, authorization.style.discipline):
+        if not _can_manage_sanctions_for_discipline(request.user, sanction.discipline):
             return JsonResponse({'ok': False, 'message': 'You do not have permission to manage this sanction.'}, status=403)
         return JsonResponse({'ok': True})
 
-    sanction_type = request.POST.get('sanction_type')
-    discipline_id = request.POST.get('discipline_id')
-    style_id = request.POST.get('style_id')
     person_id = request.POST.get('person_id')
     if not person_id:
         return JsonResponse({'ok': False, 'message': 'Missing person.'}, status=400)
-    if sanction_type == 'discipline':
-        if not discipline_id:
-            return JsonResponse({'ok': False, 'message': 'Please select a discipline before sanctioning.'})
-        discipline = Discipline.objects.filter(id=discipline_id).first()
-        if not discipline:
-            return JsonResponse({'ok': False, 'message': 'Invalid discipline.'}, status=400)
-        if not _can_manage_sanctions_for_discipline(request.user, discipline):
-            return JsonResponse({'ok': False, 'message': 'You do not have permission to sanction this discipline.'}, status=403)
-        return JsonResponse({'ok': True})
-    if sanction_type == 'style':
-        if not style_id:
-            return JsonResponse({'ok': False, 'message': 'Please select a style before sanctioning.'})
-        style = WeaponStyle.objects.select_related('discipline').filter(id=style_id).first()
-        if not style:
-            return JsonResponse({'ok': False, 'message': 'Invalid style.'}, status=400)
-        if not _can_manage_sanctions_for_discipline(request.user, style.discipline):
-            return JsonResponse({'ok': False, 'message': 'You do not have permission to sanction this discipline.'}, status=403)
-        return JsonResponse({'ok': True})
-
-    return JsonResponse({'ok': False, 'message': 'Invalid sanction type.'}, status=400)
+    sanction_request, message = _prepare_sanction_request(request.user, request.POST)
+    if not sanction_request:
+        status_code = 403 if message == 'You do not have permission to sanction this discipline.' else 400
+        return JsonResponse({'ok': False, 'message': message}, status=status_code)
+    payload = {'ok': True}
+    if sanction_request['warning_message']:
+        payload['warning'] = sanction_request['warning_message']
+    return JsonResponse(payload)
 
 logger = logging.getLogger(__name__)
 FIGHTER_CARD_WATERMARK = ''
@@ -715,6 +965,7 @@ def index(request):
     pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
 
     base_context = {
+        'welcome_name': person.sca_name,
         'senior_marshal': senior_marshal,
         'branch_marshal': branch_marshal,
         'regional_marshal': regional_marshal,
@@ -727,6 +978,7 @@ def index(request):
         'all_people_people': all_people_qs,
         'authorization_officer_sign_off_required': sign_off_required,
         'can_set_authorization_officer_sign_off': auth_officer,
+        'membership_roster_import': MembershipRosterImport.objects.first() if auth_officer else None,
         'pending_authorization_action': pending_authorization_action,
     }
 
@@ -879,6 +1131,7 @@ def register(request):
             return redirect('fighter', person_id=user.id)
 
         # invalid form
+        messages.error(request, 'Please correct the errors below.')
         for field, errors in person_form.errors.items():
             for error in errors:
                 if field == '__all__':
@@ -1436,7 +1689,10 @@ def search(request):
 
     # First, get all authorizations that match the filter.
     # We use this as a base for both views.
-    matching_authorizations = Authorization.objects.with_effective_expiration().filter(dynamic_filter).exclude(person__user_id=11968)
+    matching_authorizations = Authorization.objects.with_effective_expiration().with_sanction_flag().filter(
+        dynamic_filter,
+        has_active_sanction=False,
+    ).exclude(person__user_id=11968)
     download_format = (request.GET.get('download') or '').strip().lower()
 
     if view_mode == 'card':
@@ -1795,11 +2051,11 @@ def fighter(request, person_id):
                 messages.success(request, 'Concurrence recorded. Authorization approved.')
 
     # Get the lists of authorizations
-    authorization_list = Authorization.objects.with_effective_expiration().select_related(
+    authorization_list = Authorization.objects.effectively_active().select_related(
         'person__branch__region',
         'style__discipline',
         'concurring_fighter',
-    ).filter(person_id=person_id, status__name='Active', effective_expiration_date__gte=date.today()).order_by('style__discipline__name', 'effective_expiration_date', 'style__name')
+    ).filter(person_id=person_id).order_by('style__discipline__name', 'effective_expiration_date', 'style__name')
 
     pending_authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
@@ -1832,11 +2088,8 @@ def fighter(request, person_id):
                 if _user_can_view_note(request.user, note):
                     visible_notes.append(note)
 
-    sanctions_list = Authorization.objects.with_effective_expiration().select_related(
-        'person__branch__region',
-        'style__discipline',
-    ).filter(person_id=person_id, status__name='Revoked').order_by(
-        'style__discipline__name', 'effective_expiration_date', 'style__name'
+    sanctions_list = _active_sanctions_queryset().filter(person_id=person_id).order_by(
+        'discipline__name', 'end_date', 'style__name'
     )
 
     # Group by discipline
@@ -1935,21 +2188,24 @@ def fighter(request, person_id):
                 pending_waivers[discipline_name]['styles'].append(style_name)
 
     sanctions = {}
-    for auth in sanctions_list:
-        discipline_name = auth.style.discipline.name
+    for sanction in sanctions_list:
+        discipline_name = sanction.discipline.name
+        style_label = sanction.style.name if sanction.style else f'All {discipline_name} styles'
         if discipline_name not in sanctions:
             sanctions[discipline_name] = {
-                'auth_id': auth.id,
-                'earliest_expiration': auth.effective_expiration,
-                'styles': [auth.style.name],
-                'status': auth.status.name
+                'sanction_id': sanction.id,
+                'start_date': sanction.start_date,
+                'latest_sanction_end_date': sanction.end_date,
+                'styles': [style_label],
             }
         else:
-            if auth.effective_expiration < sanctions[discipline_name]['earliest_expiration']:
-                sanctions[discipline_name]['earliest_expiration'] = auth.effective_expiration
-            style_name = auth.style.name
-            if style_name not in sanctions[discipline_name]['styles']:
-                sanctions[discipline_name]['styles'].append(style_name)
+            if sanction.start_date < sanctions[discipline_name]['start_date']:
+                sanctions[discipline_name]['start_date'] = sanction.start_date
+            current_end_date = sanctions[discipline_name]['latest_sanction_end_date']
+            if sanction.end_date and (current_end_date is None or sanction.end_date > current_end_date):
+                sanctions[discipline_name]['latest_sanction_end_date'] = sanction.end_date
+            if style_label not in sanctions[discipline_name]['styles']:
+                sanctions[discipline_name]['styles'].append(style_label)
 
     if 'pdf' in request.GET:
         template_id = request.GET.get('template_id')
@@ -2097,13 +2353,11 @@ def generate_fighter_card(request, person_id, template_id):
                 ]
 
     # Get core information
-    authorization_list = Authorization.objects.with_effective_expiration().select_related(
+    authorization_list = Authorization.objects.effectively_active().select_related(
         'person__branch',
         'style__discipline',
     ).filter(
         person_id=person_id,
-        effective_expiration_date__gte=date.today(),
-        status__name='Active'
     ).order_by(
         'style__discipline__name',
         'effective_expiration_date', 'style__name')
@@ -2470,7 +2724,7 @@ def add_authorization(request, person_id):
                 return redirect('fighter', person_id=person_id)
 
             def record_note(authorization, action):
-                AuthorizationNote.objects.create(
+                create_authorization_note(
                     authorization=authorization,
                     created_by=authorizing_marshal,
                     action=action,
@@ -2709,7 +2963,6 @@ def user_account(request, user_id):
     """Allows the user, their parent, or the Kingdom Authorization officer to view and edit the user's account."""
     from django.conf import settings
     testing = getattr(settings, 'AUTHZ_TEST_FEATURES')
-    print(testing)
     requestor = request.user
     user = User.objects.get(id=user_id)
     person = user.person
@@ -2867,24 +3120,20 @@ def user_account(request, user_id):
                 if discipline.name != 'Authorization Officer':
                     if branch.type in ['Kingdom', 'Principality', 'Region']:
                         # Regional/kingdom appointment requires Senior Marshal
-                        has_required = Authorization.objects.with_effective_expiration().filter(
+                        has_required = Authorization.objects.effectively_active().filter(
                             person=person,
                             style__name='Senior Marshal',
                             style__discipline=discipline,
-                            status__name='Active',
-                            effective_expiration_date__gte=date.today(),
                         ).exists()
                         if not has_required:
                             messages.error(request, f'You must hold an active Senior Marshal in {discipline.name}.')
                             return redirect('user_account', user_id=user_id)
                     else:
                         # Local branch appointment allows Junior or Senior Marshal
-                        has_required = Authorization.objects.with_effective_expiration().filter(
+                        has_required = Authorization.objects.effectively_active().filter(
                             person=person,
                             style__name__in=['Junior Marshal', 'Senior Marshal'],
                             style__discipline=discipline,
-                            status__name='Active',
-                            effective_expiration_date__gte=date.today(),
                         ).exists()
                         if not has_required:
                             messages.error(request, f'You must hold an active Junior or Senior Marshal in {discipline.name}.')
@@ -2940,8 +3189,24 @@ def user_account(request, user_id):
         if requestor != user and (not hasattr(user, 'person') or user.person.parent_id != requestor.id):
             if not is_kingdom_authorization_officer(requestor):
                 raise PermissionDenied
-        form = CreatePersonForm(request.POST, user_instance=user, request=request)
-        if form.is_valid():
+        allow_membership_mismatch_bypass = (
+            is_kingdom_authorization_officer(requestor)
+            and (request.POST.get('membership_validation_bypass') == 'on')
+        )
+        membership_validation_note = (request.POST.get('membership_validation_note') or '').strip()
+        form = CreatePersonForm(
+            request.POST,
+            user_instance=user,
+            request=request,
+            allow_membership_mismatch_bypass=allow_membership_mismatch_bypass,
+        )
+        form_valid = form.is_valid()
+        if form_valid and form.membership_mismatch_bypass_used and not membership_validation_note:
+            form.add_error(None, 'A bypass note is required when overriding membership validation.')
+            form_valid = False
+        if form_valid:
+            previous_membership = user.membership
+            previous_membership_expiration = user.membership_expiration
             user.email = form.cleaned_data['email']
             user.username = form.cleaned_data['username']
             user.first_name = form.cleaned_data['first_name']
@@ -2969,6 +3234,21 @@ def user_account(request, user_id):
             person.parent = form.cleaned_data.get('parent_id')
             person.save()
 
+            if form.membership_mismatch_bypass_used:
+                UserNote.objects.create(
+                    person=person,
+                    created_by=request.user,
+                    note_type='officer_note',
+                    note=(
+                        'Membership validation bypass applied by Kingdom Authorization Officer.\n'
+                        f'Reason: {membership_validation_note}\n'
+                        f'Previous membership: {previous_membership or "-"}\n'
+                        f'Previous expiration: {previous_membership_expiration or "-"}\n'
+                        f'New membership: {user.membership or "-"}\n'
+                        f'New expiration: {user.membership_expiration or "-"}'
+                    ),
+                )
+
             messages.success(request, 'Your information has been updated successfully.')
             return redirect('index')
         else:
@@ -2994,6 +3274,8 @@ def user_account(request, user_id):
     elif user.membership_expiration:
         max_expiration = user.membership_expiration
 
+    membership_roster_import = MembershipRosterImport.objects.first()
+
     context = {
         'person': person,
         'user': user,
@@ -3011,6 +3293,7 @@ def user_account(request, user_id):
         'branch_choices': Branch.objects.exclude(type='Other').order_by('name'),
         'discipline_choices': Discipline.objects.order_by('name'),
         'testing': testing,
+        'membership_roster_import': membership_roster_import,
     }
 
     return render(request, 'authorizations/user_account.html', context)
@@ -3045,13 +3328,55 @@ def reject_authorization(request, authorization):
     authorization.status = rejected_status
     authorization.save()
     if requires_note:
-        AuthorizationNote.objects.create(
+        create_authorization_note(
             authorization=authorization,
             created_by=request.user,
             action='marshal_rejected',
             note=action_note,
         )
     return True, 'Authorization rejected.'
+
+
+@login_required
+def upload_membership_roster(request):
+    if not is_kingdom_authorization_officer(request.user):
+        raise PermissionDenied
+    if request.method != 'POST':
+        return redirect('index')
+
+    next_url = request.POST.get('next') or reverse('index')
+    form = MembershipRosterUploadForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, 'Please choose a CSV file to upload.')
+        return redirect(next_url)
+
+    uploaded_file = form.cleaned_data['membership_csv']
+    try:
+        rows, skipped_rows = _load_membership_rows_from_upload(uploaded_file)
+    except ValueError as exc:
+        messages.error(request, f'Roster upload failed: {exc}')
+        return redirect(next_url)
+
+    with transaction.atomic():
+        MembershipRosterEntry.objects.all().delete()
+        MembershipRosterEntry.objects.bulk_create(rows, batch_size=1000)
+        MembershipRosterImport.objects.update_or_create(
+            pk=1,
+            defaults={
+                'source_filename': uploaded_file.name,
+                'imported_by': request.user,
+                'row_count': len(rows),
+            },
+        )
+
+    messages.success(request, f'Membership roster updated successfully ({len(rows)} rows).')
+    if skipped_rows:
+        messages.warning(
+            request,
+            f'{skipped_rows} row(s) were skipped because required membership fields were missing or invalid.',
+        )
+    return redirect(next_url)
+
 
 @login_required
 def manage_sanctions(request):
@@ -3075,61 +3400,118 @@ def manage_sanctions(request):
                 request.session.modified = True
             messages.info(request, 'Pending sanction action cleared.')
             return redirect(return_url or 'manage_sanctions')
+        if request.POST.get('action') == 'clear_pending_sanction_extend':
+            pending_key = 'pending_sanction_extend'
+            if pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+            messages.info(request, 'Pending sanction action cleared.')
+            return redirect(return_url or 'manage_sanctions')
 
         # We'll use the 'action' to make sure we're lifting a sanction.
         if request.POST.get('action') == 'lift_sanction':
-            authorization_id = request.POST.get('authorization_id')
+            sanction_id = request.POST.get('sanction_id')
             pending_key = 'pending_sanction_lift'
             pending_action = _get_pending_session(request, pending_key)
             is_pending_submit = bool(
                 pending_action
-                and str(pending_action.get('authorization_id')) == str(authorization_id)
+                and str(pending_action.get('sanction_id')) == str(sanction_id)
             )
             action_note = _get_action_note(request)
             if not action_note:
                 if is_pending_submit:
                     messages.error(request, 'A note is required to lift a sanction.')
                     return redirect('manage_sanctions')
-                authorization = Authorization.objects.select_related('style__discipline').filter(
-                    id=authorization_id,
-                    status__name='Revoked',
-                ).first()
-                if not authorization:
+                sanction = _active_sanctions_queryset().filter(id=sanction_id).first()
+                if not sanction:
                     messages.error(request, "Could not find the specified sanction to lift.")
                     return redirect('manage_sanctions')
-                if not _can_manage_sanctions_for_discipline(request.user, authorization.style.discipline):
+                if not _can_manage_sanctions_for_discipline(request.user, sanction.discipline):
                     messages.error(request, 'You do not have permission to manage this sanction.')
                     return redirect('manage_sanctions')
                 request.session[pending_key] = {
-                    'authorization_id': authorization_id,
+                    'sanction_id': sanction_id,
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
                 messages.info(request, 'Eligibility verified. Please add a note to finalize lifting the sanction.')
                 return redirect(return_url or 'manage_sanctions')
             try:
-                authorization = Authorization.objects.select_related('style__discipline').get(
-                    id=authorization_id,
-                    status__name='Revoked',
-                )
-                if not _can_manage_sanctions_for_discipline(request.user, authorization.style.discipline):
+                sanction = _active_sanctions_queryset().get(id=sanction_id)
+                if not _can_manage_sanctions_for_discipline(request.user, sanction.discipline):
                     messages.error(request, 'You do not have permission to manage this sanction.')
                     return redirect('manage_sanctions')
-                # Instead of deleting, it's often better to change the status.
-                # If you truly want to delete, you can keep authorization.delete().
-                # For this example, let's assume lifting a sanction means making it 'Active' again.
-                active_status = AuthorizationStatus.objects.get(name='Active')
-                authorization.status = active_status
-                authorization.save()
-                AuthorizationNote.objects.create(
-                    authorization=authorization,
-                    created_by=request.user,
-                    action='sanction_lifted',
-                    note=action_note,
-                )
-                messages.success(request, f"Sanction for {authorization.person.sca_name} has been lifted.")
-            except Authorization.DoesNotExist:
+                sanction.lifted_at = timezone.now()
+                sanction.lifted_by = request.user
+                sanction.lift_note = action_note
+                sanction.updated_by = request.user
+                sanction.save(update_fields=['lifted_at', 'lifted_by', 'lift_note', 'updated_by', 'updated_at'])
+                messages.success(request, f"Sanction for {sanction.person.sca_name} has been lifted.")
+            except Sanction.DoesNotExist:
                 messages.error(request, "Could not find the specified sanction to lift.")
+            if is_pending_submit and pending_key in request.session:
+                del request.session[pending_key]
+                request.session.modified = True
+        if request.POST.get('action') == 'extend_sanction':
+            sanction_id = request.POST.get('sanction_id')
+            pending_key = 'pending_sanction_extend'
+            pending_action = _get_pending_session(request, pending_key)
+            is_pending_submit = bool(
+                pending_action
+                and str(pending_action.get('sanction_id')) == str(sanction_id)
+            )
+            action_note = _get_action_note(request)
+            sanction_end_date_raw = request.POST.get('sanction_end_date')
+            if not action_note or not (sanction_end_date_raw or '').strip():
+                if is_pending_submit:
+                    if not action_note:
+                        messages.error(request, 'A note is required to extend a sanction.')
+                    else:
+                        messages.error(request, 'Please select a sanction end date.')
+                    return redirect(return_url or 'manage_sanctions')
+                sanction = _active_sanctions_queryset().filter(id=sanction_id).first()
+                if not sanction:
+                    messages.error(request, "Could not find the specified sanction to extend.")
+                    return redirect(return_url or 'manage_sanctions')
+                if not _can_manage_sanctions_for_discipline(request.user, sanction.discipline):
+                    messages.error(request, 'You do not have permission to manage this sanction.')
+                    return redirect(return_url or 'manage_sanctions')
+                request.session[pending_key] = {
+                    'sanction_id': sanction_id,
+                    'sanction_end_date': sanction.end_date.isoformat(),
+                    'created_at': datetime.utcnow().isoformat(),
+                }
+                request.session.modified = True
+                messages.info(request, 'Eligibility verified. Please add a note and end date to finalize extending the sanction.')
+                return redirect(return_url or 'manage_sanctions')
+            try:
+                sanction = _active_sanctions_queryset().get(id=sanction_id)
+                if not _can_manage_sanctions_for_discipline(request.user, sanction.discipline):
+                    messages.error(request, 'You do not have permission to manage this sanction.')
+                    return redirect(return_url or 'manage_sanctions')
+                ok, message, sanction_end_date, warning_message = _normalize_sanction_end_date(
+                    request.user,
+                    sanction.discipline,
+                    sanction_end_date_raw,
+                )
+                if not ok:
+                    messages.error(request, message)
+                    return redirect(return_url or 'manage_sanctions')
+                sanction.end_date = sanction_end_date
+                sanction.issue_note = _sanction_extension_note(
+                    sanction.issue_note,
+                    action_note,
+                    sanction_end_date,
+                    request.user,
+                )
+                sanction.issued_by = request.user
+                sanction.updated_by = request.user
+                sanction.save(update_fields=['end_date', 'issue_note', 'issued_by', 'updated_by', 'updated_at'])
+                messages.success(request, f"Sanction for {sanction.person.sca_name} has been extended.")
+                if warning_message:
+                    messages.warning(request, warning_message)
+            except Sanction.DoesNotExist:
+                messages.error(request, "Could not find the specified sanction to extend.")
             if is_pending_submit and pending_key in request.session:
                 del request.session[pending_key]
                 request.session.modified = True
@@ -3140,15 +3522,15 @@ def manage_sanctions(request):
     # --- Display Logic (for GET requests) ---
 
     # Get dropdown options for the search form
-    revoked_auths = Authorization.objects.filter(status__name='Revoked')
+    active_sanctions = _active_sanctions_queryset()
     if not sanctions_supervisor:
         if not allowed_discipline_ids:
-            revoked_auths = revoked_auths.none()
+            active_sanctions = active_sanctions.none()
         else:
-            revoked_auths = revoked_auths.filter(style__discipline_id__in=allowed_discipline_ids)
-    sca_name_options = Person.objects.filter(authorization__in=revoked_auths).distinct().order_by('sca_name').values_list('sca_name', flat=True)
-    discipline_options = Discipline.objects.filter(weaponstyle__authorization__in=revoked_auths).distinct().order_by('name').values_list('name', flat=True)
-    style_options = WeaponStyle.objects.filter(authorization__in=revoked_auths).distinct().order_by('name').values_list('name', flat=True)
+            active_sanctions = active_sanctions.filter(discipline_id__in=allowed_discipline_ids)
+    sca_name_options = Person.objects.filter(sanctions__in=active_sanctions).distinct().order_by('sca_name').values_list('sca_name', flat=True)
+    discipline_options = Discipline.objects.filter(sanction__in=active_sanctions).distinct().order_by('name').values_list('name', flat=True)
+    style_options = WeaponStyle.objects.filter(sanction__in=active_sanctions, sanction__style__isnull=False).distinct().order_by('name').values_list('name', flat=True)
 
     # Check if the user is requesting the search form page
     if request.GET.get('goal') == 'search':
@@ -3161,45 +3543,39 @@ def manage_sanctions(request):
 
     # --- If not the search goal, proceed with showing results ---
     
-    # Build the dynamic filter
-    try:
-        revoked_status = AuthorizationStatus.objects.get(name='Revoked')
-        dynamic_filter = Q(status=revoked_status)
-    except AuthorizationStatus.DoesNotExist:
-        return render(request, 'authorizations/error.html', {'message': 'System error: "Revoked" status not found.'})
-
+    dynamic_filter = Q()
     if sca_name := request.GET.get('sca_name'):
         dynamic_filter &= Q(person__sca_name=sca_name)
     if discipline := request.GET.get('discipline'):
-        dynamic_filter &= Q(style__discipline__name=discipline)
+        dynamic_filter &= Q(discipline__name=discipline)
     if style := request.GET.get('style'):
         dynamic_filter &= Q(style__name=style)
 
-    matching_authorizations = Authorization.objects.filter(dynamic_filter).exclude(person__user_id=11968)
+    matching_sanctions = active_sanctions.filter(dynamic_filter).exclude(person__user_id=11968)
     if not sanctions_supervisor:
         if not allowed_discipline_ids:
-            matching_authorizations = matching_authorizations.none()
+            matching_sanctions = matching_sanctions.none()
         else:
-            matching_authorizations = matching_authorizations.filter(style__discipline_id__in=allowed_discipline_ids)
+            matching_sanctions = matching_sanctions.filter(discipline_id__in=allowed_discipline_ids)
     view_mode = request.GET.get('view', 'table')
     page_obj = None
 
     if view_mode == 'card':
         # CARD VIEW: Paginate by Person
-        person_ids = matching_authorizations.values_list('person_id', flat=True).distinct()
-        authorizations_prefetch = Prefetch(
-            'authorization_set',
-            queryset=matching_authorizations.select_related('style__discipline').order_by('style__discipline__name'),
-            to_attr='revoked_authorizations'
+        person_ids = matching_sanctions.values_list('person_id', flat=True).distinct()
+        sanctions_prefetch = Prefetch(
+            'sanctions',
+            queryset=matching_sanctions.order_by('discipline__name', 'style__name', 'end_date'),
+            to_attr='active_sanctions'
         )
-        people_list = Person.objects.filter(user_id__in=person_ids).prefetch_related(authorizations_prefetch).order_by('sca_name')
+        people_list = Person.objects.filter(user_id__in=person_ids).prefetch_related(sanctions_prefetch).order_by('sca_name')
         
         paginator = Paginator(people_list, 10) # Fewer items per page for cards
         page_obj = paginator.get_page(request.GET.get('page', 1))
 
     else: # 'table' view is the default
         # TABLE VIEW: Paginate by Sanction
-        sanctions_list = matching_authorizations.select_related('person', 'style__discipline').order_by('person__sca_name')
+        sanctions_list = matching_sanctions.order_by('person__sca_name', 'discipline__name', 'style__name')
         
         paginator = Paginator(sanctions_list, 25)
         page_obj = paginator.get_page(request.GET.get('page', 1))
@@ -3208,6 +3584,8 @@ def manage_sanctions(request):
         'page_obj': page_obj,
         'view_mode': view_mode,
         'pending_sanction_lift': _get_pending_session(request, 'pending_sanction_lift'),
+        'pending_sanction_extend': _get_pending_session(request, 'pending_sanction_extend'),
+        'today': date.today(),
     }
     return render(request, 'authorizations/manage_sanctions.html', context)
 
@@ -3233,6 +3611,7 @@ def issue_sanctions(request, person_id):
     pending_key = f'pending_sanction_issue_{person_id}'
     pending_sanction_issue = _get_pending_session(request, pending_key)
     pending_style_id = None
+    pending_sanction_end_date = None
     if pending_sanction_issue:
         discipline_id = pending_sanction_issue.get('discipline_id')
         if discipline_id:
@@ -3241,6 +3620,7 @@ def issue_sanctions(request, person_id):
                 discipline = pending_discipline
                 styles = WeaponStyle.objects.filter(discipline=discipline)
         pending_style_id = pending_sanction_issue.get('style_id')
+        pending_sanction_end_date = pending_sanction_issue.get('sanction_end_date')
 
     if request.method == 'POST':
         return_url = request.POST.get('return_url')
@@ -3259,56 +3639,24 @@ def issue_sanctions(request, person_id):
             if is_pending_submit:
                 messages.error(request, 'A note is required to issue a sanction.')
                 return redirect('issue_sanctions', person_id=person_id)
-            sanction_type = request.POST.get('sanction_type')
-            discipline_id = request.POST.get('discipline_id')
-            style_id = request.POST.get('style_id')
-            if sanction_type == 'discipline' and not discipline_id:
-                messages.error(request, 'Please select a discipline before sanctioning.')
-                if return_url:
-                    return redirect(return_url)
-                return redirect('issue_sanctions', person_id=person_id)
-            if sanction_type == 'discipline':
-                selected_discipline = Discipline.objects.filter(id=discipline_id).first()
-                if not selected_discipline:
-                    messages.error(request, 'Invalid discipline')
-                    if return_url:
-                        return redirect(return_url)
-                    return redirect('issue_sanctions', person_id=person_id)
-                if not _can_manage_sanctions_for_discipline(request.user, selected_discipline):
-                    messages.error(request, 'You do not have permission to sanction this discipline.')
-                    if return_url:
-                        return redirect(return_url)
-                    return redirect('issue_sanctions', person_id=person_id)
-            if sanction_type == 'style' and not style_id:
-                messages.error(request, 'Please select a style before sanctioning.')
-                if return_url:
-                    return redirect(return_url)
-                return redirect('issue_sanctions', person_id=person_id)
-            if sanction_type == 'style':
-                selected_style = WeaponStyle.objects.select_related('discipline').filter(id=style_id).first()
-                if not selected_style:
-                    messages.error(request, 'Invalid style')
-                    if return_url:
-                        return redirect(return_url)
-                    return redirect('issue_sanctions', person_id=person_id)
-                if not _can_manage_sanctions_for_discipline(request.user, selected_style.discipline):
-                    messages.error(request, 'You do not have permission to sanction this discipline.')
-                    if return_url:
-                        return redirect(return_url)
-                    return redirect('issue_sanctions', person_id=person_id)
-            if sanction_type not in ['discipline', 'style']:
-                messages.error(request, 'Invalid sanction type')
+            sanction_request, message = _prepare_sanction_request(request.user, request.POST)
+            if not sanction_request:
+                messages.error(request, message)
                 if return_url:
                     return redirect(return_url)
                 return redirect('issue_sanctions', person_id=person_id)
             request.session[pending_key] = {
                 'person_id': person_id,
-                'sanction_type': sanction_type,
-                'discipline_id': discipline_id,
-                'style_id': style_id,
+                'sanction_type': sanction_request['sanction_type'],
+                'discipline_id': sanction_request['discipline'].id if sanction_request['discipline'] else '',
+                'style_id': sanction_request['style'].id if sanction_request['style'] else '',
+                'sanction_end_date': sanction_request['sanction_end_date'].isoformat(),
+                'warning_message': sanction_request['warning_message'] or '',
                 'created_at': datetime.utcnow().isoformat(),
             }
             request.session.modified = True
+            if sanction_request['warning_message']:
+                messages.warning(request, sanction_request['warning_message'])
             messages.info(request, 'Eligibility verified. Please add a note to finalize the sanction.')
             if return_url:
                 return redirect(return_url)
@@ -3316,16 +3664,18 @@ def issue_sanctions(request, person_id):
 
         if is_pending_submit and pending_sanction_issue:
             post_data = request.POST.copy()
-            for field in ['sanction_type', 'discipline_id', 'style_id']:
+            for field in ['sanction_type', 'discipline_id', 'style_id', 'sanction_end_date']:
                 if not post_data.get(field):
                     post_data[field] = pending_sanction_issue.get(field) or ''
             request.POST = post_data
 
-        is_valid, mssg = create_sanction(request, person)
+        is_valid, mssg, warning_message = create_sanction(request, person)
         if not is_valid:
             messages.error(request, mssg)
         else:
             messages.success(request, mssg)
+            if warning_message:
+                messages.warning(request, warning_message)
         if is_pending_submit and pending_key in request.session:
             del request.session[pending_key]
             request.session.modified = True
@@ -3341,89 +3691,81 @@ def issue_sanctions(request, person_id):
         'styles': styles,
         'pending_sanction_issue': pending_sanction_issue,
         'pending_style_id': pending_style_id,
+        'pending_sanction_end_date': pending_sanction_end_date,
+        'today': date.today(),
     })
 
 
 def create_sanction(request, person):
     """Creates sanctions for a person."""
-    sanction_type = request.POST.get('sanction_type')
-    discipline_id = request.POST.get('discipline_id')
-    style_id = request.POST.get('style_id')
     action_note = _get_action_note(request)
     if not action_note:
-        return False, 'A note is required to issue a sanction.'
+        return False, 'A note is required to issue a sanction.', None
+
+    sanction_request, message = _prepare_sanction_request(request.user, request.POST)
+    if not sanction_request:
+        return False, message, None
+
+    sanction_type = sanction_request['sanction_type']
+    sanction_end_date = sanction_request['sanction_end_date']
+    sanction_note = _sanction_note_with_end_date(action_note, sanction_end_date)
 
     if sanction_type == 'discipline':
-        if not discipline_id:
-            return False, 'No discipline provided'
-
-        # Create sanctions for all styles in the discipline
-        discipline = Discipline.objects.filter(id=discipline_id).first()
-        if not discipline:
-            return False, 'Invalid discipline'
-        if not _can_manage_sanctions_for_discipline(request.user, discipline):
-            return False, 'You do not have permission to sanction this discipline.'
-        styles = WeaponStyle.objects.filter(discipline_id=discipline_id)
-        for style in styles:
-            # Check if the authorization already exists.
-            if Authorization.objects.filter(person=person, style=style).exists():
-                # If it does, change the expiration date to the current date and the status to Revoked.
-                authorization = Authorization.objects.get(person=person, style=style)
-                authorization.expiration = date.today()
-                authorization.status = AuthorizationStatus.objects.get(name='Revoked')
-                authorization.save()
-            else:
-                # If it doesn't, create a new authorization.
-                authorization = Authorization.objects.create(
-                    person=person,
-                    style=style,
-                    expiration=date.today(),
-                    status=AuthorizationStatus.objects.get(name='Revoked'),
-                )
-            AuthorizationNote.objects.create(
-                authorization=authorization,
+        discipline = sanction_request['discipline']
+        sanction = Sanction.objects.filter(
+            person=person,
+            discipline=discipline,
+            style__isnull=True,
+            lifted_at__isnull=True,
+        ).first()
+        if sanction:
+            sanction.end_date = sanction_end_date
+            sanction.issue_note = sanction_note
+            sanction.issued_by = request.user
+            sanction.updated_by = request.user
+            sanction.save()
+        else:
+            Sanction.objects.create(
+                person=person,
+                discipline=discipline,
+                start_date=date.today(),
+                end_date=sanction_end_date,
+                issue_note=sanction_note,
+                issued_by=request.user,
                 created_by=request.user,
-                action='sanction_issued',
-                note=action_note,
+                updated_by=request.user,
             )
-
-        return True, f'Sanction issued for discipline {discipline.name}'
+        return True, f'Sanction issued for discipline {discipline.name}', sanction_request['warning_message']
 
     elif sanction_type == 'style':
-        if not style_id:
-            return False, 'No style provided'
-
-        # Create sanction for one discipline
-        style = WeaponStyle.objects.select_related('discipline').filter(id=style_id).first()
-        if not style:
-            return False, 'Invalid style'
-        if not _can_manage_sanctions_for_discipline(request.user, style.discipline):
-            return False, 'You do not have permission to sanction this discipline.'
-        # Check if the authorization already exists.
-        if Authorization.objects.filter(person=person, style=style).exists():
-            # If it does, change the expiration date to the current date and the status to Revoked.
-            authorization = Authorization.objects.get(person=person, style=style)
-            authorization.expiration = date.today()
-            authorization.status = AuthorizationStatus.objects.get(name='Revoked')
-            authorization.save()
+        style = sanction_request['style']
+        sanction = Sanction.objects.filter(
+            person=person,
+            style=style,
+            lifted_at__isnull=True,
+        ).first()
+        if sanction:
+            sanction.end_date = sanction_end_date
+            sanction.issue_note = sanction_note
+            sanction.issued_by = request.user
+            sanction.updated_by = request.user
+            sanction.save()
         else:
-            # If it doesn't, create a new authorization.
-            authorization = Authorization.objects.create(
+            Sanction.objects.create(
                 person=person,
+                discipline=style.discipline,
                 style=style,
-                expiration=date.today(),
-                status=AuthorizationStatus.objects.get(name='Revoked'),
+                start_date=date.today(),
+                end_date=sanction_end_date,
+                issue_note=sanction_note,
+                issued_by=request.user,
+                created_by=request.user,
+                updated_by=request.user,
             )
-        AuthorizationNote.objects.create(
-            authorization=authorization,
-            created_by=request.user,
-            action='sanction_issued',
-            note=action_note,
-        )
-        return True, f'Sanction issued for style {style.name}'
+        return True, f'Sanction issued for style {style.name}', sanction_request['warning_message']
 
     else:
-        return False, 'Invalid sanction type'
+        return False, 'Invalid sanction type.', None
 
 
 def _first_non_empty(*values):
@@ -3495,10 +3837,18 @@ def _build_authorization_merge_preview(survivor_person: Person, source_person: P
     for auth in auths:
         auths_by_style[auth.style_id].append(auth)
 
+    active_sanction_keys = set(
+        Sanction.objects.filter(
+            person__in=[survivor_person, source_person],
+            lifted_at__isnull=True,
+            end_date__gte=date.today(),
+        ).values_list('discipline_id', 'style_id')
+    )
+
     preview_rows = []
     for style_id, candidates in auths_by_style.items():
         winner = max(candidates, key=_updated_sort_key)
-        has_revoked = any(c.status and c.status.name == 'Revoked' for c in candidates)
+        style_discipline_id = winner.style.discipline_id if winner.style else None
         preview_rows.append({
             'style_id': style_id,
             'discipline_name': winner.style.discipline.name if winner.style and winner.style.discipline else '',
@@ -3507,7 +3857,10 @@ def _build_authorization_merge_preview(survivor_person: Person, source_person: P
             'winner_user_id': winner.person_id,
             'winner_sca_name': winner.person.sca_name if winner.person else '',
             'winner_status': winner.status.name if winner.status else 'Unknown',
-            'sanction_kept': has_revoked,
+            'sanction_kept': (
+                (style_discipline_id, style_id) in active_sanction_keys
+                or (style_discipline_id, None) in active_sanction_keys
+            ),
             'candidates': sorted(candidates, key=_updated_sort_key, reverse=True),
         })
 
@@ -3625,7 +3978,6 @@ def _execute_account_merge(
     for auth in auths_with_style:
         by_style[auth.style_id].append(auth)
 
-    revoked_status = AuthorizationStatus.objects.filter(name='Revoked').first()
     merged_style_count = 0
     removed_duplicate_authorizations = 0
 
@@ -3636,12 +3988,6 @@ def _execute_account_merge(
         for loser in losers:
             AuthorizationNote.objects.filter(authorization=loser).update(authorization=winner)
 
-        newest_revoked = None
-        if revoked_status:
-            revoked_candidates = [candidate for candidate in candidates if candidate.status_id == revoked_status.id]
-            if revoked_candidates:
-                newest_revoked = max(revoked_candidates, key=_updated_sort_key)
-
         for loser in losers:
             loser.delete()
             removed_duplicate_authorizations += 1
@@ -3651,13 +3997,6 @@ def _execute_account_merge(
             winner.updated_by = request.user
             winner.save()
 
-        if revoked_status and newest_revoked:
-            if winner.status_id != revoked_status.id or winner.expiration != newest_revoked.expiration:
-                winner.status = revoked_status
-                winner.expiration = newest_revoked.expiration
-                winner.updated_by = request.user
-                winner.save()
-
         merged_style_count += 1
 
     for auth in auths_without_style:
@@ -3665,6 +4004,29 @@ def _execute_account_merge(
             auth.person = survivor_person
             auth.updated_by = request.user
             auth.save()
+
+    source_sanctions = list(
+        Sanction.objects.filter(person=source_person).order_by('-updated_at', '-id')
+    )
+    for sanction in source_sanctions:
+        existing = Sanction.objects.filter(
+            person=survivor_person,
+            discipline=sanction.discipline,
+            style=sanction.style,
+            lifted_at=sanction.lifted_at,
+        ).first()
+        if existing and sanction.lifted_at is None:
+            if sanction.end_date > existing.end_date:
+                existing.end_date = sanction.end_date
+                existing.issue_note = sanction.issue_note
+                existing.issued_by = sanction.issued_by
+                existing.updated_by = request.user
+                existing.save()
+            sanction.delete()
+            continue
+        sanction.person = survivor_person
+        sanction.updated_by = request.user
+        sanction.save()
 
     all_offices = list(
         BranchMarshal.objects.filter(person__in=[survivor_person, source_person]).order_by('id')
@@ -4500,6 +4862,9 @@ class CreatePersonForm(forms.Form):
         self.user_instance = kwargs.pop('user_instance', None)
         self.exclude_user_ids = set(kwargs.pop('exclude_user_ids', []))
         self.request = kwargs.pop('request', None)
+        self.allow_membership_mismatch_bypass = bool(kwargs.pop('allow_membership_mismatch_bypass', False))
+        self.membership_fields_changed = False
+        self.membership_mismatch_bypass_used = False
         show_all = kwargs.pop('show_all', False)
         super().__init__(*args, **kwargs)
         qs = Title.objects.filter(name__in=self.ALLOWED_TITLES)
@@ -4585,6 +4950,13 @@ class CreatePersonForm(forms.Form):
         if isinstance(membership, str):
             membership = membership.strip()
             cleaned_data['membership'] = membership or None
+        membership_expiration = cleaned_data.get('membership_expiration')
+        existing_membership = self.user_instance.membership if self.user_instance else None
+        existing_membership_expiration = self.user_instance.membership_expiration if self.user_instance else None
+        self.membership_fields_changed = (
+            membership != existing_membership
+            or membership_expiration != existing_membership_expiration
+        )
         if membership and User.objects.filter(
             membership=membership,
             merged_into__isnull=True,
@@ -4619,6 +4991,20 @@ class CreatePersonForm(forms.Form):
 
         if bool(cleaned_data.get('membership')) != bool(cleaned_data.get('membership_expiration')):
             raise forms.ValidationError('Must have both a membership number and expiration or neither.')
+
+        if membership and membership_expiration and self.membership_fields_changed:
+            testing_enabled = getattr(settings, 'AUTHZ_TEST_FEATURES', False)
+            if not testing_enabled:
+                if not _membership_matches_current_roster(
+                    membership=membership,
+                    first_name=cleaned_data.get('first_name', ''),
+                    last_name=cleaned_data.get('last_name', ''),
+                    membership_expiration=membership_expiration,
+                ):
+                    if self.allow_membership_mismatch_bypass:
+                        self.membership_mismatch_bypass_used = True
+                    else:
+                        raise forms.ValidationError(MEMBERSHIP_INVALID_MESSAGE)
 
         if cleaned_data.get('is_minor') and not cleaned_data.get('birthday'):
             raise forms.ValidationError('A birthday must be provided for minors.')
@@ -4662,10 +5048,9 @@ class CreateAuthorizationForm(forms.Form):
             if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name='Authorization Officer').exists():
                 self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
             else:
-                senior_authorizations = Authorization.objects.with_effective_expiration().filter(
+                senior_authorizations = Authorization.objects.effectively_active().filter(
                     person__user=user,
                     style__name='Senior Marshal',  # Assuming 'Senior Marshal' is the style name
-                    effective_expiration_date__gte=date.today()  # Ensure the authorization is still valid
                 ).values_list('style__discipline', flat=True)
 
                 # Update the discipline queryset with the filtered disciplines

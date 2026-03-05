@@ -7,6 +7,7 @@ from django.conf import settings
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.messages import get_messages
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -24,6 +25,10 @@ from authorizations.models import (
     Person,
     ReportValue,
     ReportingPeriod,
+    Sanction,
+    MembershipRosterEntry,
+    MembershipRosterImport,
+    UserNote,
     User,
     WeaponStyle,
 )
@@ -70,6 +75,15 @@ class ViewTestBase(TestCase):
     def _next_membership(self):
         self._membership_seed += 1
         return str(self._membership_seed)
+
+    def seed_membership_roster(self, membership_number, first_name, last_name, expiration, *, has_society_waiver=False):
+        return MembershipRosterEntry.objects.create(
+            membership_number=membership_number,
+            first_name=first_name,
+            last_name=last_name,
+            membership_expiration=expiration,
+            has_society_waiver=has_society_waiver,
+        )
 
     def make_person(
         self,
@@ -244,6 +258,28 @@ class IndexViewTests(ViewTestBase):
         AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
         response_on = self.client.get(reverse('index'))
         self.assertContains(response_on, '<option value="on" selected>On</option>', html=True)
+
+    def test_index_kao_sees_membership_upload_controls(self):
+        kao_user, kao_person = self.make_person('index_membership_kao_view', 'Index Membership KAO View')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Upload Society Membership CSV')
+        self.assertContains(response, 'name="membership_csv"')
+        self.assertContains(response, 'Last upload:')
+
+    def test_index_non_kao_does_not_see_membership_upload_controls(self):
+        user, _ = self.make_person('index_membership_non_kao', 'Index Membership Non KAO')
+        self.client.login(username=user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Upload Society Membership CSV')
+        self.assertNotContains(response, 'name="membership_csv"')
 
     def test_non_kao_cannot_change_authorization_officer_sign_off_setting(self):
         user, _ = self.make_person('index_setting_non_kao', 'Index Setting Non KAO')
@@ -671,6 +707,12 @@ class RegisterViewTests(ViewTestBase):
     @patch('authorizations.views.send_mail')
     def test_register_post_creates_user_and_person(self, mock_send_mail):
         payload = self.registration_payload(username='register_ok', email='register_ok@example.com')
+        self.seed_membership_roster(
+            payload['membership'],
+            payload['first_name'],
+            payload['last_name'],
+            date.fromisoformat(payload['membership_expiration']),
+        )
 
         response = self.client.post(reverse('register'), payload)
 
@@ -679,6 +721,38 @@ class RegisterViewTests(ViewTestBase):
         self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': created_user.id}))
         self.assertFalse(created_user.is_active)
         self.assertTrue(Person.objects.filter(user=created_user).exists())
+        mock_send_mail.assert_called_once()
+
+    def test_register_rejects_membership_not_found_in_roster(self):
+        payload = self.registration_payload(
+            username='register_membership_not_found',
+            email='register_membership_not_found@example.com',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'Invalid membership number or expiration date. If you believe this is an error, please contact the Kingdom Authorization Officer.',
+        )
+
+    @override_settings(AUTHZ_TEST_FEATURES=True)
+    @patch('authorizations.views.send_mail')
+    def test_register_skips_membership_roster_validation_in_test_mode(self, mock_send_mail):
+        payload = self.registration_payload(
+            username='register_test_mode_skip',
+            email='register_test_mode_skip@example.com',
+        )
+
+        response = self.client.post(reverse('register'), payload)
+
+        created_user = User.objects.get(username='register_test_mode_skip')
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            created_user.waiver_expiration,
+            date.fromisoformat(payload['membership_expiration']),
+        )
         mock_send_mail.assert_called_once()
 
     def test_register_minor_requires_birthday(self):
@@ -708,6 +782,8 @@ class RegisterViewTests(ViewTestBase):
         response = self.client.post(reverse('register'), payload)
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Please correct the errors below.')
+        self.assertContains(response, 'Please correct the following errors:')
         self.assertContains(response, 'Must have both a membership number and expiration or neither.')
 
     def test_register_shows_explicit_state_and_postal_errors(self):
@@ -1167,6 +1243,209 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.owner_user.background_check_expiration, bg_date)
 
+    def test_account_update_skips_roster_check_when_membership_unchanged(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            city='Seattle',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.city, 'Seattle')
+
+    def test_account_update_rejects_changed_membership_not_in_roster(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        new_expiration = date.today() + relativedelta(years=2)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership='1231231231',
+            membership_expiration=new_expiration.isoformat(),
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        messages = self.messages_for(response)
+        self.assertIn(
+            'Invalid membership number or expiration date. If you believe this is an error, please contact the Kingdom Authorization Officer.',
+            messages,
+        )
+        self.assertNotEqual(self.owner_user.membership, '1231231231')
+
+    def test_account_update_accepts_changed_membership_when_roster_matches(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        new_expiration = date.today() + relativedelta(years=2)
+        new_membership = '9239239239'
+        self.seed_membership_roster(new_membership, 'Owner', 'User', new_expiration)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership=new_membership,
+            membership_expiration=new_expiration.isoformat(),
+            first_name='Owner',
+            last_name='User',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.membership, new_membership)
+        self.assertEqual(self.owner_user.membership_expiration, new_expiration)
+
+    def test_account_update_membership_extends_waiver_when_roster_waiver_is_yes(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        self.owner_user.waiver_expiration = None
+        self.owner_user.save(update_fields=['waiver_expiration'])
+        new_expiration = date.today() + relativedelta(years=2)
+        new_membership = '7337337337'
+        self.seed_membership_roster(
+            new_membership,
+            'Owner',
+            'User',
+            new_expiration,
+            has_society_waiver=True,
+        )
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership=new_membership,
+            membership_expiration=new_expiration.isoformat(),
+            first_name='Owner',
+            last_name='User',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.waiver_expiration, new_expiration)
+
+    def test_account_update_membership_does_not_extend_waiver_when_roster_waiver_not_yes(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        self.owner_user.waiver_expiration = None
+        self.owner_user.save(update_fields=['waiver_expiration'])
+        new_expiration = date.today() + relativedelta(years=2)
+        new_membership = '7447447447'
+        self.seed_membership_roster(
+            new_membership,
+            'Owner',
+            'User',
+            new_expiration,
+            has_society_waiver=False,
+        )
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership=new_membership,
+            membership_expiration=new_expiration.isoformat(),
+            first_name='Owner',
+            last_name='User',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(self.owner_user.waiver_expiration)
+
+    @override_settings(AUTHZ_TEST_FEATURES=True)
+    def test_account_update_skips_roster_validation_in_test_mode(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        new_membership = '4242424242'
+        new_expiration = date.today() + relativedelta(years=2)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership=new_membership,
+            membership_expiration=new_expiration.isoformat(),
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.membership, new_membership)
+        self.assertEqual(self.owner_user.membership_expiration, new_expiration)
+        self.assertEqual(self.owner_user.waiver_expiration, new_expiration)
+
+    def test_ao_bypass_requires_note_for_unmatched_membership_change(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership='2232232232',
+            membership_expiration=(date.today() + relativedelta(years=2)).isoformat(),
+            membership_validation_bypass='on',
+            membership_validation_note='',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        messages = self.messages_for(response)
+        self.assertIn('A bypass note is required when overriding membership validation.', messages)
+        self.assertNotEqual(self.owner_user.membership, '2232232232')
+
+    def test_ao_bypass_with_note_saves_and_records_officer_note(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        new_membership = '3233233233'
+        new_expiration = date.today() + relativedelta(years=2)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership=new_membership,
+            membership_expiration=new_expiration.isoformat(),
+            membership_validation_bypass='on',
+            membership_validation_note='Manual verification from Society spreadsheet correction.',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.membership, new_membership)
+        self.assertEqual(self.owner_user.membership_expiration, new_expiration)
+        bypass_note = UserNote.objects.filter(person=self.owner_person, note__icontains='Membership validation bypass applied').first()
+        self.assertIsNotNone(bypass_note)
+
     def test_account_update_surfaces_explicit_state_and_postal_errors(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
         payload = self.account_update_payload(
@@ -1202,6 +1481,101 @@ class UserAccountViewTests(ViewTestBase):
             response,
             'Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).',
         )
+
+    def test_non_ao_cannot_upload_membership_roster(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'members.csv',
+            b'Legacy ID (C),First Name,Last Name,Membership Expiration Date\n12345,Test,User,1/1/2030\n',
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_ao_upload_membership_roster_replaces_rows(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        MembershipRosterEntry.objects.create(
+            membership_number='111111',
+            first_name='Old',
+            last_name='Member',
+            membership_expiration=date(2030, 1, 1),
+        )
+        upload = SimpleUploadedFile(
+            'members.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date\n'
+                '222222,Fresh,Member,2/2/2031\n'
+                '333333,New,Person,3/3/2032\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(MembershipRosterEntry.objects.filter(membership_number='111111').exists())
+        self.assertTrue(MembershipRosterEntry.objects.filter(membership_number='222222').exists())
+        self.assertTrue(MembershipRosterEntry.objects.filter(membership_number='333333').exists())
+        metadata = MembershipRosterImport.objects.get(pk=1)
+        self.assertEqual(metadata.row_count, 2)
+        self.assertEqual(metadata.source_filename, 'members.csv')
+
+    def test_ao_upload_membership_roster_skips_rows_with_blank_membership_number(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'members_with_blank_row.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date\n'
+                '444444,Valid,Member,2/2/2031\n'
+                ',Blank,LegacyId,3/3/2032\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(MembershipRosterEntry.objects.filter(membership_number='444444').exists())
+        self.assertFalse(MembershipRosterEntry.objects.filter(first_name='Blank', last_name='LegacyId').exists())
+        messages = self.messages_for(response)
+        self.assertTrue(any('row(s) were skipped' in message for message in messages))
+
+    def test_ao_upload_membership_roster_parses_waiver_yes_flag(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'members_waiver.csv',
+            (
+                'Legacy ID (C),Waiver (C),First Name,Last Name,Membership Expiration Date\n'
+                '555555,Yes,Waiver,Yes,2/2/2031\n'
+                '666666,,Waiver,No,3/3/2032\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        yes_entry = MembershipRosterEntry.objects.get(membership_number='555555')
+        no_entry = MembershipRosterEntry.objects.get(membership_number='666666')
+        self.assertTrue(yes_entry.has_society_waiver)
+        self.assertFalse(no_entry.has_society_waiver)
 
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_self_set_regional_is_blocked_when_testing_disabled(self):
@@ -2052,21 +2426,16 @@ class SanctionsWorkflowTests(ViewTestBase):
             {
                 'sanction_type': 'style',
                 'style_id': str(self.style_weapon_armored.id),
+                'sanction_end_date': (date.today() + relativedelta(days=30)).isoformat(),
                 'action_note': 'Issued by kingdom armored marshal',
             },
             follow=True,
         )
 
         self.assertEqual(response.status_code, 200)
-        auth = Authorization.objects.get(person=self.target_person, style=self.style_weapon_armored)
-        self.assertEqual(auth.status, self.status_revoked)
-        self.assertTrue(
-            AuthorizationNote.objects.filter(
-                authorization=auth,
-                action='sanction_issued',
-                created_by=self.kingdom_armored_user,
-            ).exists()
-        )
+        sanction = Sanction.objects.get(person=self.target_person, style=self.style_weapon_armored, lifted_at__isnull=True)
+        self.assertEqual(sanction.end_date, date.today() + relativedelta(days=30))
+        self.assertIn('Sanction end date: ', sanction.issue_note)
 
     def test_kingdom_marshal_cannot_issue_sanction_outside_discipline(self):
         self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
@@ -2076,6 +2445,7 @@ class SanctionsWorkflowTests(ViewTestBase):
             {
                 'sanction_type': 'style',
                 'style_id': str(self.style_single_rapier.id),
+                'sanction_end_date': (date.today() + relativedelta(days=30)).isoformat(),
                 'action_note': 'Attempted cross-discipline sanction',
             },
             follow=True,
@@ -2083,10 +2453,10 @@ class SanctionsWorkflowTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(
-            Authorization.objects.filter(
+            Sanction.objects.filter(
                 person=self.target_person,
                 style=self.style_single_rapier,
-                status=self.status_revoked,
+                lifted_at__isnull=True,
             ).exists()
         )
         self.assertIn(
@@ -2102,37 +2472,134 @@ class SanctionsWorkflowTests(ViewTestBase):
             {
                 'sanction_type': 'style',
                 'style_id': str(self.style_weapon_armored.id),
+                'sanction_end_date': (date.today() + relativedelta(days=60)).isoformat(),
                 'action_note': 'Issued at kingdom event',
             },
             follow=True,
         )
 
         self.assertEqual(response.status_code, 200)
-        auth = Authorization.objects.get(person=self.target_person, style=self.style_weapon_armored)
-        self.assertEqual(auth.status, self.status_revoked)
-        self.assertTrue(
-            AuthorizationNote.objects.filter(
-                authorization=auth,
-                action='sanction_issued',
-                created_by=self.ao_user,
+        sanction = Sanction.objects.get(person=self.target_person, style=self.style_weapon_armored, lifted_at__isnull=True)
+        self.assertEqual(sanction.end_date, date.today() + relativedelta(days=60))
+        self.assertIn((date.today() + relativedelta(days=60)).isoformat(), sanction.issue_note)
+
+    def test_issue_sanction_requires_end_date(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}),
+            {
+                'sanction_type': 'style',
+                'style_id': str(self.style_weapon_armored.id),
+                'action_note': 'Missing end date',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Sanction.objects.filter(
+                person=self.target_person,
+                style=self.style_weapon_armored,
+                lifted_at__isnull=True,
             ).exists()
         )
+        self.assertIn('Please select a sanction end date.', self.messages_for(response))
+
+    def test_issue_sanction_rejects_past_end_date(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}),
+            {
+                'sanction_type': 'style',
+                'style_id': str(self.style_weapon_armored.id),
+                'sanction_end_date': (date.today() - relativedelta(days=1)).isoformat(),
+                'action_note': 'Past end date',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Sanction.objects.filter(
+                person=self.target_person,
+                style=self.style_weapon_armored,
+                lifted_at__isnull=True,
+            ).exists()
+        )
+        self.assertIn('Sanction end date cannot be in the past.', self.messages_for(response))
+
+    def test_issue_sanction_caps_end_date_at_office_term_and_warns(self):
+        self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
+        requested_end_date = date.today() + relativedelta(years=2)
+        expected_end_date = date.today() + relativedelta(years=1)
+
+        response = self.client.post(
+            reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}),
+            {
+                'sanction_type': 'style',
+                'style_id': str(self.style_weapon_armored.id),
+                'sanction_end_date': requested_end_date.isoformat(),
+                'action_note': 'Too long',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        sanction = Sanction.objects.get(person=self.target_person, style=self.style_weapon_armored, lifted_at__isnull=True)
+        self.assertEqual(sanction.end_date, expected_end_date)
+        self.assertIn(
+            f'Sanction end date cannot exceed the marshal office expiration date. It was set to {expected_end_date.isoformat()}.',
+            self.messages_for(response),
+        )
+
+    def test_resanctioned_style_overwrites_end_date(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        existing = Sanction.objects.create(
+            person=self.target_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today() - relativedelta(days=10),
+            end_date=date.today() + relativedelta(days=10),
+            issue_note='Original note',
+            issued_by=self.ao_user,
+        )
+
+        new_end_date = date.today() + relativedelta(days=90)
+        response = self.client.post(
+            reverse('issue_sanctions', kwargs={'person_id': self.target_user.id}),
+            {
+                'sanction_type': 'style',
+                'style_id': str(self.style_weapon_armored.id),
+                'sanction_end_date': new_end_date.isoformat(),
+                'action_note': 'Extended sanction',
+            },
+            follow=True,
+        )
+
+        existing.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(existing.end_date, new_end_date)
+        self.assertEqual(existing.start_date, date.today() - relativedelta(days=10))
 
     def test_manage_sanctions_lift_two_step_flow_requires_note(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
-        revoked_auth = Authorization.objects.create(
+        sanction = Sanction.objects.create(
             person=self.target_person,
+            discipline=self.discipline_armored,
             style=self.style_weapon_armored,
-            status=self.status_revoked,
-            expiration=date.today(),
-            marshal=self.ao_person,
+            start_date=date.today(),
+            end_date=date.today() + relativedelta(days=30),
+            issue_note='Existing sanction',
+            issued_by=self.ao_user,
         )
 
         first_response = self.client.post(
             reverse('manage_sanctions'),
             {
                 'action': 'lift_sanction',
-                'authorization_id': str(revoked_auth.id),
+                'sanction_id': str(sanction.id),
             },
             follow=True,
         )
@@ -2147,39 +2614,144 @@ class SanctionsWorkflowTests(ViewTestBase):
             reverse('manage_sanctions'),
             {
                 'action': 'lift_sanction',
-                'authorization_id': str(revoked_auth.id),
+                'sanction_id': str(sanction.id),
                 'action_note': 'Sanction lifted after review',
             },
             follow=True,
         )
 
-        revoked_auth.refresh_from_db()
+        sanction.refresh_from_db()
         self.assertEqual(second_response.status_code, 200)
-        self.assertEqual(revoked_auth.status, self.status_active)
+        self.assertIsNotNone(sanction.lifted_at)
         self.assertNotIn('pending_sanction_lift', self.client.session)
-        self.assertTrue(
-            AuthorizationNote.objects.filter(
-                authorization=revoked_auth,
-                action='sanction_lifted',
-                created_by=self.ao_user,
-            ).exists()
+        self.assertEqual(sanction.lift_note, 'Sanction lifted after review')
+
+    def test_manage_sanctions_extend_two_step_flow_requires_note_and_date(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        sanction = Sanction.objects.create(
+            person=self.target_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today(),
+            end_date=date.today() + relativedelta(days=30),
+            issue_note='Existing sanction',
+            issued_by=self.ao_user,
+        )
+
+        first_response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'extend_sanction',
+                'sanction_id': str(sanction.id),
+            },
+            follow=True,
+        )
+
+        self.assertIn('pending_sanction_extend', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note and end date to finalize extending the sanction.',
+            self.messages_for(first_response),
+        )
+
+        new_end_date = date.today() + relativedelta(days=90)
+        second_response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'extend_sanction',
+                'sanction_id': str(sanction.id),
+                'sanction_end_date': new_end_date.isoformat(),
+                'action_note': 'Extension approved after follow-up review',
+            },
+            follow=True,
+        )
+
+        sanction.refresh_from_db()
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(sanction.end_date, new_end_date)
+        self.assertNotIn('pending_sanction_extend', self.client.session)
+        self.assertIn('Extension approved after follow-up review', sanction.issue_note)
+        self.assertIn(f'Sanction end date: {new_end_date.isoformat()}', sanction.issue_note)
+
+    def test_manage_sanctions_extend_rejects_past_end_date(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        original_end_date = date.today() + relativedelta(days=30)
+        sanction = Sanction.objects.create(
+            person=self.target_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today(),
+            end_date=original_end_date,
+            issue_note='Existing sanction',
+            issued_by=self.ao_user,
+        )
+
+        response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'extend_sanction',
+                'sanction_id': str(sanction.id),
+                'sanction_end_date': (date.today() - relativedelta(days=1)).isoformat(),
+                'action_note': 'Invalid extension attempt',
+            },
+            follow=True,
+        )
+
+        sanction.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(sanction.end_date, original_end_date)
+        self.assertIn('Sanction end date cannot be in the past.', self.messages_for(response))
+
+    def test_manage_sanctions_extend_caps_end_date_at_office_term_and_warns(self):
+        self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
+        original_end_date = date.today() + relativedelta(days=30)
+        sanction = Sanction.objects.create(
+            person=self.target_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today(),
+            end_date=original_end_date,
+            issue_note='Existing sanction',
+            issued_by=self.ao_user,
+        )
+        requested_end_date = date.today() + relativedelta(years=2)
+        expected_end_date = date.today() + relativedelta(years=1)
+
+        response = self.client.post(
+            reverse('manage_sanctions'),
+            {
+                'action': 'extend_sanction',
+                'sanction_id': str(sanction.id),
+                'sanction_end_date': requested_end_date.isoformat(),
+                'action_note': 'Requested long extension',
+            },
+            follow=True,
+        )
+
+        sanction.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(sanction.end_date, expected_end_date)
+        self.assertIn(
+            f'Sanction end date cannot exceed the marshal office expiration date. It was set to {expected_end_date.isoformat()}.',
+            self.messages_for(response),
         )
 
     def test_kingdom_marshal_can_lift_sanction_in_own_discipline(self):
         self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
-        revoked_auth = Authorization.objects.create(
+        sanction = Sanction.objects.create(
             person=self.target_person,
+            discipline=self.discipline_armored,
             style=self.style_weapon_armored,
-            status=self.status_revoked,
-            expiration=date.today(),
-            marshal=self.ao_person,
+            start_date=date.today(),
+            end_date=date.today() + relativedelta(days=30),
+            issue_note='Existing sanction',
+            issued_by=self.ao_user,
         )
 
         first_response = self.client.post(
             reverse('manage_sanctions'),
             {
                 'action': 'lift_sanction',
-                'authorization_id': str(revoked_auth.id),
+                'sanction_id': str(sanction.id),
             },
             follow=True,
         )
@@ -2192,46 +2764,42 @@ class SanctionsWorkflowTests(ViewTestBase):
             reverse('manage_sanctions'),
             {
                 'action': 'lift_sanction',
-                'authorization_id': str(revoked_auth.id),
+                'sanction_id': str(sanction.id),
                 'action_note': 'Lifted by kingdom armored marshal',
             },
             follow=True,
         )
 
-        revoked_auth.refresh_from_db()
+        sanction.refresh_from_db()
         self.assertEqual(second_response.status_code, 200)
-        self.assertEqual(revoked_auth.status, self.status_active)
-        self.assertTrue(
-            AuthorizationNote.objects.filter(
-                authorization=revoked_auth,
-                action='sanction_lifted',
-                created_by=self.kingdom_armored_user,
-            ).exists()
-        )
+        self.assertIsNotNone(sanction.lifted_at)
+        self.assertEqual(sanction.lift_note, 'Lifted by kingdom armored marshal')
 
     def test_kingdom_marshal_cannot_lift_sanction_outside_discipline(self):
         self.client.login(username=self.kingdom_armored_user.username, password='StrongPass!123')
-        revoked_auth = Authorization.objects.create(
+        sanction = Sanction.objects.create(
             person=self.target_person,
+            discipline=self.discipline_rapier,
             style=self.style_single_rapier,
-            status=self.status_revoked,
-            expiration=date.today(),
-            marshal=self.ao_person,
+            start_date=date.today(),
+            end_date=date.today() + relativedelta(days=30),
+            issue_note='Existing rapier sanction',
+            issued_by=self.ao_user,
         )
 
         response = self.client.post(
             reverse('manage_sanctions'),
             {
                 'action': 'lift_sanction',
-                'authorization_id': str(revoked_auth.id),
+                'sanction_id': str(sanction.id),
                 'action_note': 'Attempted out-of-discipline lift',
             },
             follow=True,
         )
 
-        revoked_auth.refresh_from_db()
+        sanction.refresh_from_db()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(revoked_auth.status, self.status_revoked)
+        self.assertIsNone(sanction.lifted_at)
         self.assertIn(
             'You do not have permission to manage this sanction.',
             self.messages_for(response),

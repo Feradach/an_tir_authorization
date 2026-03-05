@@ -1,4 +1,21 @@
 ﻿
+## [0.1.7] - 2026-03-04
+### Added
+- Authorization notes now record the office or marshal status that justified the action when a note is saved, and show that information on the fighter page.
+- Logged-in users now see a personalized welcome message on the Authorization Portal homepage.
+- Sanctions now have their own records with start and end dates, and sanction notes automatically include the selected end date.
+- Kingdom Authorization Officers can now upload the Society membership CSV directly from the account page, replacing the entire membership roster in one step.
+- Kingdom Authorization Officers can now apply a documented membership-validation bypass during account updates when Society data needs manual correction.
+
+### Fixed
+- Note attribution now prefers the currently relevant office for the action, falls back to the acting marshal status when no office applies, and logs data problems if someone incorrectly has multiple active offices.
+- Sanctions now expire based on their end date without permanently overwriting authorization records, and authorization displays and marshal-status checks now treat active sanctions as an effective overlay.
+- Sanction issuance now requires an end date, rejects past dates, caps overly long sanctions to the issuing officer's term end with a warning, updates existing sanctions in the same scope with the newly selected end date, and uses normal page messages instead of pop-up alerts when discipline or style is missing.
+- Sanctions can be extended by issuing a new sanction with a later end date.
+- Membership number updates now verify against the uploaded Society roster by matching number, first name, last name, and expiration date, while test mode skips this validation for fake data.
+- Membership-based waiver auto-extension now only happens when the uploaded Society roster marks that member as having a waiver on file (`Waiver (C) = Yes`).
+
+
 ## [0.1.6] - 2026-02-20
 ### Added
 - Added ability to request a username from the fighter page.

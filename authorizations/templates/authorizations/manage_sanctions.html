@@ -27,24 +27,41 @@
             <div class="card mb-3">
                 <div class="card-body">
                     <h5 class="card-title"><a href="{% url 'fighter' person_id=person.user_id %}">{{ person.sca_name }}</a></h5>
-                    <h6>Revoked Authorizations:</h6>
+                    <h6>Active Sanctions:</h6>
                     <ul class="list-group list-group-flush">
-                        {% for sanction in person.revoked_authorizations %}
+                        {% for sanction in person.active_sanctions %}
                             <li class="list-group-item d-flex justify-content-between align-items-center">
                                 <div>
-                                    <strong>{{ sanction.style.name }}</strong> ({{ sanction.style.discipline.name }})
+                                    <strong>{% if sanction.style %}{{ sanction.style.name }}{% else %}All {{ sanction.discipline.name }} styles{% endif %}</strong> ({{ sanction.discipline.name }})
+                                    <div class="small text-muted">
+                                        {{ sanction.start_date }} to {{ sanction.end_date }}
+                                    </div>
                                 </div>
-                                <form method="post" action="{% url 'manage_sanctions' %}" class="ms-3"{% if pending_sanction_lift and pending_sanction_lift.authorization_id|stringformat:"s" == sanction.id|stringformat:"s" %} data-pending-note="1" data-note-title="Sanction Note" data-clear-form-id="clear_pending_sanction_lift_form"{% endif %}>
-                                    {% csrf_token %}
-                                    <input type="hidden" name="action" value="lift_sanction">
-                                    <input type="hidden" name="authorization_id" value="{{ sanction.id }}">
-                                    <input type="hidden" name="action_note" value="">
-                                    <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
-                                    {% if pending_sanction_lift and pending_sanction_lift.authorization_id|stringformat:"s" == sanction.id|stringformat:"s" %}
-                                        <input type="hidden" name="pending_sanction_lift" value="1">
-                                    {% endif %}
-                                    <button type="submit" class="btn btn-success btn-sm">Lift Sanction</button>
-                                </form>
+                                <div class="ms-3 d-flex gap-2">
+                                    <form method="post" action="{% url 'manage_sanctions' %}"{% if pending_sanction_extend and pending_sanction_extend.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %} data-pending-note="1" data-note-title="Extend Sanction" data-clear-form-id="clear_pending_sanction_extend_form" data-note-date-field="sanction_end_date" data-note-date-label="Sanction End Date" data-note-date-required="1" data-note-date-min="{{ today|date:'Y-m-d' }}" data-note-date-value="{{ pending_sanction_extend.sanction_end_date }}" data-note-date-help="Required. Dates after the issuing officer's term end will be capped automatically."{% endif %}>
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="extend_sanction">
+                                        <input type="hidden" name="sanction_id" value="{{ sanction.id }}">
+                                        <input type="hidden" name="action_note" value="">
+                                        <input type="hidden" name="sanction_end_date" value="{% if pending_sanction_extend and pending_sanction_extend.sanction_id|stringformat:'s' == sanction.id|stringformat:'s' %}{{ pending_sanction_extend.sanction_end_date }}{% endif %}">
+                                        <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+                                        {% if pending_sanction_extend and pending_sanction_extend.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %}
+                                            <input type="hidden" name="pending_sanction_extend" value="1">
+                                        {% endif %}
+                                        <button type="submit" class="btn btn-danger btn-sm">Extend Sanction</button>
+                                    </form>
+                                    <form method="post" action="{% url 'manage_sanctions' %}"{% if pending_sanction_lift and pending_sanction_lift.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %} data-pending-note="1" data-note-title="Sanction Note" data-clear-form-id="clear_pending_sanction_lift_form"{% endif %}>
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="lift_sanction">
+                                        <input type="hidden" name="sanction_id" value="{{ sanction.id }}">
+                                        <input type="hidden" name="action_note" value="">
+                                        <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+                                        {% if pending_sanction_lift and pending_sanction_lift.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %}
+                                            <input type="hidden" name="pending_sanction_lift" value="1">
+                                        {% endif %}
+                                        <button type="submit" class="btn btn-success btn-sm">Lift Sanction</button>
+                                    </form>
+                                </div>
                             </li>
                         {% endfor %}
                     </ul>
@@ -59,31 +76,47 @@
             <table class="table table-striped table-hover">
                 <thead>
                     <tr>
-                        <th>SCA Name</th><th>Discipline</th><th>Weapon Style</th><th>Action</th>
+                        <th>SCA Name</th><th>Discipline</th><th>Scope</th><th>Start</th><th>End</th><th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for sanction in page_obj %}
                     <tr>
                         <td><a href="{% url 'fighter' person_id=sanction.person.user_id %}">{{ sanction.person.sca_name }}</a></td>
-                        <td>{{ sanction.style.discipline.name }}</td>
-                        <td>{{ sanction.style.name }}</td>
+                        <td>{{ sanction.discipline.name }}</td>
+                        <td>{% if sanction.style %}{{ sanction.style.name }}{% else %}All {{ sanction.discipline.name }} styles{% endif %}</td>
+                        <td>{{ sanction.start_date }}</td>
+                        <td>{{ sanction.end_date }}</td>
                         <td>
-                            <form method="post" action="{% url 'manage_sanctions' %}"{% if pending_sanction_lift and pending_sanction_lift.authorization_id|stringformat:"s" == sanction.id|stringformat:"s" %} data-pending-note="1" data-note-title="Sanction Note" data-clear-form-id="clear_pending_sanction_lift_form"{% endif %}>
-                                {% csrf_token %}
-                                <input type="hidden" name="action" value="lift_sanction">
-                                <input type="hidden" name="authorization_id" value="{{ sanction.id }}">
-                                <input type="hidden" name="action_note" value="">
-                                <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
-                                {% if pending_sanction_lift and pending_sanction_lift.authorization_id|stringformat:"s" == sanction.id|stringformat:"s" %}
-                                    <input type="hidden" name="pending_sanction_lift" value="1">
-                                {% endif %}
-                                <button type="submit" class="btn btn-success btn-sm">Lift Sanction</button>
-                            </form>
+                            <div class="d-flex gap-2">
+                                <form method="post" action="{% url 'manage_sanctions' %}"{% if pending_sanction_extend and pending_sanction_extend.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %} data-pending-note="1" data-note-title="Extend Sanction" data-clear-form-id="clear_pending_sanction_extend_form" data-note-date-field="sanction_end_date" data-note-date-label="Sanction End Date" data-note-date-required="1" data-note-date-min="{{ today|date:'Y-m-d' }}" data-note-date-value="{{ pending_sanction_extend.sanction_end_date }}" data-note-date-help="Required. Dates after the issuing officer's term end will be capped automatically."{% endif %}>
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="extend_sanction">
+                                    <input type="hidden" name="sanction_id" value="{{ sanction.id }}">
+                                    <input type="hidden" name="action_note" value="">
+                                    <input type="hidden" name="sanction_end_date" value="{% if pending_sanction_extend and pending_sanction_extend.sanction_id|stringformat:'s' == sanction.id|stringformat:'s' %}{{ pending_sanction_extend.sanction_end_date }}{% endif %}">
+                                    <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+                                    {% if pending_sanction_extend and pending_sanction_extend.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %}
+                                        <input type="hidden" name="pending_sanction_extend" value="1">
+                                    {% endif %}
+                                    <button type="submit" class="btn btn-danger btn-sm">Extend Sanction</button>
+                                </form>
+                                <form method="post" action="{% url 'manage_sanctions' %}"{% if pending_sanction_lift and pending_sanction_lift.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %} data-pending-note="1" data-note-title="Sanction Note" data-clear-form-id="clear_pending_sanction_lift_form"{% endif %}>
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="lift_sanction">
+                                    <input type="hidden" name="sanction_id" value="{{ sanction.id }}">
+                                    <input type="hidden" name="action_note" value="">
+                                    <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+                                    {% if pending_sanction_lift and pending_sanction_lift.sanction_id|stringformat:"s" == sanction.id|stringformat:"s" %}
+                                        <input type="hidden" name="pending_sanction_lift" value="1">
+                                    {% endif %}
+                                    <button type="submit" class="btn btn-success btn-sm">Lift Sanction</button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="4" class="text-center">No sanctions found matching your criteria.</td></tr>
+                    <tr><td colspan="6" class="text-center">No sanctions found matching your criteria.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -116,7 +149,7 @@
     <form method="post" id="pending_sanction_lift_form" action="{% url 'manage_sanctions' %}" data-pending-note="1" data-note-title="Sanction Note" data-clear-form-id="clear_pending_sanction_lift_form" style="display:none;">
         {% csrf_token %}
         <input type="hidden" name="action" value="lift_sanction">
-        <input type="hidden" name="authorization_id" value="{{ pending_sanction_lift.authorization_id }}">
+        <input type="hidden" name="sanction_id" value="{{ pending_sanction_lift.sanction_id }}">
         <input type="hidden" name="action_note" value="">
         <input type="hidden" name="pending_sanction_lift" value="1">
         <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
@@ -124,6 +157,22 @@
     <form method="post" id="clear_pending_sanction_lift_form" action="{% url 'manage_sanctions' %}">
         {% csrf_token %}
         <input type="hidden" name="action" value="clear_pending_sanction_lift">
+        <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+    </form>
+    {% endif %}
+    {% if pending_sanction_extend %}
+    <form method="post" id="pending_sanction_extend_form" action="{% url 'manage_sanctions' %}" data-pending-note="1" data-note-title="Extend Sanction" data-clear-form-id="clear_pending_sanction_extend_form" data-note-date-field="sanction_end_date" data-note-date-label="Sanction End Date" data-note-date-required="1" data-note-date-min="{{ today|date:'Y-m-d' }}" data-note-date-value="{{ pending_sanction_extend.sanction_end_date }}" data-note-date-help="Required. Dates after the issuing officer's term end will be capped automatically." style="display:none;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="extend_sanction">
+        <input type="hidden" name="sanction_id" value="{{ pending_sanction_extend.sanction_id }}">
+        <input type="hidden" name="action_note" value="">
+        <input type="hidden" name="sanction_end_date" value="{{ pending_sanction_extend.sanction_end_date }}">
+        <input type="hidden" name="pending_sanction_extend" value="1">
+        <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+    </form>
+    <form method="post" id="clear_pending_sanction_extend_form" action="{% url 'manage_sanctions' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="clear_pending_sanction_extend">
         <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
     </form>
     {% endif %}

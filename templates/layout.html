@@ -119,6 +119,12 @@
                     <label for="noteModalInput" class="form-label">Note (required)</label>
                     <textarea id="noteModalInput" class="form-control" rows="4" placeholder="Explain why you are taking this action."></textarea>
                     <div class="text-danger mt-2 d-none" id="noteModalError">A note is required to submit this action.</div>
+                    <div class="mt-3 d-none" id="noteModalDateGroup">
+                        <label for="noteModalDateInput" class="form-label">Date</label>
+                        <input id="noteModalDateInput" type="date" class="form-control" style="max-width: 400px;">
+                        <small class="form-text text-muted d-none" id="noteModalDateHelp"></small>
+                        <div class="text-danger mt-2 d-none" id="noteModalDateError">A date is required to submit this action.</div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -168,6 +174,10 @@
             const modal = new bootstrap.Modal(modalEl);
             const input = modalEl.querySelector('#noteModalInput');
             const error = modalEl.querySelector('#noteModalError');
+            const dateGroup = modalEl.querySelector('#noteModalDateGroup');
+            const dateInput = modalEl.querySelector('#noteModalDateInput');
+            const dateHelp = modalEl.querySelector('#noteModalDateHelp');
+            const dateError = modalEl.querySelector('#noteModalDateError');
             const submitBtn = modalEl.querySelector('[data-note-submit="true"]');
             const dismissButtons = modalEl.querySelectorAll('[data-bs-dismiss="modal"]');
             let pendingForm = null;
@@ -175,6 +185,14 @@
             function resetModal() {
                 input.value = '';
                 error.classList.add('d-none');
+                dateGroup.classList.add('d-none');
+                dateInput.value = '';
+                dateInput.removeAttribute('min');
+                dateInput.required = false;
+                dateHelp.textContent = '';
+                dateHelp.classList.add('d-none');
+                dateError.classList.add('d-none');
+                dateGroup.querySelector('.form-label').textContent = 'Date';
                 modalEl.querySelector('.modal-title').textContent = 'Add Note';
             }
 
@@ -184,6 +202,20 @@
                 pendingForm = form;
                 if (title) {
                     modalEl.querySelector('.modal-title').textContent = title;
+                }
+                const dateFieldName = form.dataset.noteDateField || '';
+                if (dateFieldName) {
+                    dateGroup.classList.remove('d-none');
+                    dateGroup.querySelector('.form-label').textContent = form.dataset.noteDateLabel || 'Date';
+                    dateInput.required = form.dataset.noteDateRequired === '1';
+                    dateInput.value = form.dataset.noteDateValue || '';
+                    if (form.dataset.noteDateMin) {
+                        dateInput.min = form.dataset.noteDateMin;
+                    }
+                    if (form.dataset.noteDateHelp) {
+                        dateHelp.textContent = form.dataset.noteDateHelp;
+                        dateHelp.classList.remove('d-none');
+                    }
                 }
                 modal.show();
                 setTimeout(() => input.focus(), 150);
@@ -214,6 +246,12 @@
                     error.classList.remove('d-none');
                     return;
                 }
+                const dateFieldName = pendingForm.dataset.noteDateField || '';
+                const dateValue = (dateInput.value || '').trim();
+                if (dateFieldName && pendingForm.dataset.noteDateRequired === '1' && !dateValue) {
+                    dateError.classList.remove('d-none');
+                    return;
+                }
                 let hidden = pendingForm.querySelector('input[name="action_note"]');
                 if (!hidden) {
                     hidden = document.createElement('input');
@@ -222,6 +260,16 @@
                     pendingForm.appendChild(hidden);
                 }
                 hidden.value = note;
+                if (dateFieldName) {
+                    let dateHidden = pendingForm.querySelector(`input[name="${dateFieldName}"]`);
+                    if (!dateHidden) {
+                        dateHidden = document.createElement('input');
+                        dateHidden.type = 'hidden';
+                        dateHidden.name = dateFieldName;
+                        pendingForm.appendChild(dateHidden);
+                    }
+                    dateHidden.value = dateValue;
+                }
 
                 pendingForm.dataset.noteValidated = 'true';
                 modal.hide();

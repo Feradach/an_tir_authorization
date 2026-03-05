@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from dateutil.relativedelta import relativedelta
+from unittest.mock import patch
 from django.test import RequestFactory, TestCase
 
 from authorizations.models import (
@@ -11,15 +12,18 @@ from authorizations.models import (
     BranchMarshal,
     Discipline,
     Person,
+    Sanction,
     User,
     WeaponStyle,
 )
 from authorizations.permissions import (
     appoint_branch_marshal,
     approve_authorization,
+    authorization_note_office_label,
     authorization_follows_rules,
     authorization_requires_concurrence,
     calculate_authorization_expiration,
+    create_authorization_note,
     is_kingdom_authorization_officer,
     is_kingdom_marshal,
     is_regional_marshal,
@@ -408,16 +412,24 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertFalse(ok)
         self.assertEqual(msg, 'Cannot renew a pending authorization.')
 
-    def test_blocks_revoked_renewal(self):
-        marshal_user, marshal = self.make_person('revoked_marshal', 'Revoked Marshal')
-        _, fighter = self.make_person('revoked_target', 'Revoked Target')
+    def test_blocks_sanctioned_authorization(self):
+        marshal_user, marshal = self.make_person('sanctioned_marshal', 'Sanctioned Marshal')
+        _, fighter = self.make_person('sanctioned_target', 'Sanctioned Target')
         self.grant_authorization(marshal, self.style_sm_armored)
-        self.grant_authorization(fighter, self.style_weapon_armored, status=self.status_revoked)
+        Sanction.objects.create(
+            person=fighter,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today(),
+            end_date=date.today() + relativedelta(days=30),
+            issue_note='Sanctioned for testing.',
+            issued_by=marshal_user,
+        )
 
         ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_weapon_armored.id)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'Cannot renew a revoked authorization.')
+        self.assertEqual(msg, 'Cannot issue an authorization while a sanction is active for this style or discipline.')
 
     def test_valid_authorization_path(self):
         marshal_user, marshal = self.make_person('valid_marshal', 'Valid Marshal')
@@ -803,6 +815,73 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
             f'Submitted as {submit_as_person.sca_name} by {ao_person.sca_name}.',
             note.note,
         )
+
+
+class AuthorizationNoteOfficeTests(AuthorizationTestBase):
+    def test_uses_relevant_current_office_for_matching_discipline(self):
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        user, person = self.make_person('office_rapier_user', 'Office Rapier User')
+        _, fighter = self.make_person('office_rapier_target', 'Office Rapier Target')
+        self.grant_authorization(person, self.style_sm_armored)
+        self.grant_authorization(person, style_sm_rapier)
+        self.appoint(person, self.branch_an_tir, self.discipline_rapier)
+        authorization = self.grant_authorization(
+            fighter,
+            style_sm_rapier,
+            status=self.status_pending,
+            marshal=person,
+        )
+
+        label = authorization_note_office_label(user, authorization, 'marshal_proposed')
+
+        self.assertEqual(label, 'Kingdom Rapier Marshal')
+
+    def test_falls_back_to_marshal_status_when_office_is_not_relevant(self):
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        user, person = self.make_person('office_fallback_user', 'Office Fallback User')
+        _, fighter = self.make_person('office_fallback_target', 'Office Fallback Target')
+        self.grant_authorization(person, self.style_sm_armored)
+        self.grant_authorization(person, style_sm_rapier)
+        self.appoint(person, self.branch_an_tir, self.discipline_rapier)
+        authorization = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_pending,
+            marshal=person,
+        )
+
+        label = authorization_note_office_label(user, authorization, 'marshal_proposed')
+
+        self.assertEqual(label, 'Senior Marshal')
+
+    def test_logs_and_uses_best_match_when_multiple_active_offices_exist(self):
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        user, person = self.make_person('office_multi_user', 'Office Multi User')
+        _, fighter = self.make_person('office_multi_target', 'Office Multi Target')
+        self.grant_authorization(person, self.style_sm_armored)
+        self.grant_authorization(person, style_sm_rapier)
+        armored_office = self.appoint(person, self.branch_an_tir, self.discipline_armored)
+        rapier_office = self.appoint(person, self.branch_an_tir, self.discipline_rapier)
+        authorization = self.grant_authorization(
+            fighter,
+            self.style_sm_armored,
+            status=self.status_pending,
+            marshal=person,
+        )
+
+        with patch('authorizations.permissions.logger.error') as mocked_error:
+            note = create_authorization_note(
+                authorization=authorization,
+                created_by=user,
+                action='marshal_proposed',
+                note='Testing office selection',
+            )
+
+        self.assertEqual(note.office, 'Kingdom Armored Marshal')
+        mocked_error.assert_called()
+        logged_ids = mocked_error.call_args_list[0].args[-1]
+        self.assertIn(armored_office.id, logged_ids)
+        self.assertIn(rapier_office.id, logged_ids)
 
 
 class AppointBranchMarshalTests(AuthorizationTestBase):

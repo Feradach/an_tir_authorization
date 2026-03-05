@@ -42,6 +42,21 @@
     <input type="hidden" id="person_id" name="person_id" value="{{ person.id }}">
     <input type="hidden" name="action_note" value="">
     <input type="hidden" name="return_url" value="{{ request.get_full_path }}">
+    <div class="mb-3">
+        <label for="sanction_end_date"><strong>Sanction End Date</strong></label>
+        <input
+            type="date"
+            id="sanction_end_date"
+            name="sanction_end_date"
+            class="form-control"
+            style="max-width: 400px;"
+            min="{{ today|date:'Y-m-d' }}"
+            value="{% if pending_sanction_end_date %}{{ pending_sanction_end_date }}{% endif %}"
+        >
+        <small class="form-text text-muted">
+            Required. Dates after the issuing officer's term end will be capped automatically.
+        </small>
+    </div>
     {% if pending_sanction_issue %}
         <input type="hidden" name="pending_sanction_issue" value="1">
     {% endif %}
@@ -101,6 +116,7 @@
     document.addEventListener("DOMContentLoaded", function() {
         let disciplineDropdown = document.getElementById("discipline");
         let styleDropdown = document.getElementById("style");
+        let sanctionEndDateInput = document.getElementById("sanction_end_date");
 
         let sanctionTypeInput = document.getElementById("sanction_type");
         let disciplineInput = document.getElementById("discipline_id");
@@ -110,28 +126,22 @@
         let sanctionStyleButton = document.getElementById("sanctionStyle");
 
         // Sanction by Discipline Button
-        sanctionDisciplineButton.addEventListener("click", function(event) {
-            if (!disciplineDropdown.value) {
-                alert("Please select a discipline before sanctioning.");
-                event.preventDefault();
-                return;
-            }
+        sanctionDisciplineButton.addEventListener("click", function() {
             sanctionTypeInput.value = "discipline";
             disciplineInput.value = disciplineDropdown.value;
             styleInput.value = "";  // Clear style input
         });
 
         // Sanction by Style Button
-        sanctionStyleButton.addEventListener("click", function(event) {
-            if (!styleDropdown.value) {
-                alert("Please select a style before sanctioning.");
-                event.preventDefault();
-                return;
-            }
+        sanctionStyleButton.addEventListener("click", function() {
             sanctionTypeInput.value = "style";
             styleInput.value = styleDropdown.value;
             disciplineInput.value = "";  // Clear discipline input
         });
+
+        if (sanctionEndDateInput && !sanctionEndDateInput.value) {
+            sanctionEndDateInput.value = "";
+        }
     });
 
 </script>
