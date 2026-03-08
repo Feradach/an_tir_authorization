@@ -1,4 +1,13 @@
 ﻿
+## [0.1.8] - 2026-03-07
+### Fixed
+- The fighter page no longer shows marshal-officer appointment controls for fighters who already hold an active marshal officer position, and direct appointment attempts are blocked with a clear error.
+- Pending-authorization cards on the fighter page now show approve/reject actions only when the logged-in user is allowed to perform that action, with Earl Marshal authority limited to final regional-step approvals/rejections and Kingdom-step approval remaining Kingdom Authorization Officer only.
+- Kingdom Authorization Officers still see pending-approval actions, but must use "Approve As" for Pending and Needs Regional Approval actions instead of approving those directly as themselves.
+- Youth Armored and Youth Rapier marshal proposals no longer fail immediately when a background check is missing; final approvals now move those marshal authorizations to Pending Background Check until a current background check is on file.
+- On fighter cards, Kingdom Authorization Officers can now use "Approve As" for reject actions as well, and Pending Background Check authorizations now appear in the pending-authorization section as read-only entries.
+- Updating a user's background check expiration now automatically advances any Pending Background Check authorizations: to Active when Kingdom verification is off, or to Needs Kingdom Approval when Kingdom verification is on.
+
 ## [0.1.7] - 2026-03-04
 ### Added
 - Authorization notes now record the office or marshal status that justified the action when a note is saved, and show that information on the fighter page.
@@ -15,6 +24,7 @@
 - Sanctions can be extended by issuing a new sanction with a later end date.
 - Membership number updates now verify against the uploaded Society roster by matching number, first name, last name, and expiration date, while test mode skips this validation for fake data.
 - Membership-based waiver auto-extension now only happens when the uploaded Society roster marks that member as having a waiver on file (`Waiver (C) = Yes`).
+
 
 
 ## [0.1.6] - 2026-02-20

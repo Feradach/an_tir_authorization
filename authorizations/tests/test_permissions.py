@@ -40,6 +40,7 @@ class AuthorizationTestBase(TestCase):
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
         cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        cls.status_pending_background_check = AuthorizationStatus.objects.create(name='Pending Background Check')
         cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Pending Waiver')
         cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
@@ -383,7 +384,7 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertFalse(ok)
         self.assertEqual(msg, 'Must be at least 16 years old to become authorized in Armored combat.')
 
-    def test_youth_marshal_requires_background_check(self):
+    def test_youth_marshal_no_longer_requires_background_check_at_proposal_time(self):
         marshal_user, marshal = self.make_person('youth_marshal', 'Youth Marshal')
         self.grant_authorization(marshal, self.style_sm_youth_armored)
 
@@ -395,11 +396,8 @@ class AuthorizationRuleTests(AuthorizationTestBase):
 
         ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_jm_youth_armored.id)
 
-        self.assertFalse(ok)
-        self.assertEqual(
-            msg,
-            'Must have a valid background check to become authorized as a youth marshal in Youth Armored combat.',
-        )
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Authorization follows all rules.')
 
     def test_blocks_pending_duplicate_authorization(self):
         marshal_user, marshal = self.make_person('pending_marshal', 'Pending Marshal')
@@ -510,6 +508,112 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
                 created_by=approver_user,
             ).exists()
         )
+
+    def test_pending_youth_junior_marshal_moves_to_pending_background_check(self):
+        _, fighter = self.make_person(
+            'pending_youth_jm_target',
+            'Pending Youth JM Target',
+            background_check_expiration=None,
+        )
+        proposer_user, proposer = self.make_person(
+            'pending_youth_jm_proposer',
+            'Pending Youth JM Proposer',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        approver_user, approver = self.make_person(
+            'pending_youth_jm_approver',
+            'Pending Youth JM Approver',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(proposer, self.style_sm_youth_armored)
+        self.grant_authorization(approver, self.style_sm_youth_armored)
+
+        pending_auth = self.grant_authorization(
+            fighter,
+            self.style_jm_youth_armored,
+            status=self.status_pending,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(pending_auth.id), 'action_note': 'Youth JM concurrence'},
+        )
+        request.user = approver_user
+
+        ok, msg = approve_authorization(request)
+
+        pending_auth.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Youth Armored Junior Marshal authorization pending background check.')
+        self.assertEqual(pending_auth.status, self.status_pending_background_check)
+
+    def test_needs_regional_youth_senior_moves_to_pending_background_check(self):
+        proposer_user, proposer = self.make_person('regional_youth_sm_prop', 'Regional Youth SM Prop')
+        approver_user, approver = self.make_person(
+            'regional_youth_sm_approver',
+            'Regional Youth SM Approver',
+            branch=self.branch_gd,
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        _, fighter = self.make_person(
+            'regional_youth_sm_target',
+            'Regional Youth SM Target',
+            branch=self.branch_gd,
+            background_check_expiration=None,
+        )
+        self.grant_authorization(approver, self.style_sm_youth_armored)
+        self.appoint(approver, self.region_summits, self.discipline_youth_armored)
+
+        needs_regional = self.grant_authorization(
+            fighter,
+            self.style_sm_youth_armored,
+            status=self.status_regional,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_regional.id), 'action_note': 'Youth SM regional confirmation'},
+        )
+        request.user = approver_user
+
+        ok, msg = approve_authorization(request)
+
+        needs_regional.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Youth Armored Senior Marshal authorization pending background check.')
+        self.assertEqual(needs_regional.status, self.status_pending_background_check)
+
+    def test_needs_kingdom_youth_senior_moves_to_pending_background_check(self):
+        ao_user, ao_person = self.make_person('kingdom_youth_sm_ao', 'Kingdom Youth SM AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer = self.make_person('kingdom_youth_sm_prop', 'Kingdom Youth SM Prop')
+        _, fighter = self.make_person(
+            'kingdom_youth_sm_target',
+            'Kingdom Youth SM Target',
+            background_check_expiration=None,
+        )
+
+        needs_kingdom = self.grant_authorization(
+            fighter,
+            self.style_sm_youth_armored,
+            status=self.status_kingdom,
+            marshal=proposer,
+        )
+
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(needs_kingdom.id), 'action_note': 'Youth SM kingdom confirmation'},
+        )
+        request.user = ao_user
+
+        ok, msg = approve_authorization(request)
+
+        needs_kingdom.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Youth Armored Senior Marshal authorization pending background check.')
+        self.assertEqual(needs_kingdom.status, self.status_pending_background_check)
 
     def test_pending_senior_marshal_moves_to_regional_approval(self):
         _, fighter = self.make_person('pending_sm_target', 'Pending SM Target')

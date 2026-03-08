@@ -804,7 +804,7 @@ class RegisterViewTests(ViewTestBase):
         )
         self.assertContains(
             response,
-            'Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).',
+            'Postal code must be within An Tir.',
         )
 
     def test_register_rejects_duplicate_membership(self):
@@ -1268,6 +1268,60 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.owner_user.background_check_expiration, bg_date)
 
+    def test_setting_background_check_promotes_pending_background_check_to_active_when_sign_off_off(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        pending_auth = Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_sm_youth_armored,
+            status=self.status_pending_background_check,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        bg_date = date.today() + relativedelta(years=1)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            background_check_expiration=bg_date.isoformat(),
+        )
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+
+    def test_setting_background_check_promotes_pending_background_check_to_needs_kingdom_when_sign_off_on(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+        pending_auth = Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_sm_youth_armored,
+            status=self.status_pending_background_check,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        bg_date = date.today() + relativedelta(years=1)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            background_check_expiration=bg_date.isoformat(),
+        )
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_kingdom)
+
     def test_account_update_skips_roster_check_when_membership_unchanged(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
         payload = self.account_update_payload(
@@ -1495,7 +1549,7 @@ class UserAccountViewTests(ViewTestBase):
             messages,
         )
         self.assertIn(
-            'Postal Code: Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).',
+            'Postal Code: Postal code must be within An Tir.',
             messages,
         )
         self.assertContains(
@@ -1504,7 +1558,7 @@ class UserAccountViewTests(ViewTestBase):
         )
         self.assertContains(
             response,
-            'Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).',
+            'Postal code must be within An Tir.',
         )
 
     def test_non_ao_cannot_upload_membership_roster(self):
@@ -2048,6 +2102,304 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
                 end_date__gte=date.today(),
             ).exists()
         )
+
+    def test_appointment_form_hidden_when_target_has_active_marshal_office(self):
+        self.appoint(self.candidate_rapier_person, self.branch_lg, self.discipline_rapier)
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Appoint Marshal Officer')
+
+    def test_cannot_appoint_when_target_has_active_marshal_office(self):
+        self.appoint(self.candidate_rapier_person, self.branch_lg, self.discipline_rapier)
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}),
+            self._appointment_payload(self.candidate_rapier_person, self.region_summits, self.discipline_rapier),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            BranchMarshal.objects.filter(
+                person=self.candidate_rapier_person,
+                end_date__gte=date.today(),
+            ).count(),
+            1,
+        )
+        self.assertIn(
+            'This fighter already has an active marshal officer appointment.',
+            self.messages_for(response),
+        )
+
+    def test_fighter_hides_pending_buttons_for_wrong_discipline_kingdom_marshal(self):
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_jm_armored,
+            status=self.status_pending,
+            marshal=self.candidate_armored_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Armored']
+        self.assertFalse(pending['can_approve'])
+        self.assertFalse(pending['can_reject'])
+
+    def test_fighter_hides_pending_approve_for_user_who_created_it(self):
+        Authorization.objects.create(
+            person=self.candidate_rapier_person,
+            style=self.style_jm_armored,
+            status=self.status_pending,
+            marshal=self.krapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Armored']
+        self.assertFalse(pending['can_approve'])
+
+    def test_kingdom_earl_marshal_pending_buttons_follow_stipulations(self):
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_jm_armored,
+            status=self.status_pending,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_single_rapier,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_sm_rapier,
+            status=self.status_kingdom,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kem_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']
+        self.assertTrue(pending['Armored']['can_approve'])
+        self.assertTrue(pending['Rapier Combat']['can_approve'])
+
+    def test_kingdom_earl_marshal_does_not_see_approve_for_needs_kingdom(self):
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_single_rapier,
+            status=self.status_kingdom,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kem_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Rapier Combat']
+        self.assertFalse(pending['can_approve'])
+
+    def test_kao_sees_pending_approve_but_must_use_submit_as(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        Authorization.objects.create(
+            person=self.candidate_ao_person,
+            style=self.style_jm_armored,
+            status=self.status_pending,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        get_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+        self.assertEqual(get_response.status_code, 200)
+        pending = get_response.context['pending_authorization_list']['Armored']
+        self.assertTrue(pending['can_approve'])
+
+        pending_auth = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=self.style_jm_armored,
+            status=self.status_pending,
+        )
+        blocked = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'KAO self approval attempt',
+            },
+            follow=True,
+        )
+        self.assertIn(
+            'Kingdom Authorization Officer must use "Approve As" to approve this authorization.',
+            self.messages_for(blocked),
+        )
+        pending_auth.refresh_from_db()
+        self.assertEqual(pending_auth.status, self.status_pending)
+
+        approved = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'submit_as_user_id': str(self.candidate_armored_user.id),
+                'action_note': 'Approved as armored senior marshal',
+            },
+            follow=True,
+        )
+        pending_auth.refresh_from_db()
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertEqual(approved.status_code, 200)
+
+    def test_kingdom_earl_marshal_pending_requires_matching_senior_discipline(self):
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_sm_rapier,
+            status=self.status_pending,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kem_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Rapier Combat']
+        self.assertFalse(pending['can_approve'])
+
+    def test_regional_earl_marshal_sees_needs_regional_buttons_any_discipline_in_region(self):
+        regional_earl_user, regional_earl_person = self.make_person(
+            'regional_earl_btn_ok',
+            'Regional Earl Button Ok',
+            branch=self.branch_gd,
+        )
+        self.grant_authorization(regional_earl_person, self.style_sm_armored)
+        self.appoint(regional_earl_person, self.region_summits, self.discipline_earl_marshal)
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_single_rapier,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=regional_earl_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Rapier Combat']
+        self.assertTrue(pending['can_approve'])
+        self.assertTrue(pending['can_reject'])
+
+    def test_regional_earl_marshal_does_not_see_needs_regional_buttons_outside_region(self):
+        regional_earl_user, regional_earl_person = self.make_person(
+            'regional_earl_btn_no',
+            'Regional Earl Button No',
+            branch=self.branch_gd,
+        )
+        self.grant_authorization(regional_earl_person, self.style_sm_armored)
+        self.appoint(regional_earl_person, self.region_summits, self.discipline_earl_marshal)
+        outside_user, outside_person = self.make_person(
+            'regional_earl_out_target',
+            'Regional Earl Outside Target',
+            branch=self.branch_lg,
+        )
+        Authorization.objects.create(
+            person=outside_person,
+            style=self.style_single_rapier,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=regional_earl_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': outside_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Rapier Combat']
+        self.assertFalse(pending['can_approve'])
+        self.assertFalse(pending['can_reject'])
+
+    def test_kao_can_reject_needs_regional_using_submit_as(self):
+        needs_regional = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_sm_rapier,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        get_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+        self.assertEqual(get_response.status_code, 200)
+        pending = get_response.context['pending_authorization_list']['Rapier Combat']
+        self.assertTrue(pending['can_reject'])
+
+        post_response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(needs_regional.id),
+                'submit_as_user_id': str(self.kem_user.id),
+                'action_note': 'Rejected by KAO submit-as',
+            },
+            follow=True,
+        )
+
+        needs_regional.refresh_from_db()
+        self.assertEqual(post_response.status_code, 200)
+        self.assertEqual(needs_regional.status.name, 'Rejected')
+
+    def test_pending_background_check_shows_in_pending_authorizations(self):
+        pending_bg = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_sm_youth_armored,
+            status=self.status_pending_background_check,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Youth Armored']
+        self.assertEqual(pending['status'], 'Pending Background Check')
+        self.assertFalse(pending['can_reject'])
+        self.assertContains(response, 'Pending Background Check')
+        self.assertContains(response, 'Youth Armored')
+
+    def test_non_marshal_does_not_get_reject_button_for_needs_regional(self):
+        viewer_user, _ = self.make_person('office_pending_viewer', 'Office Pending Viewer')
+        Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_jm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=viewer_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Armored']
+        self.assertFalse(pending['can_reject'])
 
     def test_kingdom_discipline_marshal_can_end_lower_same_discipline_office(self):
         appointment = BranchMarshal.objects.create(

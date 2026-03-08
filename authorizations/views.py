@@ -570,7 +570,10 @@ def validate_authorization_action(request):
         ok, msg = validate_approve_authorization(request.user, submit_as_user, authorization)
         return JsonResponse({'ok': ok, 'message': msg})
     if action == 'reject_authorization':
-        ok, msg = validate_reject_authorization(request.user, authorization)
+        submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+        if submit_as_error:
+            return JsonResponse({'ok': False, 'message': submit_as_error}, status=400)
+        ok, msg = validate_reject_authorization(submit_as_user, authorization)
         return JsonResponse({'ok': ok, 'message': msg})
 
     return JsonResponse({'ok': False, 'message': 'Invalid action.'}, status=400)
@@ -934,19 +937,30 @@ def index(request):
                 and pending_action.get('action') == 'reject_authorization'
                 and pending_action.get('authorization_id') == authorization.id
             )
+            pending_submit_as_user_id = pending_action.get('submit_as_user_id') if is_pending_submit else None
+            submit_as_user_id_raw = (request.POST.get('submit_as_user_id') or '').strip()
+            if pending_submit_as_user_id and not submit_as_user_id_raw:
+                mutable_post = request.POST.copy()
+                mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
+                request.POST = mutable_post
             requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
                     messages.error(request, 'A note is required for marshal promotion actions.')
                     return redirect('index')
-                ok, msg = validate_reject_authorization(request.user, authorization)
+                submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+                if submit_as_error:
+                    messages.error(request, submit_as_error)
+                    return redirect('index')
+                ok, msg = validate_reject_authorization(submit_as_user, authorization)
                 if not ok:
                     messages.error(request, msg)
                     return redirect('index')
                 request.session[pending_key] = {
                     'action': 'reject_authorization',
                     'authorization_id': authorization.id,
+                    'submit_as_user_id': submit_as_user.id if submit_as_user else None,
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
@@ -1380,6 +1394,40 @@ def _finalize_waiver_signed(request_user: User, target_user: User):
         target_user.save()
         return True, 'Waiver signed for one year.'
 
+
+def _get_or_create_status_by_name(name: str) -> AuthorizationStatus:
+    status = AuthorizationStatus.objects.filter(name=name).order_by('id').first()
+    if status:
+        return status
+    return AuthorizationStatus.objects.create(name=name)
+
+
+def _activate_pending_background_check_authorizations(target_user: User) -> int:
+    """
+    Promote any 'Pending Background Check' authorizations for target_user when the
+    user's background check is currently valid.
+    - If KAO sign-off is enabled: move to 'Needs Kingdom Approval'
+    - Otherwise: move to 'Active'
+    Returns the number of records updated.
+    """
+    if not target_user.background_check_expiration or target_user.background_check_expiration < date.today():
+        return 0
+
+    pending_qs = Authorization.objects.filter(
+        person__user=target_user,
+        status__name='Pending Background Check',
+    )
+    count = pending_qs.count()
+    if count == 0:
+        return 0
+
+    next_status = _get_or_create_status_by_name(
+        'Needs Kingdom Approval' if authorization_officer_sign_off_enabled() else 'Active'
+    )
+    pending_qs.update(status=next_status)
+    return count
+
+
 def _parse_search_date(value: str):
     """
     Validate date filter inputs so malformed values do not crash the view.
@@ -1801,7 +1849,14 @@ def fighter(request, person_id):
     auth_officer = is_kingdom_authorization_officer(request.user) if request.user.is_authenticated else False
     earl_marshal = is_kingdom_earl_marshal(request.user) if request.user.is_authenticated else False
     can_manage_sanctions = _can_access_sanctions(request.user) if request.user.is_authenticated else False
-    can_manage_marshal_offices = can_manage_any_branch_marshal_office(request.user) if request.user.is_authenticated else False
+    has_active_marshal_office = BranchMarshal.objects.filter(
+        person=person,
+        end_date__gte=date.today(),
+    ).exists()
+    can_manage_marshal_offices = (
+        can_manage_any_branch_marshal_office(request.user)
+        and not has_active_marshal_office
+    ) if request.user.is_authenticated else False
     can_manage_officer_comments = auth_officer or earl_marshal
 
     # If there is a post, confirm that they are authenticated.
@@ -1926,6 +1981,9 @@ def fighter(request, person_id):
                 del request.session[pending_key]
                 request.session.modified = True
         elif action == 'appoint_branch_marshal':
+            if has_active_marshal_office:
+                messages.error(request, 'This fighter already has an active marshal officer appointment.')
+                return redirect('fighter', person_id=person_id)
             is_valid, mssg = appoint_branch_marshal(request)
             if not is_valid:
                 messages.error(request, mssg)
@@ -1942,19 +2000,30 @@ def fighter(request, person_id):
                 and pending_action.get('action') == 'reject_authorization'
                 and pending_action.get('authorization_id') == authorization.id
             )
+            pending_submit_as_user_id = pending_action.get('submit_as_user_id') if is_pending_submit else None
+            submit_as_user_id_raw = (request.POST.get('submit_as_user_id') or '').strip()
+            if pending_submit_as_user_id and not submit_as_user_id_raw:
+                mutable_post = request.POST.copy()
+                mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
+                request.POST = mutable_post
             requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
                     messages.error(request, 'A note is required for marshal promotion actions.')
                     return redirect('fighter', person_id=person_id)
-                ok, msg = validate_reject_authorization(request.user, authorization)
+                submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+                if submit_as_error:
+                    messages.error(request, submit_as_error)
+                    return redirect('fighter', person_id=person_id)
+                ok, msg = validate_reject_authorization(submit_as_user, authorization)
                 if not ok:
                     messages.error(request, msg)
                     return redirect('fighter', person_id=person_id)
                 request.session[pending_key] = {
                     'action': 'reject_authorization',
                     'authorization_id': authorization.id,
+                    'submit_as_user_id': submit_as_user.id if submit_as_user else None,
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
@@ -2060,7 +2129,7 @@ def fighter(request, person_id):
     pending_authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
-    ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval', 'Needs Concurrence']).order_by(
+    ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval', 'Needs Concurrence', 'Pending Background Check']).order_by(
         'style__discipline__name', 'effective_expiration_date', 'style__name')
 
     pending_waiver_list = Authorization.objects.with_effective_expiration().select_related(
@@ -2142,10 +2211,21 @@ def fighter(request, person_id):
     pending_authorizations = {}
     for auth in pending_authorization_list:
         discipline_name = auth.style.discipline.name
+        can_concur = auth.status.name == 'Needs Concurrence' and (
+            auth_officer or _can_concur_authorization(request.user, auth)
+        )
+        can_approve = False
+        can_reject = False
+        if request.user.is_authenticated:
+            can_approve, _ = validate_approve_authorization(request.user, request.user, auth)
+            if auth_officer:
+                can_approve = True
+            can_reject_ok, _ = validate_reject_authorization(request.user, auth)
+            can_reject = auth.status.name in ['Pending', 'Needs Regional Approval'] and can_reject_ok
+            if auth_officer and auth.status.name in ['Pending', 'Needs Regional Approval']:
+                can_reject = True
+
         if discipline_name not in pending_authorizations:
-            can_concur = auth.status.name == 'Needs Concurrence' and (
-                auth_officer or _can_concur_authorization(request.user, auth)
-            )
             pending_authorizations[discipline_name] = {
                 'auth_id': auth.id,
                 'marshal_name': auth.marshal.sca_name if auth.marshal else '',
@@ -2153,6 +2233,8 @@ def fighter(request, person_id):
                 'styles': [auth.style.name],
                 'status': auth.status.name,
                 'can_concur': can_concur,
+                'can_approve': can_approve,
+                'can_reject': can_reject,
             }
         else:
             if auth.effective_expiration < pending_authorizations[discipline_name]['earliest_expiration']:
@@ -2167,6 +2249,14 @@ def fighter(request, person_id):
                     or auth_officer
                     or _can_concur_authorization(request.user, auth)
                 )
+            pending_authorizations[discipline_name]['can_approve'] = (
+                pending_authorizations[discipline_name]['can_approve']
+                or can_approve
+            )
+            pending_authorizations[discipline_name]['can_reject'] = (
+                pending_authorizations[discipline_name]['can_reject']
+                or can_reject
+            )
 
     pending_waivers = {}
     for auth in pending_waiver_list:
@@ -2285,7 +2375,7 @@ def fighter(request, person_id):
             pending_note_required = any(int(style_id) in marshal_style_ids for style_id in pending_style_ids)
     pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
     selected_submit_as_user_id = None
-    if pending_authorization_action and pending_authorization_action.get('action') == 'approve_authorization':
+    if pending_authorization_action and pending_authorization_action.get('action') in ['approve_authorization', 'reject_authorization']:
         selected_submit_as_user_id = pending_authorization_action.get('submit_as_user_id')
 
     officer_notes = []
@@ -3207,6 +3297,7 @@ def user_account(request, user_id):
         if form_valid:
             previous_membership = user.membership
             previous_membership_expiration = user.membership_expiration
+            previous_background_check_expiration = user.background_check_expiration
             user.email = form.cleaned_data['email']
             user.username = form.cleaned_data['username']
             user.first_name = form.cleaned_data['first_name']
@@ -3226,6 +3317,12 @@ def user_account(request, user_id):
                 user.background_check_expiration = form.cleaned_data.get('background_check_expiration')
 
             user.save()
+            if (
+                is_kingdom_authorization_officer(request.user)
+                and user.background_check_expiration
+                and user.background_check_expiration != previous_background_check_expiration
+            ):
+                _activate_pending_background_check_authorizations(user)
 
             person.sca_name = form.cleaned_data['sca_name']
             person.title = form.cleaned_data['title']
@@ -3317,20 +3414,33 @@ def sign_waiver(request, user_id):
         return render(request, 'authorizations/waiver.html')
 
 def reject_authorization(request, authorization):
+    submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+    if submit_as_error:
+        return False, submit_as_error
     requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
     action_note = _get_action_note(request) if requires_note else ''
     if requires_note and not action_note:
         return False, 'A note is required for marshal promotion actions.'
-    ok, msg = validate_reject_authorization(request.user, authorization)
+    if requires_note and request.user.id != submit_as_user.id:
+        actor_name = submit_as_user.person.sca_name if hasattr(submit_as_user, 'person') and submit_as_user.person else submit_as_user.username
+        requester_name = request.user.person.sca_name if hasattr(request.user, 'person') and request.user.person else request.user.username
+        action_note = (
+            f'{action_note}\n\n'
+            f'Submitted as {actor_name} by {requester_name}.'
+        )
+    ok, msg = validate_reject_authorization(submit_as_user, authorization)
     if not ok:
         return False, msg
-    rejected_status = AuthorizationStatus.objects.get(name='Rejected')
+    rejected_status = AuthorizationStatus.objects.filter(name='Rejected').order_by('id').first()
+    if not rejected_status:
+        rejected_status = AuthorizationStatus.objects.create(name='Rejected')
     authorization.status = rejected_status
+    authorization.updated_by = submit_as_user
     authorization.save()
     if requires_note:
         create_authorization_note(
             authorization=authorization,
-            created_by=request.user,
+            created_by=submit_as_user,
             action='marshal_rejected',
             note=action_note,
         )
@@ -3902,6 +4012,7 @@ def _build_branch_office_merge_preview(survivor_person: Person, source_person: P
 def _apply_profile_form_to_user_and_person(profile_form, user: User, person: Person, acting_user: User):
     cleaned = profile_form.cleaned_data
 
+    previous_background_check_expiration = user.background_check_expiration
     user.email = cleaned['email']
     user.username = cleaned['username']
     user.first_name = cleaned['first_name']
@@ -3919,6 +4030,11 @@ def _apply_profile_form_to_user_and_person(profile_form, user: User, person: Per
     user.background_check_expiration = cleaned.get('background_check_expiration')
     user.updated_by = acting_user
     user.save()
+    if (
+        user.background_check_expiration
+        and user.background_check_expiration != previous_background_check_expiration
+    ):
+        _activate_pending_background_check_authorizations(user)
 
     person.sca_name = cleaned.get('sca_name') or f"{user.first_name} {user.last_name}".strip()
     person.title = cleaned.get('title')
@@ -4899,7 +5015,7 @@ class CreatePersonForm(forms.Form):
         
         if not valid:
             raise forms.ValidationError(
-                'Postal code must be within An Tir (Canada: starts with V; US: starts with 97, 98, 991-994, 838, or 835).'
+                'Postal code must be within An Tir.'
             )
             
         return postal_code
@@ -5055,6 +5171,3 @@ class CreateAuthorizationForm(forms.Form):
 
                 # Update the discipline queryset with the filtered disciplines
                 self.fields['discipline'].queryset = Discipline.objects.filter(id__in=senior_authorizations)
-
-
-
