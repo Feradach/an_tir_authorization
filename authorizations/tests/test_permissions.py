@@ -604,7 +604,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         request = self.factory.post(
             '/authorizations/fighter/',
-            {'authorization_id': str(needs_kingdom.id), 'action_note': 'Youth SM kingdom confirmation'},
+            {'authorization_id': str(needs_kingdom.id)},
         )
         request.user = ao_user
 

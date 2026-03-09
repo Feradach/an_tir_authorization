@@ -1,4 +1,11 @@
 ﻿
+## [0.1.8] - 2026-03-08
+### Fixed
+- On the user account edit form, State/Province, Title, Branch, and Parent ID now use the same type-to-filter dropdown behavior and compact formatting as the register page, and the account layout no longer forces early text wrapping from narrow columns.
+- Approving a `Needs Kingdom Approval` authorization no longer prompts for a marshal promotion note; that final Kingdom approval step now proceeds without requiring a note for any style.
+- Kingdom Authorization Officers now have a Reject action for `Needs Kingdom Approval` authorizations on both the fighter page and the homepage queue, and rejecting those records now requires a note.
+
+
 ## [0.1.8] - 2026-03-07
 ### Fixed
 - The fighter page no longer shows marshal-officer appointment controls for fighters who already hold an active marshal officer position, and direct appointment attempts are blocked with a clear error.
@@ -7,6 +14,7 @@
 - Youth Armored and Youth Rapier marshal proposals no longer fail immediately when a background check is missing; final approvals now move those marshal authorizations to Pending Background Check until a current background check is on file.
 - On fighter cards, Kingdom Authorization Officers can now use "Approve As" for reject actions as well, and Pending Background Check authorizations now appear in the pending-authorization section as read-only entries.
 - Updating a user's background check expiration now automatically advances any Pending Background Check authorizations: to Active when Kingdom verification is off, or to Needs Kingdom Approval when Kingdom verification is on.
+
 
 ## [0.1.7] - 2026-03-04
 ### Added
@@ -24,7 +32,6 @@
 - Sanctions can be extended by issuing a new sanction with a later end date.
 - Membership number updates now verify against the uploaded Society roster by matching number, first name, last name, and expiration date, while test mode skips this validation for fake data.
 - Membership-based waiver auto-extension now only happens when the uploaded Society roster marks that member as having a waiver on file (`Waiver (C) = Yes`).
-
 
 
 ## [0.1.6] - 2026-02-20

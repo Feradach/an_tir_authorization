@@ -226,7 +226,7 @@
                         </form>
                         {% endif %}
                         {% if data.can_reject %}
-                            <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
+                            <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Rejection Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                                 {% csrf_token %}
                                 <input type="hidden" name="action" value="reject_authorization">
                                 <input type="hidden" name="bad_authorization_id" value="{{ data.auth_id }}">

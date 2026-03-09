@@ -7,7 +7,7 @@
 {% block body %}
     {# Messages rendered globally in layout.html #}
 <div class="card">
-    <div class="col-md-4">
+    <div class="col-12">
             <div class="mb-3">
                 <h2>User Account: {{ user.person.sca_name }}</h2>
                 <p><strong>Email:</strong> {{ user.email }}</p>
@@ -49,7 +49,7 @@
     </div>
 </div>
 <div class="card">
-    <div class="col-md-4">
+    <div class="col-12">
             <div class="mb-3">
                 <h3>View Fighter Card</h3>
                 <a href="{% url 'fighter' person_id=user.id %}" class="btn btn-primary">View fighter card</a><br>
@@ -58,7 +58,7 @@
 </div>
     {% if children %}
     <div class="card">
-        <div class="col-md-4">
+        <div class="col-12">
                 <div class="mb-3">
                     <h3>Child Accounts</h3>
                     {% for child in children %}
@@ -74,7 +74,7 @@
 {% endif %}
 
 <div class="card">
-    <div class="col-md-4">
+    <div class="col-12">
             <div class="mb-3">
                 <h3>Change Password</h3>
                 <a href="{% url 'password_reset' user.id %}" class="btn btn-primary">Change Password</a>
@@ -83,10 +83,10 @@
 </div>
 
 <div class="card">
-    <div class="col-md-4">
+    <div class="col-12">
             <div class="mb-3">
                 <h3>Edit Your Information</h3>
-                <form method="post">
+                <form method="post" id="user_account_form" novalidate>
                     {% csrf_token %}
                     {% if form.non_field_errors %}
                         <div class="alert alert-danger" role="alert">
@@ -97,20 +97,39 @@
                     {% endif %}
                     {% for field in form %}
                         {% if field.name != 'background_check_expiration' and field.name != 'honeypot' %}
-                            <div class="form-group">
-                                <label for="{{ field.id_for_label }}">{{ field.label }}</label>
-                                {{ field }}
-                                {% if field.help_text %}
-                                    <small class="form-text text-muted">{{ field.help_text }}</small>
-                                {% endif %}
-                                {% if field.errors %}
-                                    <div class="invalid-feedback d-block">
-                                        {% for error in field.errors %}
-                                            <div>{{ error }}</div>
-                                        {% endfor %}
+                            {% if field.name == 'state_province' or field.name == 'title' or field.name == 'branch' or field.name == 'parent_id' %}
+                                <div class="form-group register-inline-field">
+                                    {{ field.label_tag }}
+                                    <div class="register-inline-control">
+                                        {{ field }}
+                                        {% if field.help_text %}
+                                            <small class="form-text text-muted">{{ field.help_text }}</small>
+                                        {% endif %}
+                                        {% if field.errors %}
+                                            <div class="invalid-feedback d-block">
+                                                {% for error in field.errors %}
+                                                    <div>{{ error }}</div>
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
                                     </div>
-                                {% endif %}
-                            </div>
+                                </div>
+                            {% else %}
+                                <div class="form-group">
+                                    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                                    {{ field }}
+                                    {% if field.help_text %}
+                                        <small class="form-text text-muted">{{ field.help_text }}</small>
+                                    {% endif %}
+                                    {% if field.errors %}
+                                        <div class="invalid-feedback d-block">
+                                            {% for error in field.errors %}
+                                                <div>{{ error }}</div>
+                                            {% endfor %}
+                                        </div>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
                         {% endif %}
                     {% endfor %}
                     {% if is_authorization_officer %}
@@ -144,7 +163,7 @@
 {# Moved Add New Authorization into the Regional Marshal card below #}
 {% if testing %}
 <div class="card mt-3">
-    <div class="col-md-6">
+    <div class="col-12">
         <div class="mb-3">
             <strong>This section is for testing the system and it will not be present in the full deployment. You can make yourself a branch marshal and add any authorization to yourself here.</strong>
             <h3>Branch Marshal (Testing)</h3>
@@ -217,11 +236,88 @@
 {% endblock %}
 
 {% block script %}
+<style>
+    #user_account_form .register-inline-field {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    #user_account_form .register-inline-field > label {
+        min-width: 0;
+        margin: 0;
+        white-space: nowrap;
+    }
+    #user_account_form .register-inline-field .register-inline-control {
+        flex: 0 0 auto;
+        min-width: 0;
+    }
+    #user_account_form .choices.choices-compact {
+        margin-bottom: 0;
+        width: 220px;
+        max-width: 100%;
+    }
+    #user_account_form .choices.choices-compact .choices__inner {
+        min-height: 30px;
+        padding: 2px 8px;
+        font-size: inherit;
+        line-height: 1.2;
+    }
+    #user_account_form .choices.choices-compact[data-type*="select-one"] .choices__inner {
+        padding-bottom: 2px;
+    }
+    #user_account_form .choices.choices-compact[data-type*="select-one"]::after {
+        top: 50%;
+        transform: translateY(-50%);
+    }
+    #user_account_form .choices.choices-compact .choices__list--single {
+        padding: 2px 16px 2px 0;
+    }
+    #user_account_form .choices.choices-compact .choices__input {
+        font-size: inherit;
+        margin-bottom: 0;
+        padding: 2px 0;
+    }
+    @media (max-width: 768px) {
+        #user_account_form .register-inline-field {
+            display: block;
+        }
+        #user_account_form .register-inline-field > label {
+            min-width: 0;
+            margin-top: 0;
+        }
+    }
+</style>
 <script>
-    (function() {
+    document.addEventListener('DOMContentLoaded', function () {
         const disciplineSelect = document.getElementById('ua-discipline-select');
         const stylesSelect = document.getElementById('ua-weapon-styles-select');
         const cartContainer = document.getElementById('ua-cart-container');
+
+        if (typeof Choices !== 'undefined') {
+            function initUserAccountSearchableSelect(fieldId) {
+                const element = document.getElementById(fieldId);
+                if (!element) {
+                    return null;
+                }
+                const instance = new Choices(element, {
+                    removeItemButton: false,
+                    shouldSort: false,
+                    searchEnabled: true,
+                    searchResultLimit: 15,
+                    fuseOptions: {
+                        threshold: 0.3,
+                    },
+                    itemSelectText: '',
+                });
+                instance.containerOuter.element.classList.add('choices-compact');
+                return instance;
+            }
+
+            initUserAccountSearchableSelect('id_state_province');
+            initUserAccountSearchableSelect('id_title');
+            initUserAccountSearchableSelect('id_branch');
+            initUserAccountSearchableSelect('id_parent_id');
+        }
 
         if (disciplineSelect) {
             disciplineSelect.addEventListener('change', function () {
@@ -262,6 +358,6 @@
             item.appendChild(remove);
             cartContainer.appendChild(item);
         });
-    })();
+    });
 </script>
 {% endblock %}

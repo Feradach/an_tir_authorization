@@ -48,6 +48,20 @@ def _get_action_note(request, field_name='action_note'):
     return (request.POST.get(field_name) or '').strip()
 
 
+def _marshal_promotion_note_required_for_approval(authorization: Authorization) -> bool:
+    return (
+        authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+        and authorization.status.name != 'Needs Kingdom Approval'
+    )
+
+
+def _note_required_for_rejection(authorization: Authorization) -> bool:
+    return (
+        authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+        or authorization.status.name == 'Needs Kingdom Approval'
+    )
+
+
 def _approve_all_needs_kingdom(request, action_note=''):
     pending_ids = list(
         Authorization.objects.filter(status__name='Needs Kingdom Approval')
@@ -570,9 +584,12 @@ def validate_authorization_action(request):
         ok, msg = validate_approve_authorization(request.user, submit_as_user, authorization)
         return JsonResponse({'ok': ok, 'message': msg})
     if action == 'reject_authorization':
-        submit_as_user, submit_as_error = _resolve_submit_as_user(request)
-        if submit_as_error:
-            return JsonResponse({'ok': False, 'message': submit_as_error}, status=400)
+        if authorization.status.name == 'Needs Kingdom Approval':
+            submit_as_user = request.user
+        else:
+            submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+            if submit_as_error:
+                return JsonResponse({'ok': False, 'message': submit_as_error}, status=400)
         ok, msg = validate_reject_authorization(submit_as_user, authorization)
         return JsonResponse({'ok': ok, 'message': msg})
 
@@ -863,8 +880,7 @@ def index(request):
                 and pending_action.get('action') == 'approve_all_kingdom_authorizations'
             )
 
-            kingdom_pending = Authorization.objects.filter(status__name='Needs Kingdom Approval')
-            requires_note = kingdom_pending.filter(style__name__in=['Junior Marshal', 'Senior Marshal']).exists()
+            requires_note = False
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
@@ -902,7 +918,7 @@ def index(request):
                 and pending_action.get('action') == 'approve_authorization'
                 and pending_action.get('authorization_id') == authorization.id
             )
-            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            requires_note = _marshal_promotion_note_required_for_approval(authorization)
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
@@ -943,16 +959,19 @@ def index(request):
                 mutable_post = request.POST.copy()
                 mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
                 request.POST = mutable_post
-            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            requires_note = _note_required_for_rejection(authorization)
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
-                    messages.error(request, 'A note is required for marshal promotion actions.')
+                    messages.error(request, 'A note is required for this rejection.')
                     return redirect('index')
-                submit_as_user, submit_as_error = _resolve_submit_as_user(request)
-                if submit_as_error:
-                    messages.error(request, submit_as_error)
-                    return redirect('index')
+                if authorization.status.name == 'Needs Kingdom Approval':
+                    submit_as_user = request.user
+                else:
+                    submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+                    if submit_as_error:
+                        messages.error(request, submit_as_error)
+                        return redirect('index')
                 ok, msg = validate_reject_authorization(submit_as_user, authorization)
                 if not ok:
                     messages.error(request, msg)
@@ -960,11 +979,15 @@ def index(request):
                 request.session[pending_key] = {
                     'action': 'reject_authorization',
                     'authorization_id': authorization.id,
-                    'submit_as_user_id': submit_as_user.id if submit_as_user else None,
+                    'submit_as_user_id': (
+                        submit_as_user.id
+                        if submit_as_user and authorization.status.name != 'Needs Kingdom Approval'
+                        else None
+                    ),
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
-                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion.')
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the rejection.')
                 return redirect('index')
             is_valid, mssg = reject_authorization(request, authorization)
             if not is_valid:
@@ -1949,7 +1972,7 @@ def fighter(request, person_id):
                 mutable_post = request.POST.copy()
                 mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
                 request.POST = mutable_post
-            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            requires_note = _marshal_promotion_note_required_for_approval(authorization)
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
@@ -2006,16 +2029,19 @@ def fighter(request, person_id):
                 mutable_post = request.POST.copy()
                 mutable_post['submit_as_user_id'] = str(pending_submit_as_user_id)
                 request.POST = mutable_post
-            requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+            requires_note = _note_required_for_rejection(authorization)
             action_note = _get_action_note(request) if requires_note else ''
             if requires_note and not action_note:
                 if is_pending_submit:
-                    messages.error(request, 'A note is required for marshal promotion actions.')
+                    messages.error(request, 'A note is required for this rejection.')
                     return redirect('fighter', person_id=person_id)
-                submit_as_user, submit_as_error = _resolve_submit_as_user(request)
-                if submit_as_error:
-                    messages.error(request, submit_as_error)
-                    return redirect('fighter', person_id=person_id)
+                if authorization.status.name == 'Needs Kingdom Approval':
+                    submit_as_user = request.user
+                else:
+                    submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+                    if submit_as_error:
+                        messages.error(request, submit_as_error)
+                        return redirect('fighter', person_id=person_id)
                 ok, msg = validate_reject_authorization(submit_as_user, authorization)
                 if not ok:
                     messages.error(request, msg)
@@ -2023,11 +2049,15 @@ def fighter(request, person_id):
                 request.session[pending_key] = {
                     'action': 'reject_authorization',
                     'authorization_id': authorization.id,
-                    'submit_as_user_id': submit_as_user.id if submit_as_user else None,
+                    'submit_as_user_id': (
+                        submit_as_user.id
+                        if submit_as_user and authorization.status.name != 'Needs Kingdom Approval'
+                        else None
+                    ),
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
-                messages.info(request, 'Eligibility verified. Please add a note to finalize the marshal promotion.')
+                messages.info(request, 'Eligibility verified. Please add a note to finalize the rejection.')
                 return redirect('fighter', person_id=person_id)
             is_valid, mssg = reject_authorization(request, authorization)
             if not is_valid:
@@ -2222,7 +2252,7 @@ def fighter(request, person_id):
                 can_approve = True
             can_reject_ok, _ = validate_reject_authorization(request.user, auth)
             can_reject = auth.status.name in ['Pending', 'Needs Regional Approval'] and can_reject_ok
-            if auth_officer and auth.status.name in ['Pending', 'Needs Regional Approval']:
+            if auth_officer and auth.status.name in ['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']:
                 can_reject = True
 
         if discipline_name not in pending_authorizations:
@@ -3414,13 +3444,16 @@ def sign_waiver(request, user_id):
         return render(request, 'authorizations/waiver.html')
 
 def reject_authorization(request, authorization):
-    submit_as_user, submit_as_error = _resolve_submit_as_user(request)
-    if submit_as_error:
-        return False, submit_as_error
-    requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+    if authorization.status.name == 'Needs Kingdom Approval':
+        submit_as_user = request.user
+    else:
+        submit_as_user, submit_as_error = _resolve_submit_as_user(request)
+        if submit_as_error:
+            return False, submit_as_error
+    requires_note = _note_required_for_rejection(authorization)
     action_note = _get_action_note(request) if requires_note else ''
     if requires_note and not action_note:
-        return False, 'A note is required for marshal promotion actions.'
+        return False, 'A note is required for this rejection.'
     if requires_note and request.user.id != submit_as_user.id:
         actor_name = submit_as_user.person.sca_name if hasattr(submit_as_user, 'person') and submit_as_user.person else submit_as_user.username
         requester_name = request.user.person.sca_name if hasattr(request.user, 'person') and request.user.person else request.user.username

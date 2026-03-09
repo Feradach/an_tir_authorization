@@ -358,7 +358,7 @@ class IndexViewTests(ViewTestBase):
         disabled_response = self.client.get(reverse('index'))
         self.assertNotContains(disabled_response, 'Approve All Needs Kingdom Approval')
 
-    def test_kao_can_bulk_approve_needs_kingdom_with_marshal_note_flow(self):
+    def test_kao_can_bulk_approve_needs_kingdom_without_note_flow(self):
         kao_user, kao_person = self.make_person('index_bulk_flow_kao', 'Index Bulk Flow KAO')
         self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
         proposer_user, proposer_person = self.make_person('index_bulk_flow_prop', 'Index Bulk Flow Prop')
@@ -383,26 +383,9 @@ class IndexViewTests(ViewTestBase):
         AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
 
         self.client.login(username=kao_user.username, password='StrongPass!123')
-        first = self.client.post(
+        response = self.client.post(
             reverse('index'),
             {'action': 'approve_all_kingdom_authorizations'},
-            follow=True,
-        )
-
-        self.assertContains(first, 'Eligibility verified. Please add a note to finalize the marshal promotion approvals.')
-        self.assertIn('pending_authorization_action', self.client.session)
-        pending_jm.refresh_from_db()
-        pending_weapon.refresh_from_db()
-        self.assertEqual(pending_jm.status, self.status_kingdom)
-        self.assertEqual(pending_weapon.status, self.status_kingdom)
-
-        second = self.client.post(
-            reverse('index'),
-            {
-                'action': 'approve_all_kingdom_authorizations',
-                'action_note': 'Bulk kingdom approval note',
-                'pending_authorization_action': '1',
-            },
             follow=True,
         )
 
@@ -411,7 +394,57 @@ class IndexViewTests(ViewTestBase):
         self.assertEqual(pending_jm.status, self.status_active)
         self.assertEqual(pending_weapon.status, self.status_active)
         self.assertNotIn('pending_authorization_action', self.client.session)
-        self.assertContains(second, 'Approved all 2 authorizations waiting for Kingdom approval.')
+        self.assertContains(response, 'Approved all 2 authorizations waiting for Kingdom approval.')
+
+    def test_kao_can_reject_needs_kingdom_from_homepage_with_required_note(self):
+        kao_user, kao_person = self.make_person('index_reject_kao', 'Index Reject KAO')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        _, proposer_person = self.make_person('index_reject_prop', 'Index Reject Proposer')
+        _, target_person = self.make_person('index_reject_target', 'Index Reject Target')
+
+        pending_auth = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        get_response = self.client.get(reverse('index'))
+        self.assertContains(get_response, f'name="bad_authorization_id" value="{pending_auth.id}"')
+
+        first = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_auth.id),
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(pending_auth.status, self.status_kingdom)
+        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize the rejection.',
+            self.messages_for(first),
+        )
+
+        second = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_auth.id),
+                'action_note': 'Rejected after kingdom review.',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(pending_auth.status.name, 'Rejected')
+        self.assertNotIn('pending_authorization_action', self.client.session)
 
     def test_turning_sign_off_off_auto_approves_needs_kingdom(self):
         kao_user, kao_person = self.make_person('index_bulk_auto_kao', 'Index Bulk Auto KAO')
@@ -1230,6 +1263,20 @@ class UserAccountViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'authorizations/user_account.html')
+
+    def test_user_account_page_uses_searchable_compact_selects_for_profile_fields(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="user_account_form"')
+        self.assertContains(response, 'class="form-group register-inline-field"')
+        self.assertContains(response, "initUserAccountSearchableSelect('id_state_province');")
+        self.assertContains(response, "initUserAccountSearchableSelect('id_title');")
+        self.assertContains(response, "initUserAccountSearchableSelect('id_branch');")
+        self.assertContains(response, "initUserAccountSearchableSelect('id_parent_id');")
+        self.assertContains(response, '#user_account_form .choices.choices-compact')
 
     def test_non_ao_cannot_modify_background_check_expiration(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
@@ -2266,6 +2313,34 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertEqual(pending_auth.status, self.status_active)
         self.assertEqual(approved.status_code, 200)
 
+    def test_kao_can_approve_needs_kingdom_marshal_without_note(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+        _, proposer_person = self.make_person('needs_kingdom_note_prop', 'Needs Kingdom Note Proposer')
+        target_user, target_person = self.make_person('needs_kingdom_note_target', 'Needs Kingdom Note Target')
+        pending_auth = Authorization.objects.create(
+            person=target_person,
+            style=self.style_sm_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertNotIn('pending_authorization_action', self.client.session)
+        self.assertNotIn('A note is required for marshal promotion actions.', self.messages_for(response))
+
     def test_kingdom_earl_marshal_pending_requires_matching_senior_discipline(self):
         Authorization.objects.create(
             person=self.candidate_armored_person,
@@ -2364,6 +2439,53 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         needs_regional.refresh_from_db()
         self.assertEqual(post_response.status_code, 200)
         self.assertEqual(needs_regional.status.name, 'Rejected')
+
+    def test_kao_can_reject_needs_kingdom_from_fighter_with_required_note(self):
+        needs_kingdom = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        get_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+        self.assertEqual(get_response.status_code, 200)
+        pending = get_response.context['pending_authorization_list']['Armored']
+        self.assertTrue(pending['can_reject'])
+
+        first = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(needs_kingdom.id),
+            },
+            follow=True,
+        )
+
+        needs_kingdom.refresh_from_db()
+        self.assertEqual(needs_kingdom.status, self.status_kingdom)
+        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize the rejection.',
+            self.messages_for(first),
+        )
+
+        second = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(needs_kingdom.id),
+                'action_note': 'Rejected after kingdom review.',
+            },
+            follow=True,
+        )
+
+        needs_kingdom.refresh_from_db()
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(needs_kingdom.status.name, 'Rejected')
+        self.assertNotIn('pending_authorization_action', self.client.session)
 
     def test_pending_background_check_shows_in_pending_authorizations(self):
         pending_bg = Authorization.objects.create(

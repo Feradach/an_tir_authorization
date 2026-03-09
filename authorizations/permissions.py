@@ -753,7 +753,10 @@ def approve_authorization(request):
     authorization = Authorization.objects.get(id=request.POST['authorization_id'])
     auth_region = _authorization_region_name(authorization)
     discipline = authorization.style.discipline.name
-    requires_note = authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+    requires_note = (
+        authorization.style.name in ['Junior Marshal', 'Senior Marshal']
+        and authorization.status.name != 'Needs Kingdom Approval'
+    )
     note = get_action_note() if requires_note else ''
     if requires_note and not note:
         return False, 'A note is required for marshal promotion actions.'
@@ -994,6 +997,11 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
 def validate_reject_authorization(marshal: User, authorization: Authorization):
     auth_discipline = authorization.style.discipline.name
     auth_region = _authorization_region_name(authorization)
+
+    if authorization.status.name == 'Needs Kingdom Approval':
+        if is_kingdom_authorization_officer(marshal):
+            return True, 'OK'
+        return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
 
     if not auth_region:
         _log_unresolved_authorization_region('regional rejection validation', authorization, marshal)

@@ -145,8 +145,8 @@
                                 <button type="submit" class="btn btn-success">Approve</button>
                             </form>
                     {% endif %}
-                    {% if regional_marshal and not auth_officer %}
-                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
+                    {% if regional_marshal and not auth_officer or auth_officer and authorization.status.name == "Needs Kingdom Approval" %}
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Rejection Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                         {% csrf_token %}
                         <input type="hidden" name="action" value="reject_authorization">
                         <input type="hidden" name="bad_authorization_id" value="{{ authorization.id }}">
