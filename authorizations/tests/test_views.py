@@ -738,7 +738,7 @@ class IndexViewTests(ViewTestBase):
         )
         self.assertContains(response, 'target="_blank"')
 
-    def test_kingdom_equestrian_officer_queue_shows_needs_kingdom_equestrian_waiver(self):
+    def test_kingdom_equestrian_officer_queue_does_not_show_needs_kingdom_equestrian_waiver(self):
         discipline_equestrian = Discipline.objects.create(name='Equestrian')
         style_sm_equestrian = WeaponStyle.objects.create(
             name='Senior Marshal',
@@ -767,11 +767,11 @@ class IndexViewTests(ViewTestBase):
         self.client.login(username=eq_officer_user.username, password='StrongPass!123')
         response = self.client.get(reverse('index'))
 
-        self.assertContains(response, 'Needs Kingdom Equestrian Waiver')
-        self.assertContains(response, 'No file')
-        self.assertContains(response, f'name="bad_authorization_id" value="{pending_eq.id}"')
+        self.assertNotContains(response, 'Needs Kingdom Equestrian Waiver')
+        self.assertNotContains(response, 'No file')
+        self.assertNotContains(response, f'name="bad_authorization_id" value="{pending_eq.id}"')
 
-    def test_kingdom_equestrian_officer_can_reject_needs_kingdom_equestrian_waiver_with_note(self):
+    def test_kingdom_equestrian_officer_cannot_reject_needs_kingdom_equestrian_waiver(self):
         discipline_equestrian = Discipline.objects.create(name='Equestrian')
         style_sm_equestrian = WeaponStyle.objects.create(
             name='Senior Marshal',
@@ -809,26 +809,11 @@ class IndexViewTests(ViewTestBase):
 
         pending_eq.refresh_from_db()
         self.assertEqual(pending_eq.status, self.status_needs_kingdom_equestrian_waiver)
-        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertNotIn('pending_authorization_action', self.client.session)
         self.assertIn(
-            'Eligibility verified. Please add a note to finalize the rejection.',
+            'Only the Kingdom Authorization Officer can reject this authorization.',
             self.messages_for(first),
         )
-
-        second = self.client.post(
-            reverse('index'),
-            {
-                'action': 'reject_authorization',
-                'bad_authorization_id': str(pending_eq.id),
-                'action_note': 'Kingdom equestrian waiver was invalid.',
-            },
-            follow=True,
-        )
-
-        pending_eq.refresh_from_db()
-        self.assertEqual(second.status_code, 200)
-        self.assertEqual(pending_eq.status.name, 'Rejected')
-        self.assertNotIn('pending_authorization_action', self.client.session)
 
     def test_unique_name_redirects_to_fighter_page(self):
         unique_user, _ = self.make_person('unique_index_user', 'Unique Fighter')
@@ -2558,7 +2543,7 @@ class SupportingDocumentsViewTests(ViewTestBase):
             reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
         )
 
-    def test_kingdom_equestrian_officer_sees_all_documents(self):
+    def test_kingdom_equestrian_officer_sees_only_associated_documents(self):
         self.client.login(username=self.eq_officer_user.username, password='StrongPass!123')
 
         response = self.client.get(reverse('supporting_documents'))
@@ -2568,7 +2553,7 @@ class SupportingDocumentsViewTests(ViewTestBase):
             response,
             reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
         )
-        self.assertContains(
+        self.assertNotContains(
             response,
             reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
         )
@@ -2868,6 +2853,10 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             name='General Riding',
             discipline=discipline_equestrian,
         )
+        style_junior_ground_crew, _ = WeaponStyle.objects.get_or_create(
+            name='Junior Ground Crew',
+            discipline=discipline_equestrian,
+        )
         style_senior_ground_crew, _ = WeaponStyle.objects.get_or_create(
             name='Senior Ground Crew',
             discipline=discipline_equestrian,
@@ -2886,6 +2875,13 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.grant_authorization(
             self.candidate_armored_person,
             style_general_riding,
+            status=self.status_active,
+            marshal=proposer_person,
+        )
+        # Senior Ground Crew requires an active Junior Ground Crew authorization.
+        self.grant_authorization(
+            self.candidate_armored_person,
+            style_junior_ground_crew,
             status=self.status_active,
             marshal=proposer_person,
         )
@@ -3263,7 +3259,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertContains(response, f'name="authorization_id" value="{pending.id}"')
         self.assertContains(response, 'name="action" value="approve_authorization"')
 
-    def test_fighter_page_shows_approve_for_needs_kingdom_equestrian_waiver(self):
+    def test_fighter_page_hides_approve_for_needs_kingdom_equestrian_waiver_for_eq_officer(self):
         discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
         style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
             name='Senior Marshal',
@@ -3297,9 +3293,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         pending_card = response.context['pending_authorization_list']['Equestrian']
-        self.assertTrue(pending_card['can_approve'])
-        self.assertContains(response, f'name="authorization_id" value="{pending.id}"')
-        self.assertContains(response, 'name="action" value="approve_authorization"')
+        self.assertFalse(pending_card['can_approve'])
 
     def test_kingdom_earl_marshal_pending_requires_matching_senior_discipline(self):
         Authorization.objects.create(
@@ -3514,7 +3508,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertNotEqual(created_auth.status, self.status_kingdom)
         self.assertContains(response, 'Kingdom equestrian waiver review')
 
-    def test_kingdom_equestrian_marshal_can_approve_needs_kingdom_equestrian_waiver(self):
+    def test_kingdom_equestrian_marshal_cannot_approve_needs_kingdom_equestrian_waiver(self):
         discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
         style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
             name='Senior Marshal',
@@ -3565,7 +3559,8 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         pending_eq.refresh_from_db()
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(pending_eq.status, self.status_active)
+        self.assertEqual(pending_eq.status, self.status_needs_kingdom_equestrian_waiver)
+        self.assertContains(response, 'Only the Kingdom Authorization Officer can approve this authorization.')
 
     def test_non_marshal_does_not_get_reject_button_for_needs_regional(self):
         viewer_user, _ = self.make_person('office_pending_viewer', 'Office Pending Viewer')

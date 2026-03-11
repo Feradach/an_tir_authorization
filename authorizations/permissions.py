@@ -603,6 +603,9 @@ def authorization_requires_concurrence(person: Person, style: WeaponStyle, today
         today = date.today()
     if style.name in ['Junior Marshal', 'Senior Marshal']:
         return False
+    discipline_name = getattr(getattr(style, 'discipline', None), 'name', '')
+    if discipline_name in ['Equestrian', 'Siege', 'Seige', 'Youth Armored', 'Youth Rapier']:
+        return False
     cutoff = today - relativedelta(years=1)
     max_effective = Authorization.objects.with_effective_expiration().with_sanction_flag(today=today).filter(
         person=person,
@@ -928,7 +931,7 @@ def approve_authorization(request):
     sign_off_required = authorization_officer_sign_off_enabled()
     is_kao = is_kingdom_authorization_officer(request_user)
     can_approve_kingdom_pending = is_kao
-    can_approve_equestrian_waiver_pending = is_kao or is_kingdom_marshal(request_user, 'Equestrian')
+    can_approve_equestrian_waiver_pending = is_kao
 
     if authorization.status.name == 'Pending':
         if is_kao and marshal.id == request_user.id:
@@ -1047,7 +1050,7 @@ def approve_authorization(request):
             authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS
             and not can_approve_equestrian_waiver_pending
         ):
-            return False, 'Only the Kingdom Authorization Officer or Kingdom Equestrian Marshal can approve this authorization.'
+            return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
 
         # Marshal authorizations require current membership; never Pending Waiver for marshal styles
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
@@ -1096,7 +1099,7 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
     sign_off_required = authorization_officer_sign_off_enabled()
     is_kao = is_kingdom_authorization_officer(request_user)
     can_approve_kingdom_pending = is_kao
-    can_approve_equestrian_waiver_pending = is_kao or is_kingdom_marshal(request_user, 'Equestrian')
+    can_approve_equestrian_waiver_pending = is_kao
 
     if authorization.status.name == KINGDOM_APPROVAL_STATUS:
         if not can_approve_kingdom_pending:
@@ -1108,7 +1111,7 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
 
     if authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
         if not can_approve_equestrian_waiver_pending:
-            return False, 'Only the Kingdom Authorization Officer or Kingdom Equestrian Marshal can approve this authorization.'
+            return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
             if not membership_is_current(authorization.person.user):
                 return False, 'Marshal authorizations require a current membership.'
@@ -1171,9 +1174,9 @@ def validate_reject_authorization(marshal: User, authorization: Authorization):
             return True, 'OK'
         return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
     if authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
-        if is_kingdom_authorization_officer(marshal) or is_kingdom_marshal(marshal, 'Equestrian'):
+        if is_kingdom_authorization_officer(marshal):
             return True, 'OK'
-        return False, 'Only the Kingdom Authorization Officer or Kingdom Equestrian Marshal can reject this authorization.'
+        return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
 
     if not auth_region:
         _log_unresolved_authorization_region('regional rejection validation', authorization, marshal)

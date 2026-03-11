@@ -560,7 +560,6 @@ def _can_view_all_supporting_documents(user) -> bool:
     if (
         is_kingdom_authorization_officer(user)
         or is_kingdom_earl_marshal(user)
-        or is_kingdom_marshal(user, 'Equestrian')
     ):
         return True
     if not hasattr(user, 'person'):
@@ -568,7 +567,7 @@ def _can_view_all_supporting_documents(user) -> bool:
     kingdom_offices = BranchMarshal.objects.filter(
         person=user.person,
         branch__name='An Tir',
-        discipline__name__in=['Earl Marshal', 'Equestrian'],
+        discipline__name__in=['Earl Marshal'],
         end_date__gte=date.today(),
     ).select_related('discipline', 'branch')
     for office in kingdom_offices:
@@ -1216,12 +1215,6 @@ def index(request):
                     KINGDOM_EQUESTRIAN_WAIVER_STATUS,
                 ]
             ).order_by('effective_expiration_date')
-        elif is_kingdom_marshal(request.user, 'Equestrian'):
-            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                style__discipline__name='Equestrian',
-                status__name=KINGDOM_EQUESTRIAN_WAIVER_STATUS,
-            ).order_by('effective_expiration_date')
-
     pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
 
     if request.method == 'POST':

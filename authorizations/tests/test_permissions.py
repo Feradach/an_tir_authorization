@@ -57,7 +57,9 @@ class AuthorizationTestBase(TestCase):
         cls.discipline_armored = Discipline.objects.create(name='Armored')
         cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
+        cls.discipline_youth_rapier = Discipline.objects.create(name='Youth Rapier')
         cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        cls.discipline_siege = Discipline.objects.create(name='Siege')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
         cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
 
@@ -69,10 +71,12 @@ class AuthorizationTestBase(TestCase):
         cls.style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_armored)
         cls.style_jm_youth_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_youth_armored)
         cls.style_sword_youth_armored = WeaponStyle.objects.create(name='Sword', discipline=cls.discipline_youth_armored)
+        cls.style_sword_youth_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=cls.discipline_youth_rapier)
         cls.style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_equestrian)
         cls.style_junior_ground_crew = WeaponStyle.objects.create(name='Junior Ground Crew', discipline=cls.discipline_equestrian)
         cls.style_senior_ground_crew = WeaponStyle.objects.create(name='Senior Ground Crew', discipline=cls.discipline_equestrian)
         cls.style_general_riding = WeaponStyle.objects.create(name='General Riding', discipline=cls.discipline_equestrian)
+        cls.style_siege_engine = WeaponStyle.objects.create(name='Siege Engine', discipline=cls.discipline_siege)
         cls.style_mounted_gaming = WeaponStyle.objects.create(name='Mounted Gaming', discipline=cls.discipline_equestrian)
         cls.style_mounted_archery = WeaponStyle.objects.create(name='Mounted Archery', discipline=cls.discipline_equestrian)
         cls.style_crest_combat = WeaponStyle.objects.create(name='Crest Combat', discipline=cls.discipline_equestrian)
@@ -540,6 +544,26 @@ class ConcurrenceRequirementTests(AuthorizationTestBase):
         _, fighter = self.make_person('concur_marshal', 'Concur Marshal')
 
         self.assertFalse(authorization_requires_concurrence(fighter, self.style_sm_armored))
+
+    def test_equestrian_non_marshal_never_requires_concurrence(self):
+        _, fighter = self.make_person('concur_eq_exempt', 'Concur EQ Exempt')
+
+        self.assertFalse(authorization_requires_concurrence(fighter, self.style_general_riding))
+
+    def test_siege_non_marshal_never_requires_concurrence(self):
+        _, fighter = self.make_person('concur_siege_exempt', 'Concur Siege Exempt')
+
+        self.assertFalse(authorization_requires_concurrence(fighter, self.style_siege_engine))
+
+    def test_youth_armored_non_marshal_never_requires_concurrence(self):
+        _, fighter = self.make_person('concur_ya_exempt', 'Concur YA Exempt')
+
+        self.assertFalse(authorization_requires_concurrence(fighter, self.style_sword_youth_armored))
+
+    def test_youth_rapier_non_marshal_never_requires_concurrence(self):
+        _, fighter = self.make_person('concur_yr_exempt', 'Concur YR Exempt')
+
+        self.assertFalse(authorization_requires_concurrence(fighter, self.style_sword_youth_rapier))
 
 
 class ApproveAuthorizationTests(AuthorizationTestBase):

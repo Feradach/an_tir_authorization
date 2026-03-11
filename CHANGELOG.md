@@ -1,5 +1,11 @@
 ﻿
 ## [Unreleased]
+## [0.1.10] - 2026-03-11
+### Fixed
+- The account page now shows separate First Name and Last Name fields instead of a blank Legal Name field.
+- Equestrian-waiver approvals and rejections are now handled only by Kingdom Authorization Officers, and Kingdom Equestrian officers no longer have global access to supporting documents.
+- New non-marshal authorization requests in Equestrian, Siege, Youth Armored, and Youth Rapier no longer require a second concurrence.
+
 
 ## [0.1.9] - 2026-03-10
 ### Added
