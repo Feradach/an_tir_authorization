@@ -1,5 +1,6 @@
 from dateutil.relativedelta import relativedelta
 import csv
+import uuid
 from django.core.mail import send_mail
 from django.conf import settings
 from datetime import date, datetime
@@ -9,7 +10,7 @@ from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.core.exceptions import ValidationError, PermissionDenied
-from django.http import JsonResponse
+from django.http import JsonResponse, Http404, FileResponse
 from datetime import timedelta
 import logging
 from io import BytesIO
@@ -23,8 +24,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS
 from itertools import groupby
 from collections import defaultdict
 from operator import attrgetter
@@ -48,17 +49,27 @@ def _get_action_note(request, field_name='action_note'):
     return (request.POST.get(field_name) or '').strip()
 
 
+def not_found_redirect_view(request, exception):
+    """Redirect unknown routes to the appropriate homepage shell."""
+    if request.path.startswith('/authorizations/'):
+        messages.warning(request, 'That page was not found. Redirected to the Authorizations Homepage.')
+        return redirect('index')
+    messages.warning(request, 'That page was not found. Redirected to Home.')
+    return redirect('homepage')
+
+
 def _marshal_promotion_note_required_for_approval(authorization: Authorization) -> bool:
     return (
         authorization.style.name in ['Junior Marshal', 'Senior Marshal']
-        and authorization.status.name != 'Needs Kingdom Approval'
+        and not is_kingdom_review_status_name(authorization.status.name)
     )
 
 
 def _note_required_for_rejection(authorization: Authorization) -> bool:
     return (
         authorization.style.name in ['Junior Marshal', 'Senior Marshal']
-        or authorization.status.name == 'Needs Kingdom Approval'
+        or authorization.status.name == 'Pending Background Check'
+        or is_kingdom_review_status_name(authorization.status.name)
     )
 
 
@@ -157,7 +168,7 @@ def _resolve_submit_as_user(request, field_name='submit_as_user_id'):
 
 
 MEMBERSHIP_INVALID_MESSAGE = (
-    'Invalid membership number or expiration date. '
+    'Invalid membership information. '
     'If you believe this is an error, please contact the Kingdom Authorization Officer.'
 )
 
@@ -273,6 +284,191 @@ class MembershipRosterUploadForm(forms.Form):
     membership_csv = forms.FileField(required=True)
 
 
+SUPPORTED_DOCUMENT_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png'}
+MAX_SUPPORTING_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024
+EQUESTRIAN_WAIVER_LINKABLE_STATUSES = [
+    'Pending',
+    'Needs Concurrence',
+    'Needs Regional Approval',
+    'Needs Kingdom Approval',
+    'Pending Background Check',
+    'Pending Waiver',
+    'Needs Kingdom Equestrian Waiver',
+]
+
+
+def _validate_supporting_document_file(uploaded_file):
+    if not uploaded_file:
+        raise ValueError('Please choose a file to upload.')
+
+    filename = (uploaded_file.name or '').strip()
+    _, extension = os.path.splitext(filename.lower())
+    if extension not in SUPPORTED_DOCUMENT_EXTENSIONS:
+        raise ValueError('Supported file types are PDF, JPG, and PNG.')
+
+    if uploaded_file.size > MAX_SUPPORTING_DOCUMENT_SIZE_BYTES:
+        raise ValueError('File is too large. Maximum size is 10 MB.')
+
+
+def _assign_unique_supporting_document_filename(uploaded_file, document_type):
+    original_name = (uploaded_file.name or '').strip()
+    extension = os.path.splitext(original_name)[1].lower()
+    prefix = 'bg' if document_type == SupportingDocument.DocumentType.BACKGROUND_CHECK else 'eq'
+    stamp = timezone.now().strftime('%Y%m%d%H%M%S')
+    suffix = uuid.uuid4().hex[:8]
+    uploaded_file.name = f'{prefix}_{stamp}_{suffix}{extension}'
+
+
+def _equestrian_authorizations_for_people(person_ids):
+    return Authorization.objects.select_related(
+        'person',
+        'style__discipline',
+        'status',
+    ).filter(
+        person_id__in=person_ids,
+        style__discipline__name='Equestrian',
+        status__name__in=EQUESTRIAN_WAIVER_LINKABLE_STATUSES,
+    ).order_by(
+        'person__sca_name',
+        'style__name',
+        'id',
+    )
+
+
+def _parse_int_list(raw_values):
+    parsed = []
+    for raw in raw_values:
+        raw = str(raw).strip()
+        if not raw:
+            continue
+        try:
+            parsed.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return parsed
+
+
+def _handle_supporting_document_upload(request, *, default_person=None, next_url='index'):
+    document_type = (request.POST.get('document_type') or '').strip()
+    uploaded_file = request.FILES.get('document_file')
+    jurisdiction = (request.POST.get('jurisdiction') or '').strip().upper()
+
+    try:
+        _validate_supporting_document_file(uploaded_file)
+    except ValueError as exc:
+        return False, str(exc)
+
+    if document_type == SupportingDocument.DocumentType.BACKGROUND_CHECK:
+        if jurisdiction:
+            return False, 'Jurisdiction is only used for Equestrian Event Waiver uploads.'
+        if not default_person:
+            return False, 'Background check uploads require an account owner.'
+        _assign_unique_supporting_document_filename(uploaded_file, document_type)
+        with transaction.atomic():
+            document = SupportingDocument.objects.create(
+                document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                file=uploaded_file,
+                uploaded_by=request.user,
+            )
+            SupportingDocumentPerson.objects.create(
+                document=document,
+                person=default_person,
+            )
+        return (
+            True,
+            f'Background check proof uploaded for {default_person.sca_name}. '
+            'It is now available for Kingdom review.',
+        )
+
+    if document_type == SupportingDocument.DocumentType.EQUESTRIAN_WAIVER:
+        valid_jurisdictions = {code for code, _label in SupportingDocument.Jurisdiction.choices}
+        if jurisdiction not in valid_jurisdictions:
+            return False, 'Please choose a valid equestrian waiver jurisdiction.'
+
+        selected_person_ids = _parse_int_list(request.POST.getlist('eq_person_ids'))
+        selected_authorization_ids = _parse_int_list(request.POST.getlist('eq_authorization_ids'))
+        if not selected_person_ids:
+            return False, 'Please select at least one fighter for this equestrian waiver.'
+        if not selected_authorization_ids:
+            return False, 'Please select at least one equestrian authorization.'
+
+        has_global_upload_scope = (
+            is_kingdom_authorization_officer(request.user)
+            or is_senior_marshal(request.user, 'Equestrian')
+        )
+        if not has_global_upload_scope:
+            allowed_person_ids = set()
+            if default_person:
+                allowed_person_ids.add(default_person.user_id)
+            if hasattr(request.user, 'person'):
+                allowed_person_ids.add(request.user.person.user_id)
+                allowed_person_ids.update(
+                    request.user.person.children.values_list('user_id', flat=True)
+                )
+            unauthorized = sorted(set(selected_person_ids) - allowed_person_ids)
+            if unauthorized:
+                return (
+                    False,
+                    'You can only upload equestrian waivers for your own account or linked child accounts.',
+                )
+
+        selected_people = list(
+            Person.objects.filter(
+                user_id__in=selected_person_ids,
+                user__merged_into__isnull=True,
+            ).order_by('sca_name')
+        )
+        found_person_ids = {p.user_id for p in selected_people}
+        if found_person_ids != set(selected_person_ids):
+            return False, 'One or more selected fighters were not found.'
+
+        selected_authorizations = list(
+            _equestrian_authorizations_for_people(selected_person_ids).filter(
+                id__in=selected_authorization_ids
+            )
+        )
+        found_authorization_ids = {a.id for a in selected_authorizations}
+        if found_authorization_ids != set(selected_authorization_ids):
+            return False, 'One or more selected equestrian authorizations were invalid.'
+
+        covered_person_ids = {a.person_id for a in selected_authorizations}
+        missing_people = sorted(set(selected_person_ids) - covered_person_ids)
+        if missing_people:
+            return (
+                False,
+                'Each selected fighter must have at least one selected equestrian authorization.',
+            )
+
+        _assign_unique_supporting_document_filename(uploaded_file, document_type)
+        with transaction.atomic():
+            document = SupportingDocument.objects.create(
+                document_type=SupportingDocument.DocumentType.EQUESTRIAN_WAIVER,
+                jurisdiction=jurisdiction,
+                file=uploaded_file,
+                uploaded_by=request.user,
+            )
+            SupportingDocumentPerson.objects.bulk_create(
+                [
+                    SupportingDocumentPerson(document=document, person=selected_person)
+                    for selected_person in selected_people
+                ],
+            )
+            SupportingDocumentAuthorization.objects.bulk_create(
+                [
+                    SupportingDocumentAuthorization(document=document, authorization=authorization)
+                    for authorization in selected_authorizations
+                ],
+            )
+
+        return (
+            True,
+            f'Equestrian waiver uploaded for {len(selected_people)} fighter(s) and '
+            f'{len(selected_authorizations)} authorization(s).',
+        )
+
+    return False, 'Please choose a valid document type.'
+
+
 def _user_can_view_note(user, note) -> bool:
     if not user or not user.is_authenticated:
         return False
@@ -353,6 +549,170 @@ def _is_sanctions_supervisor(user) -> bool:
 def _can_access_sanctions(user) -> bool:
     return _is_sanctions_supervisor(user) or is_kingdom_marshal(user)
 
+
+def _can_view_supporting_documents(user) -> bool:
+    return bool(user and getattr(user, 'is_authenticated', False))
+
+
+def _can_view_all_supporting_documents(user) -> bool:
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if (
+        is_kingdom_authorization_officer(user)
+        or is_kingdom_earl_marshal(user)
+        or is_kingdom_marshal(user, 'Equestrian')
+    ):
+        return True
+    if not hasattr(user, 'person'):
+        return False
+    kingdom_offices = BranchMarshal.objects.filter(
+        person=user.person,
+        branch__name='An Tir',
+        discipline__name__in=['Earl Marshal', 'Equestrian'],
+        end_date__gte=date.today(),
+    ).select_related('discipline', 'branch')
+    for office in kingdom_offices:
+        effective = marshal_office_effective_expiration(office)
+        if effective and effective >= date.today():
+            return True
+    return False
+
+
+def _supporting_documents_queryset_for_viewer(user):
+    queryset = SupportingDocument.objects.select_related(
+        'uploaded_by__person',
+        'reviewed_by__person',
+    ).prefetch_related(
+        'person_links__person',
+        'authorization_links__authorization__person',
+        'authorization_links__authorization__style__discipline',
+        'authorization_links__authorization__status',
+    ).order_by('-uploaded_at')
+    if not user or not getattr(user, 'is_authenticated', False):
+        return queryset.none()
+    if _can_view_all_supporting_documents(user):
+        return queryset
+    return queryset.filter(
+        Q(uploaded_by=user)
+        | Q(person_links__person__user=user)
+        | Q(authorization_links__authorization__person__user=user)
+    )
+
+
+def _can_view_supporting_document(user, document: SupportingDocument) -> bool:
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if _can_view_all_supporting_documents(user):
+        return True
+    if document.uploaded_by_id == user.id:
+        return True
+    return (
+        document.person_links.filter(person__user=user).exists()
+        or document.authorization_links.filter(authorization__person__user=user).exists()
+    )
+
+
+def _supporting_document_file_exists(document: SupportingDocument) -> bool:
+    document_file = getattr(document, 'file', None)
+    if not document_file or not document_file.name:
+        return False
+    try:
+        return document_file.storage.exists(document_file.name)
+    except Exception:
+        return False
+
+
+def _annotate_homepage_document_alerts(authorizations):
+    rows = list(authorizations)
+    if not rows:
+        return rows
+
+    bg_person_ids = {
+        auth.person_id
+        for auth in rows
+        if auth.status and auth.status.name == 'Pending Background Check'
+    }
+    eq_auth_ids = {
+        auth.id
+        for auth in rows
+        if auth.status and auth.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS
+    }
+
+    latest_bg_uploads = {}
+    latest_bg_document_ids = {}
+    if bg_person_ids:
+        for link in (
+            SupportingDocumentPerson.objects.filter(
+                person_id__in=bg_person_ids,
+                document__document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            )
+            .select_related('document')
+            .order_by('person_id', '-document__uploaded_at', '-document_id')
+        ):
+            if link.person_id in latest_bg_uploads:
+                continue
+            if not _supporting_document_file_exists(link.document):
+                continue
+            latest_bg_uploads[link.person_id] = link.document.uploaded_at
+            latest_bg_document_ids[link.person_id] = link.document_id
+
+    latest_eq_uploads = {}
+    latest_eq_document_ids = {}
+    if eq_auth_ids:
+        for link in (
+            SupportingDocumentAuthorization.objects.filter(
+                authorization_id__in=eq_auth_ids,
+                document__document_type=SupportingDocument.DocumentType.EQUESTRIAN_WAIVER,
+            )
+            .select_related('document')
+            .order_by('authorization_id', '-document__uploaded_at', '-document_id')
+        ):
+            if link.authorization_id in latest_eq_uploads:
+                continue
+            if not _supporting_document_file_exists(link.document):
+                continue
+            latest_eq_uploads[link.authorization_id] = link.document.uploaded_at
+            latest_eq_document_ids[link.authorization_id] = link.document_id
+
+    for auth in rows:
+        auth.document_alert_state = ''
+        auth.document_alert_text = '-'
+        auth.document_alert_uploaded_at = None
+        auth.document_alert_url = ''
+        if not auth.status:
+            continue
+
+        status_name = auth.status.name
+        if status_name == 'Pending Background Check':
+            latest_upload = latest_bg_uploads.get(auth.person_id)
+            latest_document_id = latest_bg_document_ids.get(auth.person_id)
+        elif status_name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
+            latest_upload = latest_eq_uploads.get(auth.id)
+            latest_document_id = latest_eq_document_ids.get(auth.id)
+        else:
+            latest_upload = None
+            latest_document_id = None
+
+        if status_name not in ['Pending Background Check', KINGDOM_EQUESTRIAN_WAIVER_STATUS]:
+            continue
+
+        if not latest_upload:
+            auth.document_alert_state = 'missing'
+            auth.document_alert_text = 'No file'
+            continue
+
+        auth.document_alert_uploaded_at = latest_upload
+        if latest_document_id:
+            auth.document_alert_url = reverse('supporting_document_file', kwargs={'document_id': latest_document_id})
+        changed_at = auth.updated_at or auth.created_at
+        if changed_at and latest_upload > changed_at:
+            auth.document_alert_state = 'new'
+            auth.document_alert_text = 'New upload'
+        else:
+            auth.document_alert_state = 'on_file'
+            auth.document_alert_text = 'On file'
+
+    return rows
 
 def _sanctionable_disciplines_for_user(user):
     base = Discipline.objects.exclude(name__in=['Earl Marshal', 'Authorization Officer'])
@@ -584,7 +944,7 @@ def validate_authorization_action(request):
         ok, msg = validate_approve_authorization(request.user, submit_as_user, authorization)
         return JsonResponse({'ok': ok, 'message': msg})
     if action == 'reject_authorization':
-        if authorization.status.name == 'Needs Kingdom Approval':
+        if is_kingdom_review_status_name(authorization.status.name):
             submit_as_user = request.user
         else:
             submit_as_user, submit_as_error = _resolve_submit_as_user(request)
@@ -594,6 +954,45 @@ def validate_authorization_action(request):
         return JsonResponse({'ok': ok, 'message': msg})
 
     return JsonResponse({'ok': False, 'message': 'Invalid action.'}, status=400)
+
+
+@login_required
+def get_equestrian_authorizations(request):
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'message': 'Invalid request method.'}, status=405)
+
+    person_ids = _parse_int_list(
+        request.POST.getlist('person_ids[]') + request.POST.getlist('person_ids')
+    )
+    if not person_ids:
+        return JsonResponse({'ok': True, 'authorizations': []})
+
+    valid_person_ids = list(
+        Person.objects.filter(
+            user_id__in=person_ids,
+            user__merged_into__isnull=True,
+        ).values_list('user_id', flat=True)
+    )
+    if not valid_person_ids:
+        return JsonResponse({'ok': True, 'authorizations': []})
+
+    authorizations = _equestrian_authorizations_for_people(valid_person_ids)
+    payload = [
+        {
+            'id': auth.id,
+            'label': (
+                f'{auth.person.sca_name}: {auth.style.name} '
+                f'({auth.status.name}, expires {auth.effective_expiration.isoformat()})'
+            ),
+            'person_id': auth.person_id,
+            'person_name': auth.person.sca_name,
+            'style_name': auth.style.name,
+            'status_name': auth.status.name,
+            'expiration': auth.effective_expiration.isoformat(),
+        }
+        for auth in authorizations
+    ]
+    return JsonResponse({'ok': True, 'authorizations': payload})
 
 
 @login_required
@@ -635,19 +1034,6 @@ FIGHTER_CARD_WATERMARK = ''
 PDF_FONT_NAME = 'DejaVuSans'
 _PDF_FONT_REGISTERED = False
 _PASSWORD_TOKEN_GENERATOR = PasswordResetTokenGenerator()
-
-USERNAME_RECOVERY_IP_LIMIT = 5
-USERNAME_RECOVERY_EMAIL_LIMIT = 3
-USERNAME_RECOVERY_WINDOW_SECONDS = 15 * 60
-PASSWORD_RESET_IP_LIMIT = 5
-PASSWORD_RESET_USERNAME_LIMIT = 3
-PASSWORD_RESET_WINDOW_SECONDS = 15 * 60
-FIGHTER_LOGIN_INSTRUCTIONS_IP_LIMIT = 5
-FIGHTER_LOGIN_INSTRUCTIONS_PERSON_LIMIT = 3
-FIGHTER_LOGIN_INSTRUCTIONS_WINDOW_SECONDS = 15 * 60
-REGISTER_IP_LIMIT = 5
-REGISTER_EMAIL_LIMIT = 3
-REGISTER_WINDOW_SECONDS = 15 * 60
 
 # Removed all_branch_names since we can now use Branch.is_region() to filter branches
 all_states = [
@@ -786,6 +1172,7 @@ def index(request):
     kingdom_earl_marshal = is_kingdom_marshal(request.user, 'Earl Marshal')
     auth_officer = is_kingdom_authorization_officer(request.user)
     can_manage_sanctions = _can_access_sanctions(request.user)
+    can_view_supporting_documents = _can_view_supporting_documents(request.user)
 
     # Are they in the branch marshal table at all?
     try:
@@ -823,8 +1210,19 @@ def index(request):
             ).order_by('effective_expiration_date')
         if auth_officer:
             pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                status__name__in=['Needs Kingdom Approval', 'Pending Background Check']
+                status__name__in=[
+                    KINGDOM_APPROVAL_STATUS,
+                    'Pending Background Check',
+                    KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+                ]
             ).order_by('effective_expiration_date')
+        elif is_kingdom_marshal(request.user, 'Equestrian'):
+            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
+                style__discipline__name='Equestrian',
+                status__name=KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            ).order_by('effective_expiration_date')
+
+    pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
 
     if request.method == 'POST':
         if not request.user.is_authenticated:
@@ -944,6 +1342,7 @@ def index(request):
             if is_pending_submit and pending_key in request.session:
                 del request.session[pending_key]
                 request.session.modified = True
+            return redirect('index')
         elif action == 'reject_authorization':
             authorization = Authorization.objects.get(id=request.POST['bad_authorization_id'])
             pending_key = 'pending_authorization_action'
@@ -965,7 +1364,7 @@ def index(request):
                 if is_pending_submit:
                     messages.error(request, 'A note is required for this rejection.')
                     return redirect('index')
-                if authorization.status.name == 'Needs Kingdom Approval':
+                if is_kingdom_review_status_name(authorization.status.name):
                     submit_as_user = request.user
                 else:
                     submit_as_user, submit_as_error = _resolve_submit_as_user(request)
@@ -981,7 +1380,7 @@ def index(request):
                     'authorization_id': authorization.id,
                     'submit_as_user_id': (
                         submit_as_user.id
-                        if submit_as_user and authorization.status.name != 'Needs Kingdom Approval'
+                        if submit_as_user and not is_kingdom_review_status_name(authorization.status.name)
                         else None
                     ),
                     'created_at': datetime.utcnow().isoformat(),
@@ -997,6 +1396,7 @@ def index(request):
             if is_pending_submit and pending_key in request.session:
                 del request.session[pending_key]
                 request.session.modified = True
+            return redirect('index')
 
 
     pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
@@ -1010,6 +1410,7 @@ def index(request):
         'kingdom_earl_marshal': kingdom_earl_marshal,
         'auth_officer': auth_officer,
         'can_manage_sanctions': can_manage_sanctions,
+        'can_view_supporting_documents': can_view_supporting_documents,
         'pending_authorizations': pending_authorizations,
         'all_people': all_people,
         'all_people_people': all_people_qs,
@@ -1095,8 +1496,23 @@ def register(request):
             email = request.POST.get('email', '').strip().lower()
             ip_key = f"register:ip:{ip_address}"
             email_key = f"register:email:{email}"
-            if _throttle_request(ip_key, REGISTER_IP_LIMIT, REGISTER_WINDOW_SECONDS) or \
-               (email and _throttle_request(email_key, REGISTER_EMAIL_LIMIT, REGISTER_WINDOW_SECONDS)):
+            register_window_seconds = _throttle_setting(
+                'AUTHZ_REGISTER_WINDOW_SECONDS',
+                prod_default=15 * 60,
+                test_default=5 * 60,
+            )
+            register_email_limit = _throttle_setting(
+                'AUTHZ_REGISTER_EMAIL_LIMIT',
+                prod_default=3,
+                test_default=50,
+            )
+            register_ip_limit = _throttle_setting(
+                'AUTHZ_REGISTER_IP_LIMIT',
+                prod_default=5,
+                test_default=100,
+            )
+            if _throttle_request(ip_key, register_ip_limit, register_window_seconds) or \
+               (email and _throttle_request(email_key, register_email_limit, register_window_seconds)):
                 logger.warning('Registration throttled for email=%s ip=%s', email, ip_address)
                 messages.error(request, 'Too many registration attempts. Please wait a bit and try again.')
                 return render(request, 'authorizations/register.html', {
@@ -1244,6 +1660,19 @@ def _throttle_request(key: str, limit: int, window_seconds: int) -> bool:
     cache.incr(key)
     return False
 
+
+def _throttle_setting(setting_name: str, prod_default: int, test_default: int) -> int:
+    raw = getattr(settings, setting_name, None)
+    if raw is not None:
+        try:
+            parsed = int(raw)
+            return max(1, parsed)
+        except (TypeError, ValueError):
+            logger.warning('Invalid throttle setting %s=%r. Using defaults.', setting_name, raw)
+    if getattr(settings, 'AUTHZ_TEST_FEATURES', False):
+        return test_default
+    return prod_default
+
 def password_reset_token(request, uidb64, token):
     user = None
     try:
@@ -1297,8 +1726,23 @@ def recover_account(request):
             ip_address = _get_client_ip(request)
             username_key = f"password-reset:username:{username.lower()}"
             ip_key = f"password-reset:ip:{ip_address}"
-            if _throttle_request(username_key, PASSWORD_RESET_USERNAME_LIMIT, PASSWORD_RESET_WINDOW_SECONDS) or \
-               _throttle_request(ip_key, PASSWORD_RESET_IP_LIMIT, PASSWORD_RESET_WINDOW_SECONDS):
+            password_reset_window_seconds = _throttle_setting(
+                'AUTHZ_PASSWORD_RESET_WINDOW_SECONDS',
+                prod_default=15 * 60,
+                test_default=5 * 60,
+            )
+            password_reset_username_limit = _throttle_setting(
+                'AUTHZ_PASSWORD_RESET_USERNAME_LIMIT',
+                prod_default=3,
+                test_default=50,
+            )
+            password_reset_ip_limit = _throttle_setting(
+                'AUTHZ_PASSWORD_RESET_IP_LIMIT',
+                prod_default=5,
+                test_default=100,
+            )
+            if _throttle_request(username_key, password_reset_username_limit, password_reset_window_seconds) or \
+               _throttle_request(ip_key, password_reset_ip_limit, password_reset_window_seconds):
                 logger.warning('Password reset throttled for username=%s ip=%s', username, ip_address)
                 messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
                 return redirect('login')
@@ -1345,8 +1789,23 @@ def recover_account(request):
             ip_address = _get_client_ip(request)
             email_key = f"username-recovery:email:{email.lower()}"
             ip_key = f"username-recovery:ip:{ip_address}"
-            if _throttle_request(email_key, USERNAME_RECOVERY_EMAIL_LIMIT, USERNAME_RECOVERY_WINDOW_SECONDS) or \
-               _throttle_request(ip_key, USERNAME_RECOVERY_IP_LIMIT, USERNAME_RECOVERY_WINDOW_SECONDS):
+            username_recovery_window_seconds = _throttle_setting(
+                'AUTHZ_USERNAME_RECOVERY_WINDOW_SECONDS',
+                prod_default=15 * 60,
+                test_default=5 * 60,
+            )
+            username_recovery_email_limit = _throttle_setting(
+                'AUTHZ_USERNAME_RECOVERY_EMAIL_LIMIT',
+                prod_default=3,
+                test_default=50,
+            )
+            username_recovery_ip_limit = _throttle_setting(
+                'AUTHZ_USERNAME_RECOVERY_IP_LIMIT',
+                prod_default=5,
+                test_default=100,
+            )
+            if _throttle_request(email_key, username_recovery_email_limit, username_recovery_window_seconds) or \
+               _throttle_request(ip_key, username_recovery_ip_limit, username_recovery_window_seconds):
                 logger.warning('Username recovery throttled for email=%s ip=%s', email, ip_address)
                 messages.error(request, 'Too many recovery attempts. Please wait a bit and try again.')
                 return render(request, 'authorizations/recover_account.html')
@@ -1890,8 +2349,23 @@ def fighter(request, person_id):
             person_key = f"fighter-login-instructions:person:{person_id}"
             ip_key = f"fighter-login-instructions:ip:{ip_address}"
             sender_email = settings.DEFAULT_FROM_EMAIL
-            throttled = _throttle_request(person_key, FIGHTER_LOGIN_INSTRUCTIONS_PERSON_LIMIT, FIGHTER_LOGIN_INSTRUCTIONS_WINDOW_SECONDS) or \
-                _throttle_request(ip_key, FIGHTER_LOGIN_INSTRUCTIONS_IP_LIMIT, FIGHTER_LOGIN_INSTRUCTIONS_WINDOW_SECONDS)
+            fighter_login_window_seconds = _throttle_setting(
+                'AUTHZ_FIGHTER_LOGIN_INSTRUCTIONS_WINDOW_SECONDS',
+                prod_default=15 * 60,
+                test_default=5 * 60,
+            )
+            fighter_login_person_limit = _throttle_setting(
+                'AUTHZ_FIGHTER_LOGIN_INSTRUCTIONS_PERSON_LIMIT',
+                prod_default=3,
+                test_default=50,
+            )
+            fighter_login_ip_limit = _throttle_setting(
+                'AUTHZ_FIGHTER_LOGIN_INSTRUCTIONS_IP_LIMIT',
+                prod_default=5,
+                test_default=100,
+            )
+            throttled = _throttle_request(person_key, fighter_login_person_limit, fighter_login_window_seconds) or \
+                _throttle_request(ip_key, fighter_login_ip_limit, fighter_login_window_seconds)
 
             if not throttled:
                 login_path = reverse('login')
@@ -2035,7 +2509,7 @@ def fighter(request, person_id):
                 if is_pending_submit:
                     messages.error(request, 'A note is required for this rejection.')
                     return redirect('fighter', person_id=person_id)
-                if authorization.status.name == 'Needs Kingdom Approval':
+                if is_kingdom_review_status_name(authorization.status.name):
                     submit_as_user = request.user
                 else:
                     submit_as_user, submit_as_error = _resolve_submit_as_user(request)
@@ -2051,7 +2525,7 @@ def fighter(request, person_id):
                     'authorization_id': authorization.id,
                     'submit_as_user_id': (
                         submit_as_user.id
-                        if submit_as_user and authorization.status.name != 'Needs Kingdom Approval'
+                        if submit_as_user and not is_kingdom_review_status_name(authorization.status.name)
                         else None
                     ),
                     'created_at': datetime.utcnow().isoformat(),
@@ -2119,15 +2593,28 @@ def fighter(request, person_id):
 
             active_status = AuthorizationStatus.objects.get(name='Active')
             pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
-            needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
+            needs_kingdom_status = AuthorizationStatus.objects.get(name=KINGDOM_APPROVAL_STATUS)
+            needs_kingdom_equestrian_waiver_status = AuthorizationStatus.objects.filter(
+                name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
+            ).order_by('id').first()
+            if not needs_kingdom_equestrian_waiver_status:
+                needs_kingdom_equestrian_waiver_status = AuthorizationStatus.objects.create(
+                    name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
+                )
             sign_off_required = authorization_officer_sign_off_enabled()
 
             def waiver_current(u):
                 return bool(u.waiver_expiration and u.waiver_expiration > date.today())
 
-            status_to_set = needs_kingdom_status if sign_off_required else (
-                active_status if waiver_current(authorization.person.user) else pending_waiver_status
-            )
+            review_status_name = kingdom_review_status_name_for_style(authorization.style)
+            if sign_off_required or review_status_name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
+                status_to_set = (
+                    needs_kingdom_equestrian_waiver_status
+                    if review_status_name == KINGDOM_EQUESTRIAN_WAIVER_STATUS
+                    else needs_kingdom_status
+                )
+            else:
+                status_to_set = active_status if waiver_current(authorization.person.user) else pending_waiver_status
 
             new_expiration = calculate_authorization_expiration(authorization.person, authorization.style)
             for pending in pending_auths:
@@ -2142,7 +2629,9 @@ def fighter(request, person_id):
                     authorization.person.user.waiver_expiration = new_expiration
                     authorization.person.user.save()
 
-            if sign_off_required:
+            if status_to_set == needs_kingdom_equestrian_waiver_status:
+                messages.success(request, 'Concurrence recorded. Authorization submitted for Kingdom equestrian waiver review.')
+            elif sign_off_required:
                 messages.success(request, 'Concurrence recorded. Authorization submitted to Kingdom for approval.')
             elif status_to_set == pending_waiver_status:
                 messages.success(request, 'Concurrence recorded. Authorization pending waiver.')
@@ -2159,7 +2648,17 @@ def fighter(request, person_id):
     pending_authorization_list = Authorization.objects.with_effective_expiration().select_related(
         'person__branch__region',
         'style__discipline',
-    ).filter(person_id=person_id, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval', 'Needs Concurrence', 'Pending Background Check']).order_by(
+    ).filter(
+        person_id=person_id,
+        status__name__in=[
+            'Pending',
+            'Needs Regional Approval',
+            KINGDOM_APPROVAL_STATUS,
+            KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            'Needs Concurrence',
+            'Pending Background Check',
+        ],
+    ).order_by(
         'style__discipline__name', 'effective_expiration_date', 'style__name')
 
     pending_waiver_list = Authorization.objects.with_effective_expiration().select_related(
@@ -2251,8 +2750,18 @@ def fighter(request, person_id):
             if auth_officer:
                 can_approve = True
             can_reject_ok, _ = validate_reject_authorization(request.user, auth)
-            can_reject = auth.status.name in ['Pending', 'Needs Regional Approval'] and can_reject_ok
-            if auth_officer and auth.status.name in ['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']:
+            can_reject = auth.status.name in [
+                'Pending',
+                'Needs Regional Approval',
+                KINGDOM_APPROVAL_STATUS,
+                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            ] and can_reject_ok
+            if auth_officer and auth.status.name in [
+                'Pending',
+                'Needs Regional Approval',
+                KINGDOM_APPROVAL_STATUS,
+                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            ]:
                 can_reject = True
 
         if discipline_name not in pending_authorizations:
@@ -2725,9 +3234,30 @@ def add_authorization(request, person_id):
 
             active_status = AuthorizationStatus.objects.get(name='Active')
             pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
-            needs_kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
-            needs_concurrence_status = AuthorizationStatus.objects.get(name='Needs Concurrence')
+            needs_kingdom_status = AuthorizationStatus.objects.get(name=KINGDOM_APPROVAL_STATUS)
+            needs_kingdom_equestrian_waiver_status = AuthorizationStatus.objects.filter(
+                name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
+            ).order_by('id').first()
+            if not needs_kingdom_equestrian_waiver_status:
+                needs_kingdom_equestrian_waiver_status = AuthorizationStatus.objects.create(
+                    name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
+                )
+            needs_concurrence_status = AuthorizationStatus.objects.filter(
+                name='Needs Concurrence'
+            ).order_by('id').first()
+            if not needs_concurrence_status:
+                needs_concurrence_status = AuthorizationStatus.objects.create(name='Needs Concurrence')
             sign_off_required = authorization_officer_sign_off_enabled()
+
+            def kingdom_review_status_for_style(style: WeaponStyle):
+                status_name = kingdom_review_status_name_for_style(style)
+                if status_name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
+                    return needs_kingdom_equestrian_waiver_status
+                return needs_kingdom_status
+
+            def routes_to_kingdom_review(style: WeaponStyle) -> bool:
+                return sign_off_required or kingdom_review_status_name_for_style(style) == KINGDOM_EQUESTRIAN_WAIVER_STATUS
+
             pending_key = f'pending_authorization_{person_id}'
             is_pending_submit = request.POST.get('pending_authorization') == '1'
             pending_concurring_fighter_user_id = None
@@ -2923,12 +3453,18 @@ def add_authorization(request, person_id):
                                     if requires_concurrence(update_auth.style):
                                         if concurring_fighter:
                                             update_auth.concurring_fighter = concurring_fighter
-                                            if sign_off_required:
-                                                update_auth.status = needs_kingdom_status
-                                                messages.success(
-                                                    request,
-                                                    f'Concurrence recorded for {update_auth.style.name}. Authorization submitted to Kingdom for approval.'
-                                                )
+                                            if routes_to_kingdom_review(update_auth.style):
+                                                update_auth.status = kingdom_review_status_for_style(update_auth.style)
+                                                if update_auth.status == needs_kingdom_equestrian_waiver_status:
+                                                    messages.success(
+                                                        request,
+                                                        f'Concurrence recorded for {update_auth.style.name}. Authorization submitted for Kingdom equestrian waiver review.'
+                                                    )
+                                                else:
+                                                    messages.success(
+                                                        request,
+                                                        f'Concurrence recorded for {update_auth.style.name}. Authorization submitted to Kingdom for approval.'
+                                                    )
                                             else:
                                                 update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
                                                 if update_auth.status == active_status:
@@ -2947,12 +3483,18 @@ def add_authorization(request, person_id):
                                             messages.success(request, f'Authorization for {update_auth.style.name} requires concurrence from another authorized fighter.')
                                     else:
                                         update_auth.concurring_fighter = None
-                                        if sign_off_required:
-                                            update_auth.status = needs_kingdom_status
-                                            messages.success(
-                                                request,
-                                                f'Authorization for {update_auth.style.name} submitted to Kingdom for approval.'
-                                            )
+                                        if routes_to_kingdom_review(update_auth.style):
+                                            update_auth.status = kingdom_review_status_for_style(update_auth.style)
+                                            if update_auth.status == needs_kingdom_equestrian_waiver_status:
+                                                messages.success(
+                                                    request,
+                                                    f'Authorization for {update_auth.style.name} submitted for Kingdom equestrian waiver review.'
+                                                )
+                                            else:
+                                                messages.success(
+                                                    request,
+                                                    f'Authorization for {update_auth.style.name} submitted to Kingdom for approval.'
+                                                )
                                         else:
                                             update_auth.status = active_status if waiver_current(person.user) else pending_waiver_status
                                             if update_auth.status == active_status:
@@ -2986,9 +3528,18 @@ def add_authorization(request, person_id):
                                     expiration = calculate_authorization_expiration(person, style)
                                     if requires_concurrence(style):
                                         if concurring_fighter:
-                                            if sign_off_required:
-                                                status_to_set = needs_kingdom_status
-                                                success_message = f'Concurrence recorded for {style.name}. Authorization submitted to Kingdom for approval.'
+                                            if routes_to_kingdom_review(style):
+                                                status_to_set = kingdom_review_status_for_style(style)
+                                                if status_to_set == needs_kingdom_equestrian_waiver_status:
+                                                    success_message = (
+                                                        f'Concurrence recorded for {style.name}. '
+                                                        'Authorization submitted for Kingdom equestrian waiver review.'
+                                                    )
+                                                else:
+                                                    success_message = (
+                                                        f'Concurrence recorded for {style.name}. '
+                                                        'Authorization submitted to Kingdom for approval.'
+                                                    )
                                             else:
                                                 status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
                                                 if status_to_set == active_status:
@@ -3005,7 +3556,7 @@ def add_authorization(request, person_id):
                                                 created_by=authorizing_marshal,
                                                 updated_by=authorizing_marshal,
                                             )
-                                            if (not sign_off_required) and status_to_set == active_status:
+                                            if status_to_set == active_status:
                                                 if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
                                                     person.user.waiver_expiration = expiration
                                                     person.user.save()
@@ -3023,17 +3574,24 @@ def add_authorization(request, person_id):
                                             )
                                             messages.success(request, f'Authorization for {style.name} requires concurrence from another authorized fighter.')
                                     else:
-                                        if sign_off_required:
+                                        if routes_to_kingdom_review(style):
+                                            status_to_set = kingdom_review_status_for_style(style)
                                             new_auth = Authorization.objects.create(
                                                 person=person,
                                                 style=style,
                                                 expiration=expiration,
                                                 marshal=Person.objects.get(user=authorizing_marshal),
-                                                status=needs_kingdom_status,
+                                                status=status_to_set,
                                                 created_by=authorizing_marshal,
                                                 updated_by=authorizing_marshal,
                                             )
-                                            messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
+                                            if status_to_set == needs_kingdom_equestrian_waiver_status:
+                                                messages.success(
+                                                    request,
+                                                    f'Authorization for {style.name} submitted for Kingdom equestrian waiver review.'
+                                                )
+                                            else:
+                                                messages.success(request, f'Authorization for {style.name} submitted to Kingdom for approval.')
                                         else:
                                             status_to_set = active_status if waiver_current(person.user) else pending_waiver_status
                                             new_auth = Authorization.objects.create(
@@ -3050,7 +3608,7 @@ def add_authorization(request, person_id):
                                             else:
                                                 messages.success(request, f'Authorization for {style.name} pending waiver.')
                                         # Only push waiver when the new auth is Active
-                                        if (not sign_off_required) and status_to_set == active_status:
+                                        if status_to_set == active_status:
                                             if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
                                                 person.user.waiver_expiration = expiration
                                                 person.user.save()
@@ -3134,6 +3692,19 @@ def user_account(request, user_id):
         requestor = request.user
         user = User.objects.get(id=user_id)
         person = user.person
+
+        if action == 'upload_supporting_document':
+            next_url = reverse('user_account', kwargs={'user_id': user_id})
+            ok, message = _handle_supporting_document_upload(
+                request,
+                default_person=person,
+                next_url=next_url,
+            )
+            if ok:
+                messages.success(request, message)
+            else:
+                messages.error(request, message)
+            return redirect(next_url)
 
         if action == 'add_authorization_self':
             if not testing:
@@ -3402,6 +3973,21 @@ def user_account(request, user_id):
         max_expiration = user.membership_expiration
 
     membership_roster_import = MembershipRosterImport.objects.first()
+    recent_supporting_documents = list(
+        SupportingDocument.objects.filter(
+            person_links__person=person,
+        ).select_related(
+            'uploaded_by__person',
+        ).prefetch_related(
+            'person_links__person',
+            'authorization_links__authorization__style__discipline',
+            'authorization_links__authorization__status',
+        ).order_by('-uploaded_at').distinct()[:10]
+    )
+    can_upload_equestrian_for_anyone = (
+        is_kingdom_authorization_officer(request.user)
+        or is_senior_marshal(request.user, 'Equestrian')
+    )
 
     context = {
         'person': person,
@@ -3421,6 +4007,10 @@ def user_account(request, user_id):
         'discipline_choices': Discipline.objects.order_by('name'),
         'testing': testing,
         'membership_roster_import': membership_roster_import,
+        'supporting_document_type_choices': SupportingDocument.DocumentType.choices,
+        'supporting_document_jurisdiction_choices': SupportingDocument.Jurisdiction.choices,
+        'recent_supporting_documents': recent_supporting_documents,
+        'can_upload_equestrian_for_anyone': can_upload_equestrian_for_anyone,
     }
 
     return render(request, 'authorizations/user_account.html', context)
@@ -3444,7 +4034,7 @@ def sign_waiver(request, user_id):
         return render(request, 'authorizations/waiver.html')
 
 def reject_authorization(request, authorization):
-    if authorization.status.name == 'Needs Kingdom Approval':
+    if is_kingdom_review_status_name(authorization.status.name):
         submit_as_user = request.user
     else:
         submit_as_user, submit_as_error = _resolve_submit_as_user(request)
@@ -3519,6 +4109,109 @@ def upload_membership_roster(request):
             f'{skipped_rows} row(s) were skipped because required membership fields were missing or invalid.',
         )
     return redirect(next_url)
+
+
+def supporting_documents(request):
+    if not request.user.is_authenticated:
+        return redirect('index')
+
+    if request.method == 'POST':
+        if not hasattr(request.user, 'person'):
+            messages.error(request, 'Your account is missing a fighter profile. Please contact support.')
+            return redirect('supporting_documents')
+        if request.POST.get('action') == 'upload_supporting_document':
+            ok, message = _handle_supporting_document_upload(
+                request,
+                default_person=request.user.person,
+                next_url=reverse('supporting_documents'),
+            )
+            if ok:
+                messages.success(request, message)
+            else:
+                messages.error(request, message)
+            return redirect('supporting_documents')
+        return redirect('supporting_documents')
+
+    can_view_all_documents = _can_view_all_supporting_documents(request.user)
+    documents = _supporting_documents_queryset_for_viewer(request.user)
+
+    selected_sca_name = (request.GET.get('sca_name') or '').strip()
+    selected_review_status = (request.GET.get('review_status') or '').strip()
+    requested_document_type = (request.GET.get('document_type') or '').strip()
+
+    allowed_document_types = {value for value, _label in SupportingDocument.DocumentType.choices}
+    allowed_review_statuses = {value for value, _label in SupportingDocument.ReviewStatus.choices}
+    selected_document_type = requested_document_type if requested_document_type in allowed_document_types else ''
+
+    if selected_sca_name:
+        documents = documents.filter(person_links__person__sca_name=selected_sca_name)
+    if selected_review_status in allowed_review_statuses:
+        documents = documents.filter(review_status=selected_review_status)
+    if selected_document_type:
+        documents = documents.filter(document_type=selected_document_type)
+
+    documents = documents.distinct()
+    documents = list(documents)
+    for document in documents:
+        document.file_available = _supporting_document_file_exists(document)
+    document_people = (
+        Person.objects.filter(
+            user__merged_into__isnull=True,
+            supporting_document_links__document__in=documents,
+        )
+        .order_by('sca_name')
+        .values_list('sca_name', flat=True)
+        .distinct()
+    )
+
+    context = {
+        'documents': documents,
+        'document_people': document_people,
+        'document_type_choices': SupportingDocument.DocumentType.choices,
+        'review_status_choices': SupportingDocument.ReviewStatus.choices,
+        'selected_sca_name': selected_sca_name,
+        'selected_document_type': selected_document_type,
+        'selected_review_status': selected_review_status,
+        'can_view_all_documents': can_view_all_documents,
+        'is_authenticated': request.user.is_authenticated,
+        'can_upload_supporting_documents': request.user.is_authenticated and hasattr(request.user, 'person'),
+        'can_upload_equestrian_for_anyone': (
+            request.user.is_authenticated and (
+                is_kingdom_authorization_officer(request.user)
+                or is_senior_marshal(request.user, 'Equestrian')
+            )
+        ),
+        'supporting_document_type_choices': SupportingDocument.DocumentType.choices,
+        'supporting_document_jurisdiction_choices': SupportingDocument.Jurisdiction.choices,
+        'upload_person': request.user.person if request.user.is_authenticated and hasattr(request.user, 'person') else None,
+        'all_people': Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name')
+        if request.user.is_authenticated
+        else [],
+    }
+    return render(request, 'authorizations/supporting_documents.html', context)
+
+
+@login_required
+def supporting_document_file(request, document_id):
+    document = get_object_or_404(
+        SupportingDocument.objects.select_related('uploaded_by__person'),
+        id=document_id,
+    )
+    if not _can_view_supporting_document(request.user, document):
+        messages.warning(request, 'You do not have authority to view that document.')
+        return redirect('index')
+    if not _supporting_document_file_exists(document):
+        messages.warning(request, 'That supporting document file was not found.')
+        return redirect('index')
+
+    try:
+        file_handle = document.file.open('rb')
+    except FileNotFoundError:
+        messages.warning(request, 'That supporting document file was not found.')
+        return redirect('index')
+
+    filename = os.path.basename(document.file.name)
+    return FileResponse(file_handle, as_attachment=False, filename=filename)
 
 
 @login_required

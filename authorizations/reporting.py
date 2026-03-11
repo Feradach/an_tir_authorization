@@ -35,18 +35,28 @@ REGIONAL_DISCIPLINE_MAP = [
 ]
 
 EQUESTRIAN_TYPE_ORDER = [
-    'Ground Crew - Junior',
-    'Ground Crew - Senior',
-    'Crest Combat',
-    'Driving',
-    'Ground Driving',
+    'Junior Ground Crew',
+    'Senior Ground Crew',
     'General Riding',
-    'Jousting',
-    'Mounted Archery',
     'Mounted Gaming',
-    'Mounted Heavy Combat',
-    'Experimental Weapon',
+    'Mounted Archery',
+    'Mounted Crest Combat',
+    'Mounted Combat',
+    'Driving',
+    'Foam-Tipped Jousting',
 ]
+
+EQUESTRIAN_TYPE_ALIASES = {
+    'Junior Ground Crew': {'Junior Ground Crew', 'Ground Crew - Junior'},
+    'Senior Ground Crew': {'Senior Ground Crew', 'Ground Crew - Senior'},
+    'General Riding': {'General Riding'},
+    'Mounted Gaming': {'Mounted Gaming'},
+    'Mounted Archery': {'Mounted Archery'},
+    'Mounted Crest Combat': {'Mounted Crest Combat', 'Crest Combat'},
+    'Mounted Combat': {'Mounted Combat', 'Mounted Heavy Combat'},
+    'Driving': {'Driving', 'Ground Driving'},
+    'Foam-Tipped Jousting': {'Foam-Tipped Jousting', 'Jousting'},
+}
 
 
 class ReportingConfigurationError(Exception):
@@ -111,7 +121,11 @@ def validate_current_reporting_configuration():
     existing_equestrian_styles = set(
         WeaponStyle.objects.filter(discipline__name='Equestrian').values_list('name', flat=True)
     )
-    missing_equestrian_styles = sorted(set(EQUESTRIAN_TYPE_ORDER) - existing_equestrian_styles)
+    missing_equestrian_styles = sorted(
+        label
+        for label in EQUESTRIAN_TYPE_ORDER
+        if not (EQUESTRIAN_TYPE_ALIASES[label] & existing_equestrian_styles)
+    )
     if missing_equestrian_styles:
         issues.append(
             'Missing expected equestrian authorization types: '
@@ -119,6 +133,13 @@ def validate_current_reporting_configuration():
         )
 
     return issues
+
+
+def _equestrian_bucket_for_style(style_name):
+    for report_label, aliases in EQUESTRIAN_TYPE_ALIASES.items():
+        if style_name in aliases:
+            return report_label
+    return None
 
 
 def _person_region_name(person):
@@ -203,10 +224,11 @@ def build_current_report_snapshot(as_of=None):
             if style_name == 'Senior Marshal':
                 region_disc_seniors[region_disc_key].add(person_id)
 
-        if discipline_name == 'Equestrian' and style_name in EQUESTRIAN_TYPE_ORDER:
-            equestrian_people[style_name].add(person_id)
+        equestrian_bucket = _equestrian_bucket_for_style(style_name) if discipline_name == 'Equestrian' else None
+        if equestrian_bucket:
+            equestrian_people[equestrian_bucket].add(person_id)
             if region_name in active_region_set:
-                equestrian_region_people[(region_name, style_name)].add(person_id)
+                equestrian_region_people[(region_name, equestrian_bucket)].add(person_id)
 
     disc_nf_juniors = defaultdict(set)
     disc_nf_seniors = defaultdict(set)

@@ -95,7 +95,8 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Keep uploaded files outside the deploy/repo tree so deploy cleanup cannot remove them.
+MEDIA_ROOT = Path('/srv/an_tir/media')
 
 USE_X_FORWARDED_HOST = True
 

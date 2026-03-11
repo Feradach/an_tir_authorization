@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
+import sys
 from dotenv import load_dotenv
 
 
@@ -143,6 +144,11 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Keep test-run uploads isolated from normal media files.
+# This prevents local test runs from mixing with or deleting real uploaded documents.
+if any(arg.startswith('test') for arg in sys.argv):
+    MEDIA_ROOT = BASE_DIR / 'tmp' / 'test-media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field

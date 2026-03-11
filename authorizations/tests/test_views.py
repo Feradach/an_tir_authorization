@@ -8,6 +8,7 @@ from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.messages import get_messages
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -28,6 +29,9 @@ from authorizations.models import (
     Sanction,
     MembershipRosterEntry,
     MembershipRosterImport,
+    SupportingDocument,
+    SupportingDocumentAuthorization,
+    SupportingDocumentPerson,
     UserNote,
     User,
     WeaponStyle,
@@ -42,6 +46,13 @@ class ViewTestBase(TestCase):
         cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
         cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
         cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        cls.status_needs_kingdom_equestrian_waiver = AuthorizationStatus.objects.filter(
+            name='Needs Kingdom Equestrian Waiver'
+        ).order_by('id').first()
+        if not cls.status_needs_kingdom_equestrian_waiver:
+            cls.status_needs_kingdom_equestrian_waiver = AuthorizationStatus.objects.create(
+                name='Needs Kingdom Equestrian Waiver'
+            )
         cls.status_pending_background_check = AuthorizationStatus.objects.create(name='Pending Background Check')
         cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Pending Waiver')
         cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
@@ -443,8 +454,58 @@ class IndexViewTests(ViewTestBase):
 
         pending_auth.refresh_from_db()
         self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.redirect_chain)
         self.assertEqual(pending_auth.status.name, 'Rejected')
         self.assertNotIn('pending_authorization_action', self.client.session)
+
+    def test_homepage_marshal_approve_with_note_redirects_and_refreshes(self):
+        proposer_user, proposer_person = self.make_person('index_approve_prop', 'Index Approve Proposer')
+        approver_user, approver_person = self.make_person('index_approve_approver', 'Index Approve Approver')
+        target_user, target_person = self.make_person('index_approve_target', 'Index Approve Target')
+
+        self.grant_authorization(proposer_person, self.style_sm_armored)
+        self.grant_authorization(approver_person, self.style_sm_armored)
+        pending_auth = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_pending,
+            marshal=proposer_person,
+        )
+
+        self.client.login(username=approver_user.username, password='StrongPass!123')
+        first = self.client.post(
+            reverse('index'),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(pending_auth.status, self.status_pending)
+        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize the marshal promotion.',
+            self.messages_for(first),
+        )
+
+        second = self.client.post(
+            reverse('index'),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'Concurred from homepage.',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(second.redirect_chain)
+        self.assertEqual(pending_auth.status.name, 'Active')
+        self.assertNotIn('pending_authorization_action', self.client.session)
+        self.assertNotContains(second, f'name="authorization_id" value="{pending_auth.id}"')
 
     def test_turning_sign_off_off_auto_approves_needs_kingdom(self):
         kao_user, kao_person = self.make_person('index_bulk_auto_kao', 'Index Bulk Auto KAO')
@@ -487,7 +548,7 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Require Kingdom Authorization Officer Verification is now Off.')
         self.assertContains(response, 'Automatically approved all 2 authorizations waiting for Kingdom approval.')
 
-    def test_authorization_officer_queue_shows_only_kingdom_and_pending_background_check(self):
+    def test_authorization_officer_queue_shows_kingdom_background_and_equestrian_waiver(self):
         ao_user, ao_person = self.make_person('index_queue_ao', 'Index Queue AO')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
         proposer_user, proposer_person = self.make_person('index_queue_prop', 'Index Queue Prop')
@@ -495,6 +556,11 @@ class IndexViewTests(ViewTestBase):
             'index_queue_target',
             'Index Queue Target',
             waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        style_general_riding = WeaponStyle.objects.create(
+            name='General Riding',
+            discipline=discipline_equestrian,
         )
 
         self.grant_authorization(
@@ -515,15 +581,22 @@ class IndexViewTests(ViewTestBase):
             status=self.status_regional,
             marshal=proposer_person,
         )
+        self.grant_authorization(
+            target_person,
+            style_general_riding,
+            status=self.status_needs_kingdom_equestrian_waiver,
+            marshal=proposer_person,
+        )
 
         self.client.login(username=ao_user.username, password='StrongPass!123')
         response = self.client.get(reverse('index'))
 
         self.assertContains(response, 'Needs Kingdom Approval')
         self.assertContains(response, 'Pending Background Check')
+        self.assertContains(response, 'Needs Kingdom Equestrian Waiver')
         self.assertNotContains(response, 'Needs Regional Approval')
         self.assertNotContains(response, 'Approve As (optional):')
-        self.assertNotContains(response, 'btn btn-danger">Reject')
+        self.assertContains(response, 'No file')
 
     def test_pending_background_check_row_uses_go_to_page_action(self):
         ao_user, ao_person = self.make_person('index_bg_ao', 'Index BG AO')
@@ -531,7 +604,7 @@ class IndexViewTests(ViewTestBase):
         proposer_user, proposer_person = self.make_person('index_bg_prop', 'Index BG Prop')
         target_user, target_person = self.make_person('index_bg_target', 'Index BG Target')
 
-        self.grant_authorization(
+        pending_bg = self.grant_authorization(
             target_person,
             self.style_weapon_armored,
             status=self.status_pending_background_check,
@@ -552,7 +625,210 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Go To Page')
         self.assertContains(response, f'href="{reverse("user_account", kwargs={"user_id": target_user.id})}"')
         self.assertContains(response, 'class="btn btn-primary">Go To Page')
-        self.assertNotContains(response, 'btn btn-danger">Reject')
+        self.assertContains(response, f'name="bad_authorization_id" value="{pending_bg.id}"')
+
+    def test_kao_can_reject_pending_background_check_with_required_note(self):
+        ao_user, ao_person = self.make_person('index_bg_reject_ao', 'Index BG Reject AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bg_reject_prop', 'Index BG Reject Prop')
+        target_user, target_person = self.make_person('index_bg_reject_target', 'Index BG Reject Target')
+
+        pending_bg = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        first = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_bg.id),
+            },
+            follow=True,
+        )
+
+        pending_bg.refresh_from_db()
+        self.assertEqual(pending_bg.status, self.status_pending_background_check)
+        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize the rejection.',
+            self.messages_for(first),
+        )
+
+        second = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_bg.id),
+                'action_note': 'Background check was not accepted.',
+            },
+            follow=True,
+        )
+
+        pending_bg.refresh_from_db()
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(pending_bg.status.name, 'Rejected')
+        self.assertNotIn('pending_authorization_action', self.client.session)
+
+    def test_pending_background_check_row_shows_new_upload_badge(self):
+        ao_user, ao_person = self.make_person('index_bg_new_ao', 'Index BG New AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bg_new_prop', 'Index BG New Prop')
+        target_user, target_person = self.make_person('index_bg_new_target', 'Index BG New Target')
+
+        pending_bg = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+        Authorization.objects.filter(id=pending_bg.id).update(
+            updated_at=timezone.now() - timedelta(days=1)
+        )
+
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-new.pdf', ContentFile(b'bg-new'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        self.assertContains(response, 'Pending Background Check')
+        self.assertContains(response, 'New upload')
+        self.assertContains(
+            response,
+            f'href="{reverse("supporting_document_file", kwargs={"document_id": bg_document.id})}"',
+        )
+        self.assertContains(response, 'target="_blank"')
+
+    def test_pending_background_check_row_on_file_badge_links_to_document(self):
+        ao_user, ao_person = self.make_person('index_bg_link_ao', 'Index BG Link AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bg_link_prop', 'Index BG Link Prop')
+        target_user, target_person = self.make_person('index_bg_link_target', 'Index BG Link Target')
+
+        pending_bg = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-link.pdf', ContentFile(b'bg-link'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+        Authorization.objects.filter(id=pending_bg.id).update(updated_at=timezone.now() + timedelta(minutes=1))
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        self.assertContains(response, 'On file')
+        self.assertContains(
+            response,
+            f'href="{reverse("supporting_document_file", kwargs={"document_id": bg_document.id})}"',
+        )
+        self.assertContains(response, 'target="_blank"')
+
+    def test_kingdom_equestrian_officer_queue_shows_needs_kingdom_equestrian_waiver(self):
+        discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        style_sm_equestrian = WeaponStyle.objects.create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        style_general_riding = WeaponStyle.objects.create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        eq_officer_user, eq_officer_person = self.make_person('index_eq_officer', 'Index EQ Officer')
+        target_user, target_person = self.make_person('index_eq_target', 'Index EQ Target')
+        self.appoint(eq_officer_person, self.branch_an_tir, discipline_equestrian)
+        self.grant_authorization(
+            eq_officer_person,
+            style_sm_equestrian,
+            status=self.status_active,
+            marshal=eq_officer_person,
+        )
+        pending_eq = self.grant_authorization(
+            target_person,
+            style_general_riding,
+            status=self.status_needs_kingdom_equestrian_waiver,
+            marshal=eq_officer_person,
+        )
+
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        self.assertContains(response, 'Needs Kingdom Equestrian Waiver')
+        self.assertContains(response, 'No file')
+        self.assertContains(response, f'name="bad_authorization_id" value="{pending_eq.id}"')
+
+    def test_kingdom_equestrian_officer_can_reject_needs_kingdom_equestrian_waiver_with_note(self):
+        discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        style_sm_equestrian = WeaponStyle.objects.create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        style_general_riding = WeaponStyle.objects.create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        eq_officer_user, eq_officer_person = self.make_person('index_eq_reject_officer', 'Index EQ Reject Officer')
+        target_user, target_person = self.make_person('index_eq_reject_target', 'Index EQ Reject Target')
+        self.appoint(eq_officer_person, self.branch_an_tir, discipline_equestrian)
+        self.grant_authorization(
+            eq_officer_person,
+            style_sm_equestrian,
+            status=self.status_active,
+            marshal=eq_officer_person,
+        )
+        pending_eq = self.grant_authorization(
+            target_person,
+            style_general_riding,
+            status=self.status_needs_kingdom_equestrian_waiver,
+            marshal=eq_officer_person,
+        )
+
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+        first = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_eq.id),
+            },
+            follow=True,
+        )
+
+        pending_eq.refresh_from_db()
+        self.assertEqual(pending_eq.status, self.status_needs_kingdom_equestrian_waiver)
+        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize the rejection.',
+            self.messages_for(first),
+        )
+
+        second = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_eq.id),
+                'action_note': 'Kingdom equestrian waiver was invalid.',
+            },
+            follow=True,
+        )
+
+        pending_eq.refresh_from_db()
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(pending_eq.status.name, 'Rejected')
+        self.assertNotIn('pending_authorization_action', self.client.session)
 
     def test_unique_name_redirects_to_fighter_page(self):
         unique_user, _ = self.make_person('unique_index_user', 'Unique Fighter')
@@ -768,7 +1044,7 @@ class RegisterViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            'Invalid membership number or expiration date. If you believe this is an error, please contact the Kingdom Authorization Officer.',
+            'Invalid membership information. If you believe this is an error, please contact the Kingdom Authorization Officer.',
         )
 
     @override_settings(AUTHZ_TEST_FEATURES=True)
@@ -1093,6 +1369,48 @@ class TombstoneBehaviorTests(ViewTestBase):
             self.messages_for(response),
         )
 
+    @override_settings(AUTHZ_TEST_FEATURES=False)
+    @patch('authorizations.views.send_mail')
+    @patch('authorizations.views._throttle_request', return_value=False)
+    def test_password_reset_uses_production_throttle_defaults(self, mock_throttle, mock_send_mail):
+        user, _ = self.make_person('reset_prod_limit_user', 'Reset Prod Limit User')
+
+        response = self.client.post(
+            reverse('recover_account'),
+            {
+                'action': 'reset_password',
+                'username': user.username,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 1)
+        self.assertEqual(mock_throttle.call_count, 2)
+        self.assertEqual(mock_throttle.call_args_list[0].args[1:], (3, 15 * 60))
+        self.assertEqual(mock_throttle.call_args_list[1].args[1:], (5, 15 * 60))
+
+    @override_settings(AUTHZ_TEST_FEATURES=True)
+    @patch('authorizations.views.send_mail')
+    @patch('authorizations.views._throttle_request', return_value=False)
+    def test_password_reset_uses_relaxed_test_throttle_defaults(self, mock_throttle, mock_send_mail):
+        user, _ = self.make_person('reset_test_limit_user', 'Reset Test Limit User')
+
+        response = self.client.post(
+            reverse('recover_account'),
+            {
+                'action': 'reset_password',
+                'username': user.username,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 1)
+        self.assertEqual(mock_throttle.call_count, 2)
+        self.assertEqual(mock_throttle.call_args_list[0].args[1:], (50, 5 * 60))
+        self.assertEqual(mock_throttle.call_args_list[1].args[1:], (100, 5 * 60))
+
     def test_password_reset_token_rejects_merged_account(self):
         survivor_user, _ = self.make_person('token_survivor', 'Token Survivor')
         merged_user, _ = self._create_merged_user(
@@ -1219,6 +1537,11 @@ class UserAccountViewTests(ViewTestBase):
             start_date=date.today() - timedelta(days=1),
             end_date=date.today() + relativedelta(years=1),
         )
+        cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        cls.style_eq_general_riding = WeaponStyle.objects.create(
+            name='General Riding',
+            discipline=cls.discipline_equestrian,
+        )
 
     def test_owner_can_view_own_account(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
@@ -1277,6 +1600,219 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, "initUserAccountSearchableSelect('id_branch');")
         self.assertContains(response, "initUserAccountSearchableSelect('id_parent_id');")
         self.assertContains(response, '#user_account_form .choices.choices-compact')
+
+    def test_user_account_page_shows_supporting_document_modal(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Upload Supporting Document')
+        self.assertContains(response, 'id="supportingDocumentModal"')
+        self.assertContains(response, 'name="document_type"')
+        self.assertContains(response, 'name="document_file"')
+        self.assertContains(response, 'name="eq_person_ids"')
+        self.assertContains(response, 'name="eq_authorization_ids"')
+
+    def test_owner_can_upload_background_check_document_for_current_account(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'background-proof.pdf',
+            b'%PDF-1.4 fake',
+            content_type='application/pdf',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'upload_supporting_document',
+                'document_type': SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                'document_file': upload,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        document = SupportingDocument.objects.get()
+        self.assertEqual(document.document_type, SupportingDocument.DocumentType.BACKGROUND_CHECK)
+        self.assertEqual(document.uploaded_by, self.owner_user)
+        self.assertEqual(document.jurisdiction, '')
+        self.assertTrue(
+            SupportingDocumentPerson.objects.filter(document=document, person=self.owner_person).exists()
+        )
+        self.assertFalse(
+            SupportingDocumentAuthorization.objects.filter(document=document).exists()
+        )
+
+    def test_equestrian_authorization_api_returns_selected_fighter_rows(self):
+        target_user, target_person = self.make_person('eq_api_target', 'EQ API Target')
+        target_auth = self.grant_authorization(
+            target_person,
+            self.style_eq_general_riding,
+            status=self.status_pending,
+            marshal=self.ao_person,
+        )
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('get_equestrian_authorizations'),
+            {'person_ids': [str(target_user.id)]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload['ok'])
+        self.assertEqual(len(payload['authorizations']), 1)
+        self.assertEqual(payload['authorizations'][0]['id'], target_auth.id)
+
+    def test_equestrian_authorization_api_excludes_active_rows(self):
+        target_user, target_person = self.make_person('eq_api_active_target', 'EQ API Active Target')
+        self.grant_authorization(
+            target_person,
+            self.style_eq_general_riding,
+            status=self.status_active,
+            marshal=self.ao_person,
+        )
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('get_equestrian_authorizations'),
+            {'person_ids': [str(target_user.id)]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['authorizations'], [])
+
+    def test_equestrian_senior_marshal_can_upload_for_different_fighter(self):
+        uploader_user, uploader_person = self.make_person('eq_uploader', 'EQ Uploader')
+        eq_senior_style, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=self.discipline_equestrian,
+        )
+        self.grant_authorization(
+            uploader_person,
+            eq_senior_style,
+            status=self.status_active,
+            marshal=self.ao_person,
+        )
+        target_user, target_person = self.make_person('eq_target', 'EQ Target')
+        target_auth = self.grant_authorization(
+            target_person,
+            self.style_eq_general_riding,
+            status=self.status_pending,
+            marshal=uploader_person,
+        )
+        upload = SimpleUploadedFile(
+            'eq-waiver.pdf',
+            b'%PDF-1.4 fake',
+            content_type='application/pdf',
+        )
+
+        self.client.login(username=uploader_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': uploader_user.id}),
+            {
+                'action': 'upload_supporting_document',
+                'document_type': SupportingDocument.DocumentType.EQUESTRIAN_WAIVER,
+                'jurisdiction': 'WA',
+                'eq_person_ids': [str(target_user.id)],
+                'eq_authorization_ids': [str(target_auth.id)],
+                'document_file': upload,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        document = SupportingDocument.objects.get(document_type=SupportingDocument.DocumentType.EQUESTRIAN_WAIVER)
+        self.assertEqual(document.uploaded_by, uploader_user)
+        self.assertEqual(document.jurisdiction, 'WA')
+        self.assertTrue(
+            SupportingDocumentPerson.objects.filter(document=document, person=target_person).exists()
+        )
+        self.assertTrue(
+            SupportingDocumentAuthorization.objects.filter(document=document, authorization=target_auth).exists()
+        )
+
+    def test_non_marshal_cannot_upload_equestrian_waiver_for_unrelated_fighter(self):
+        target_user, target_person = self.make_person('eq_unrelated_target', 'EQ Unrelated Target')
+        target_auth = self.grant_authorization(
+            target_person,
+            self.style_eq_general_riding,
+            status=self.status_pending,
+            marshal=self.ao_person,
+        )
+        upload = SimpleUploadedFile(
+            'eq-waiver.pdf',
+            b'%PDF-1.4 fake',
+            content_type='application/pdf',
+        )
+
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'upload_supporting_document',
+                'document_type': SupportingDocument.DocumentType.EQUESTRIAN_WAIVER,
+                'jurisdiction': 'WA',
+                'eq_person_ids': [str(target_user.id)],
+                'eq_authorization_ids': [str(target_auth.id)],
+                'document_file': upload,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(SupportingDocument.objects.exists())
+        self.assertIn(
+            'You can only upload equestrian waivers for your own account or linked child accounts.',
+            self.messages_for(response),
+        )
+
+    def test_background_check_upload_uses_unique_stored_filename(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        first = SimpleUploadedFile(
+            'background_check.pdf',
+            b'%PDF-1.4 first',
+            content_type='application/pdf',
+        )
+        second = SimpleUploadedFile(
+            'background_check.pdf',
+            b'%PDF-1.4 second',
+            content_type='application/pdf',
+        )
+
+        first_response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'upload_supporting_document',
+                'document_type': SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                'document_file': first,
+            },
+            follow=True,
+        )
+        second_response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'upload_supporting_document',
+                'document_type': SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                'document_file': second,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        stored_names = list(
+            SupportingDocument.objects.filter(
+                document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                uploaded_by=self.owner_user,
+            ).values_list('file', flat=True)
+        )
+        self.assertEqual(len(stored_names), 2)
+        self.assertNotEqual(stored_names[0], stored_names[1])
 
     def test_non_ao_cannot_modify_background_check_expiration(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
@@ -1406,7 +1942,7 @@ class UserAccountViewTests(ViewTestBase):
         self.owner_user.refresh_from_db()
         messages = self.messages_for(response)
         self.assertIn(
-            'Invalid membership number or expiration date. If you believe this is an error, please contact the Kingdom Authorization Officer.',
+            'Invalid membership information. If you believe this is an error, please contact the Kingdom Authorization Officer.',
             messages,
         )
         self.assertNotEqual(self.owner_user.membership, '1231231231')
@@ -1808,6 +2344,323 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
+
+class SupportingDocumentsViewTests(ViewTestBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        cls.style_sm_equestrian = WeaponStyle.objects.create(
+            name='Senior Marshal',
+            discipline=cls.discipline_equestrian,
+        )
+        cls.style_general_riding = WeaponStyle.objects.create(
+            name='General Riding',
+            discipline=cls.discipline_equestrian,
+        )
+
+        cls.kao_user = User.objects.create_user(
+            username='docs_kao',
+            password='StrongPass!123',
+            email='docs_kao@example.com',
+            first_name='Docs',
+            last_name='KAO',
+            membership='9001000001',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.kao_person = Person.objects.create(
+            user=cls.kao_user,
+            sca_name='Docs KAO',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+
+        cls.eq_officer_user = User.objects.create_user(
+            username='docs_eq_officer',
+            password='StrongPass!123',
+            email='docs_eq_officer@example.com',
+            first_name='Docs',
+            last_name='EQ',
+            membership='9001000002',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.eq_officer_person = Person.objects.create(
+            user=cls.eq_officer_user,
+            sca_name='Docs EQ Officer',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+        cls.earl_user = User.objects.create_user(
+            username='docs_earl',
+            password='StrongPass!123',
+            email='docs_earl@example.com',
+            first_name='Docs',
+            last_name='Earl',
+            membership='9001000005',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.earl_person = Person.objects.create(
+            user=cls.earl_user,
+            sca_name='Docs Earl Marshal',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+
+        cls.viewer_user = User.objects.create_user(
+            username='docs_viewer',
+            password='StrongPass!123',
+            email='docs_viewer@example.com',
+            first_name='Docs',
+            last_name='Viewer',
+            membership='9001000003',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.viewer_person = Person.objects.create(
+            user=cls.viewer_user,
+            sca_name='Docs Viewer',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+
+        cls.fighter_user = User.objects.create_user(
+            username='docs_fighter',
+            password='StrongPass!123',
+            email='docs_fighter@example.com',
+            first_name='Docs',
+            last_name='Fighter',
+            membership='9001000004',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.fighter_person = Person.objects.create(
+            user=cls.fighter_user,
+            sca_name='Docs Fighter',
+            branch=cls.branch_gd,
+            is_minor=False,
+        )
+
+        BranchMarshal.objects.create(
+            person=cls.kao_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_auth_officer,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        BranchMarshal.objects.create(
+            person=cls.eq_officer_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_equestrian,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        BranchMarshal.objects.create(
+            person=cls.earl_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_earl_marshal,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+
+        Authorization.objects.create(
+            person=cls.eq_officer_person,
+            style=cls.style_sm_equestrian,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.kao_person,
+        )
+        Authorization.objects.create(
+            person=cls.earl_person,
+            style=cls.style_sm_armored,
+            status=cls.status_active,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.kao_person,
+        )
+
+        cls.eq_pending_auth = Authorization.objects.create(
+            person=cls.fighter_person,
+            style=cls.style_general_riding,
+            status=cls.status_pending,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=cls.eq_officer_person,
+        )
+
+        cls.bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=cls.fighter_user,
+        )
+        cls.bg_document.file.save('bg-proof.pdf', ContentFile(b'bg-proof-content'), save=True)
+        SupportingDocumentPerson.objects.create(document=cls.bg_document, person=cls.fighter_person)
+
+        cls.eq_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.EQUESTRIAN_WAIVER,
+            jurisdiction='WA',
+            uploaded_by=cls.eq_officer_user,
+        )
+        cls.eq_document.file.save('eq-waiver.pdf', ContentFile(b'eq-waiver-content'), save=True)
+        SupportingDocumentPerson.objects.create(document=cls.eq_document, person=cls.fighter_person)
+        SupportingDocumentAuthorization.objects.create(
+            document=cls.eq_document,
+            authorization=cls.eq_pending_auth,
+        )
+
+    def test_anonymous_user_is_redirected_to_authorizations_homepage(self):
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('index'))
+
+    def test_regular_user_sees_only_associated_documents(self):
+        self.client.login(username=self.viewer_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'No supporting documents matched your filters.')
+
+    def test_fighter_sees_documents_attached_to_their_account(self):
+        self.client.login(username=self.fighter_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
+        )
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
+        )
+
+    def test_kao_can_view_background_and_equestrian_documents(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Background Check')
+        self.assertContains(response, 'Equestrian Event Waiver')
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
+        )
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
+        )
+
+    def test_kingdom_equestrian_officer_sees_all_documents(self):
+        self.client.login(username=self.eq_officer_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
+        )
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
+        )
+
+    def test_kingdom_earl_marshal_sees_all_documents(self):
+        self.client.login(username=self.earl_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
+        )
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
+        )
+
+    def test_kao_can_open_supporting_document_file(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id})
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get('Content-Type'), 'application/pdf')
+
+    def test_viewer_cannot_open_unassociated_supporting_document_file(self):
+        self.client.login(username=self.viewer_user.username, password='StrongPass!123')
+
+        response = self.client.get(
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRedirects(response, reverse('index'))
+        self.assertIn(
+            'You do not have authority to view that document.',
+            self.messages_for(response),
+        )
+
+    def test_supporting_documents_page_shows_upload_modal_for_logged_in_user(self):
+        self.client.login(username=self.viewer_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Upload Document')
+        self.assertContains(response, 'id="supportingDocumentModal"')
+
+    def test_supporting_document_file_missing_redirects_to_authorizations_homepage(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        self.bg_document.file.delete(save=False)
+
+        response = self.client.get(
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRedirects(response, reverse('index'))
+        self.assertIn(
+            'That supporting document file was not found.',
+            self.messages_for(response),
+        )
+
+
+class NotFoundRedirectTests(ViewTestBase):
+    def test_unknown_inner_route_redirects_to_authorizations_homepage(self):
+        response = self.client.get('/authorizations/does-not-exist', follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRedirects(response, reverse('index'))
+        self.assertIn(
+            'That page was not found. Redirected to the Authorizations Homepage.',
+            self.messages_for(response),
+        )
+
+    def test_unknown_outer_route_redirects_to_homepage(self):
+        response = self.client.get('/does-not-exist', follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRedirects(response, reverse('homepage'))
+        self.assertIn(
+            'That page was not found. Redirected to Home.',
+            self.messages_for(response),
+        )
+
+
 class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
     @classmethod
     def setUpTestData(cls):
@@ -2004,6 +2857,39 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             'discipline': discipline.name,
             'start_date': date.today().isoformat(),
         }
+
+    def _setup_equestrian_submission_context(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        style_senior_ground_crew, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Ground Crew',
+            discipline=discipline_equestrian,
+        )
+        proposer_user, proposer_person = self.make_person(
+            'office_eq_proposer',
+            'Office EQ Proposer',
+        )
+        self.grant_authorization(
+            proposer_person,
+            style_sm_equestrian,
+            status=self.status_active,
+            marshal=self.kao_person,
+        )
+        # Prevent initial EQ style submissions from requiring concurrence.
+        self.grant_authorization(
+            self.candidate_armored_person,
+            style_general_riding,
+            status=self.status_active,
+            marshal=proposer_person,
+        )
+        return proposer_user, discipline_equestrian, style_senior_ground_crew
 
     def test_kingdom_discipline_marshal_can_appoint_regional_same_discipline(self):
         self.client.login(username=self.krapier_user.username, password='StrongPass!123')
@@ -2341,6 +3227,80 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertNotIn('pending_authorization_action', self.client.session)
         self.assertNotIn('A note is required for marshal promotion actions.', self.messages_for(response))
 
+    def test_fighter_page_shows_approve_for_needs_regional_when_same_officer_proposed(self):
+        pending = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_single_rapier,
+            status=self.status_regional,
+            marshal=self.krapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending_card = response.context['pending_authorization_list']['Rapier Combat']
+        self.assertTrue(pending_card['can_approve'])
+        self.assertContains(response, f'name="authorization_id" value="{pending.id}"')
+        self.assertContains(response, 'name="action" value="approve_authorization"')
+
+    def test_fighter_page_shows_approve_for_needs_kingdom_when_same_officer_proposed(self):
+        pending = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=self.kao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending_card = response.context['pending_authorization_list']['Armored']
+        self.assertTrue(pending_card['can_approve'])
+        self.assertContains(response, f'name="authorization_id" value="{pending.id}"')
+        self.assertContains(response, 'name="action" value="approve_authorization"')
+
+    def test_fighter_page_shows_approve_for_needs_kingdom_equestrian_waiver(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        eq_officer_user, eq_officer_person = self.make_person(
+            'fighter_eq_approve_officer',
+            'Fighter EQ Approve Officer',
+        )
+        self.appoint(eq_officer_person, self.branch_an_tir, discipline_equestrian)
+        self.grant_authorization(
+            eq_officer_person,
+            style_sm_equestrian,
+            status=self.status_active,
+            marshal=self.kao_person,
+        )
+        pending = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=style_general_riding,
+            status=self.status_needs_kingdom_equestrian_waiver,
+            marshal=eq_officer_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending_card = response.context['pending_authorization_list']['Equestrian']
+        self.assertTrue(pending_card['can_approve'])
+        self.assertContains(response, f'name="authorization_id" value="{pending.id}"')
+        self.assertContains(response, 'name="action" value="approve_authorization"')
+
     def test_kingdom_earl_marshal_pending_requires_matching_senior_discipline(self):
         Authorization.objects.create(
             person=self.candidate_armored_person,
@@ -2505,6 +3465,107 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertFalse(pending['can_reject'])
         self.assertContains(response, 'Pending Background Check')
         self.assertContains(response, 'Youth Armored')
+
+    def test_add_authorization_routes_equestrian_to_kingdom_waiver_when_sign_off_disabled(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        proposer_user, discipline_equestrian, style_senior_ground_crew = self._setup_equestrian_submission_context()
+
+        self.client.login(username=proposer_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_equestrian.id),
+                'weapon_styles': [str(style_senior_ground_crew.id)],
+            },
+            follow=True,
+        )
+
+        created_auth = Authorization.objects.get(
+            person=self.candidate_armored_person,
+            style=style_senior_ground_crew,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created_auth.status, self.status_needs_kingdom_equestrian_waiver)
+        self.assertNotEqual(created_auth.status, self.status_kingdom)
+        self.assertContains(response, 'Kingdom equestrian waiver review')
+
+    def test_add_authorization_routes_equestrian_to_kingdom_waiver_when_sign_off_enabled(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+        proposer_user, discipline_equestrian, style_senior_ground_crew = self._setup_equestrian_submission_context()
+
+        self.client.login(username=proposer_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_equestrian.id),
+                'weapon_styles': [str(style_senior_ground_crew.id)],
+            },
+            follow=True,
+        )
+
+        created_auth = Authorization.objects.get(
+            person=self.candidate_armored_person,
+            style=style_senior_ground_crew,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created_auth.status, self.status_needs_kingdom_equestrian_waiver)
+        self.assertNotEqual(created_auth.status, self.status_kingdom)
+        self.assertContains(response, 'Kingdom equestrian waiver review')
+
+    def test_kingdom_equestrian_marshal_can_approve_needs_kingdom_equestrian_waiver(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+
+        eq_officer_user, eq_officer_person = self.make_person(
+            'office_eq_officer',
+            'Office EQ Officer',
+        )
+        BranchMarshal.objects.create(
+            person=eq_officer_person,
+            branch=self.branch_an_tir,
+            discipline=discipline_equestrian,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(
+            eq_officer_person,
+            style_sm_equestrian,
+            status=self.status_active,
+            marshal=self.kao_person,
+        )
+
+        self.candidate_armored_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_armored_user.save(update_fields=['waiver_expiration'])
+        pending_eq = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=style_general_riding,
+            status=self.status_needs_kingdom_equestrian_waiver,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_eq.id),
+            },
+            follow=True,
+        )
+
+        pending_eq.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_eq.status, self.status_active)
 
     def test_non_marshal_does_not_get_reject_button_for_needs_regional(self):
         viewer_user, _ = self.make_person('office_pending_viewer', 'Office Pending Viewer')

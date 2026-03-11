@@ -809,7 +809,7 @@ class PendingNoteFlowTests(AdditionalCoverageBase):
         )
 
         self.assertIn('pending_authorization_action', self.client.session)
-        self.assertIn('Eligibility verified. Please add a note to finalize the marshal promotion.', self.messages_for(first))
+        self.assertIn('Eligibility verified. Please add a note to finalize the rejection.', self.messages_for(first))
 
         second = self.client.post(
             reverse('fighter', kwargs={'person_id': target_user.id}),

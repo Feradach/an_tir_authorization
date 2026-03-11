@@ -1,4 +1,31 @@
 ﻿
+## [Unreleased]
+
+## [0.1.9] - 2026-03-10
+### Added
+- Added a new document uploader to account pages for two file types: Background Check proof and Equestrian Event Waiver.
+- Added a Supporting Documents page where officers can review uploaded files.
+  - Not logged in: no access allowed.
+  - Logged in users: see documents related to their account.
+  - Kingdom Authorization Officer, Kingdom Earl Marshal, and Kingdom Equestrian Officer: can see all documents.
+- Added a new authorization status: `Needs Kingdom Equestrian Waiver`.
+
+### Fixed
+- Equestrian waiver selection now ignores already active authorizations and only shows records that still need review.
+- Equestrian authorizations now move to `Needs Kingdom Equestrian Waiver` at the kingdom-review step.
+- Pending queue actions were expanded:
+  - `Needs Kingdom Equestrian Waiver` can now be rejected (with a required note).
+  - `Pending Background Check` now shows both `Go To Page` and `Reject` (reject also requires a note).
+- Updated the FAQ page so it reflects current account, document upload, approval queue, sanctions, and reporting workflows.
+- Equestrian authorization checks now enforce key prerequisites more clearly: Senior Ground Crew requires Junior Ground Crew, Mounted Gaming requires General Riding, and mounted weapon-game special authorizations require Mounted Gaming (with Mounted Combat also requiring General Riding).
+- Added a dedicated FAQ quick-reference section summarizing An Tir equestrian authorization rules and age limits.
+- Rearranged the menu and improved behavior when switching window size.
+- Users who are not logged in are now redirected to the Authorizations Homepage when they open Supporting Documents.
+- If you try to open a supporting document you are not authorized to view, you are now redirected to the Authorizations Homepage with a warning message.
+- Unknown URLs now redirect to the correct home shell instead of showing a raw 404: Authorizations routes go to the Authorizations Homepage, and outer-site routes go to Home.
+- Missing supporting document files now redirect to the Authorizations Homepage with a warning instead of showing a 404 page.
+
+
 ## [0.1.8] - 2026-03-08
 ### Fixed
 - On the user account edit form, State/Province, Title, Branch, and Parent ID now use the same type-to-filter dropdown behavior and compact formatting as the register page, and the account layout no longer forces early text wrapping from narrow columns.

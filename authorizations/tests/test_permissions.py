@@ -57,6 +57,7 @@ class AuthorizationTestBase(TestCase):
         cls.discipline_armored = Discipline.objects.create(name='Armored')
         cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
+        cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
         cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
 
@@ -68,6 +69,16 @@ class AuthorizationTestBase(TestCase):
         cls.style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_armored)
         cls.style_jm_youth_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_youth_armored)
         cls.style_sword_youth_armored = WeaponStyle.objects.create(name='Sword', discipline=cls.discipline_youth_armored)
+        cls.style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_equestrian)
+        cls.style_junior_ground_crew = WeaponStyle.objects.create(name='Junior Ground Crew', discipline=cls.discipline_equestrian)
+        cls.style_senior_ground_crew = WeaponStyle.objects.create(name='Senior Ground Crew', discipline=cls.discipline_equestrian)
+        cls.style_general_riding = WeaponStyle.objects.create(name='General Riding', discipline=cls.discipline_equestrian)
+        cls.style_mounted_gaming = WeaponStyle.objects.create(name='Mounted Gaming', discipline=cls.discipline_equestrian)
+        cls.style_mounted_archery = WeaponStyle.objects.create(name='Mounted Archery', discipline=cls.discipline_equestrian)
+        cls.style_crest_combat = WeaponStyle.objects.create(name='Crest Combat', discipline=cls.discipline_equestrian)
+        cls.style_mounted_heavy_combat = WeaponStyle.objects.create(name='Mounted Heavy Combat', discipline=cls.discipline_equestrian)
+        cls.style_driving = WeaponStyle.objects.create(name='Driving', discipline=cls.discipline_equestrian)
+        cls.style_foam_tipped_jousting = WeaponStyle.objects.create(name='Foam-Tipped Jousting', discipline=cls.discipline_equestrian)
 
     def setUp(self):
         self.factory = RequestFactory()
@@ -438,6 +449,63 @@ class AuthorizationRuleTests(AuthorizationTestBase):
 
         self.assertTrue(ok)
         self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_senior_ground_crew_requires_junior_ground_crew(self):
+        marshal_user, marshal = self.make_person('eq_sm_sgc', 'Eq SM SGC')
+        _, fighter = self.make_person('eq_target_sgc', 'Eq Target SGC')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_senior_ground_crew.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Senior Ground Crew requires an active Junior Ground Crew authorization.')
+
+    def test_mounted_gaming_requires_general_riding(self):
+        marshal_user, marshal = self.make_person('eq_sm_mg', 'Eq SM MG')
+        _, fighter = self.make_person('eq_target_mg', 'Eq Target MG')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_mounted_gaming.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Mounted Gaming requires an active General Riding authorization.')
+
+    def test_mounted_archery_requires_mounted_gaming(self):
+        marshal_user, marshal = self.make_person('eq_sm_ma', 'Eq SM MA')
+        _, fighter = self.make_person('eq_target_ma', 'Eq Target MA')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_general_riding)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_mounted_archery.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Mounted Archery requires an active Mounted Gaming authorization.')
+
+    def test_first_time_special_requires_same_skill_marshal_but_renewal_does_not(self):
+        marshal_user, marshal = self.make_person('eq_sm_special', 'Eq SM Special')
+        _, first_timer = self.make_person('eq_first_special', 'Eq First Special')
+        _, returning = self.make_person('eq_return_special', 'Eq Return Special')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(first_timer, self.style_general_riding)
+        self.grant_authorization(first_timer, self.style_mounted_gaming)
+        self.grant_authorization(returning, self.style_general_riding)
+        self.grant_authorization(returning, self.style_mounted_gaming)
+        self.grant_authorization(
+            returning,
+            self.style_mounted_archery,
+            expiration=date.today() - relativedelta(days=30),
+        )
+
+        first_ok, first_msg = authorization_follows_rules(marshal_user, first_timer, self.style_mounted_archery.id)
+        return_ok, return_msg = authorization_follows_rules(marshal_user, returning, self.style_mounted_archery.id)
+
+        self.assertFalse(first_ok)
+        self.assertEqual(
+            first_msg,
+            'Must be authorized in Mounted Archery to authorize a first-time participant in this skill.',
+        )
+        self.assertTrue(return_ok)
+        self.assertEqual(return_msg, 'Authorization follows all rules.')
 
 
 class ConcurrenceRequirementTests(AuthorizationTestBase):
@@ -871,19 +939,18 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertEqual(pending_senior.status, self.status_active)
         self.assertFalse(Authorization.objects.filter(id=junior_auth.id).exists())
         self.assertGreaterEqual(fighter.user.waiver_expiration, pending_senior.expiration)
-        self.assertTrue(
+        self.assertFalse(
             AuthorizationNote.objects.filter(
                 authorization=pending_senior,
                 action='marshal_approved',
-                created_by=ao_user,
             ).exists()
         )
 
-    def test_authorization_officer_submit_as_appends_note_suffix(self):
+    def test_authorization_officer_submit_as_kingdom_final_approval_still_succeeds_without_note(self):
         ao_user, ao_person = self.make_person('ao_submit_as', 'AO Submit As')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
-        submit_as_user, submit_as_person = self.make_person('ao_submit_as_target', 'Bob Marshal')
-        proposer_user, proposer = self.make_person('ao_submit_as_prop', 'SubmitAs Proposer')
+        submit_as_user, _ = self.make_person('ao_submit_as_target', 'Bob Marshal')
+        _, proposer = self.make_person('ao_submit_as_prop', 'SubmitAs Proposer')
         _, fighter = self.make_person('ao_submit_as_fighter', 'SubmitAs Fighter')
 
         pending_senior = self.grant_authorization(
@@ -909,15 +976,12 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         pending_senior.refresh_from_db()
         self.assertTrue(ok)
         self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
-        note = AuthorizationNote.objects.get(
-            authorization=pending_senior,
-            action='marshal_approved',
-        )
-        self.assertEqual(note.created_by, submit_as_user)
-        self.assertIn('AO confirmation note', note.note)
-        self.assertIn(
-            f'Submitted as {submit_as_person.sca_name} by {ao_person.sca_name}.',
-            note.note,
+        self.assertEqual(pending_senior.status, self.status_active)
+        self.assertFalse(
+            AuthorizationNote.objects.filter(
+                authorization=pending_senior,
+                action='marshal_approved',
+            ).exists()
         )
 
 

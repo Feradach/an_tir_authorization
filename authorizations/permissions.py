@@ -11,6 +11,61 @@ from authorizations.models import BranchMarshal, Authorization, WeaponStyle, Use
 
 logger = logging.getLogger(__name__)
 
+KINGDOM_APPROVAL_STATUS = 'Needs Kingdom Approval'
+KINGDOM_EQUESTRIAN_WAIVER_STATUS = 'Needs Kingdom Equestrian Waiver'
+
+EQUESTRIAN_STYLE_ALIASES = {
+    'Junior Ground Crew': {'Junior Ground Crew', 'Ground Crew - Junior'},
+    'Senior Ground Crew': {'Senior Ground Crew', 'Ground Crew - Senior'},
+    'General Riding': {'General Riding'},
+    'Mounted Gaming': {'Mounted Gaming'},
+    'Mounted Archery': {'Mounted Archery'},
+    'Mounted Crest Combat': {'Mounted Crest Combat', 'Crest Combat'},
+    'Mounted Combat': {'Mounted Combat', 'Mounted Heavy Combat'},
+    'Driving': {'Driving', 'Ground Driving'},
+    'Foam-Tipped Jousting': {'Foam-Tipped Jousting', 'Jousting'},
+}
+
+_JUNIOR_GROUND_CREW_STYLES = EQUESTRIAN_STYLE_ALIASES['Junior Ground Crew']
+_SENIOR_GROUND_CREW_STYLES = EQUESTRIAN_STYLE_ALIASES['Senior Ground Crew']
+_GENERAL_RIDING_STYLES = EQUESTRIAN_STYLE_ALIASES['General Riding']
+_MOUNTED_GAMING_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Gaming']
+_MOUNTED_ARCHERY_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Archery']
+_MOUNTED_CREST_COMBAT_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Crest Combat']
+_MOUNTED_COMBAT_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Combat']
+_DRIVING_STYLES = EQUESTRIAN_STYLE_ALIASES['Driving']
+_FOAM_TIPPED_JOUSTING_STYLES = EQUESTRIAN_STYLE_ALIASES['Foam-Tipped Jousting']
+_MOUNTED_SPECIAL_STYLES = (
+    _MOUNTED_ARCHERY_STYLES
+    | _MOUNTED_CREST_COMBAT_STYLES
+    | _MOUNTED_COMBAT_STYLES
+    | _DRIVING_STYLES
+    | _FOAM_TIPPED_JOUSTING_STYLES
+)
+_MOUNTED_WEAPON_GAME_STYLES = (
+    _MOUNTED_ARCHERY_STYLES
+    | _MOUNTED_CREST_COMBAT_STYLES
+    | _MOUNTED_COMBAT_STYLES
+    | _FOAM_TIPPED_JOUSTING_STYLES
+)
+
+
+def _equestrian_aliases_for_style_name(style_name: str) -> set[str]:
+    for aliases in EQUESTRIAN_STYLE_ALIASES.values():
+        if style_name in aliases:
+            return aliases
+    return {style_name}
+
+
+def kingdom_review_status_name_for_style(style: WeaponStyle) -> str:
+    if style and getattr(style, 'discipline', None) and style.discipline.name == 'Equestrian':
+        return KINGDOM_EQUESTRIAN_WAIVER_STATUS
+    return KINGDOM_APPROVAL_STATUS
+
+
+def is_kingdom_review_status_name(status_name: str) -> bool:
+    return status_name in [KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS]
+
 def authorization_officer_sign_off_enabled() -> bool:
     """Return whether Kingdom AO sign-off is currently required for applicable approvals."""
     try:
@@ -278,6 +333,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     style = WeaponStyle.objects.get(id=style_id)
     all_authorizations = Authorization.objects.filter(person=existing_fighter)
     active_authorizations = Authorization.objects.effectively_active().filter(person=existing_fighter)
+    style_aliases = _equestrian_aliases_for_style_name(style.name)
     if existing_fighter.is_minor:
         birthday = existing_fighter.user.birthday
         age = calculate_age(birthday)
@@ -327,8 +383,13 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         if age < 16:
             return False, f'Must be at least 16 years old to become authorized in {style.discipline.name} combat.'
 
-    # Rule 8: Senior Equestrian Ground Crew must be at least 16 years old
-    if style.name == 'Senior Ground Crew':
+    # Rule 8: Senior Equestrian Ground Crew requires Junior Ground Crew and age 16+
+    if style.name in _SENIOR_GROUND_CREW_STYLES:
+        if not active_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_JUNIOR_GROUND_CREW_STYLES,
+        ).exists():
+            return False, 'Senior Ground Crew requires an active Junior Ground Crew authorization.'
         if age < 16:
             return False, f'Must be at least 16 years old to become authorized as Senior Ground Crew.'
 
@@ -342,14 +403,43 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
                 return False, f'Must be a minor to become authorized in {style.discipline.name} combat.'
 
     # Rule 10: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew.
-    if style.name in ['General Riding', 'Mounted Gaming', 'Mounted Archery', 'Junior Ground Crew']:
+    if style.name in (
+        _GENERAL_RIDING_STYLES
+        | _MOUNTED_GAMING_STYLES
+        | _MOUNTED_ARCHERY_STYLES
+        | _JUNIOR_GROUND_CREW_STYLES
+    ):
         if age < 5:
             return False, f'Must be at least 5 years old to become authorized in {style.name}.'
 
-    # Rule 11: For equestrian, a person must be an adult to participate in Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting.
-    if style.name in ['Crest Combat', 'Mounted Heavy Combat', 'Driving', 'Foam-Tipped Jousting']:
+    # Rule 11: For equestrian, a person must be an adult for crest/combat/driving/foam-tipped jousting.
+    if style.name in (_MOUNTED_CREST_COMBAT_STYLES | _MOUNTED_COMBAT_STYLES | _DRIVING_STYLES | _FOAM_TIPPED_JOUSTING_STYLES):
         if existing_fighter.is_minor:
             return False, f'Must be an adult to become authorized in {style.name}.'
+
+    # Rule 11a: Mounted Gaming requires General Riding.
+    if style.name in _MOUNTED_GAMING_STYLES:
+        if not active_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_GENERAL_RIDING_STYLES,
+        ).exists():
+            return False, 'Mounted Gaming requires an active General Riding authorization.'
+
+    # Rule 11b: Mounted weapon-game special authorizations require Mounted Gaming.
+    if style.name in _MOUNTED_WEAPON_GAME_STYLES:
+        if not active_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_MOUNTED_GAMING_STYLES,
+        ).exists():
+            return False, f'{style.name} requires an active Mounted Gaming authorization.'
+
+    # Rule 11c: Mounted Combat additionally requires General Riding.
+    if style.name in _MOUNTED_COMBAT_STYLES:
+        if not active_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_GENERAL_RIDING_STYLES,
+        ).exists():
+            return False, 'Mounted Combat requires an active General Riding authorization.'
 
     # Rule 12: Youth rapier marshals must already be Senior Rapier marshals
     if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
@@ -366,11 +456,19 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         if not (active_authorizations.filter(style__name='Junior Marshal', style__discipline__name='Equestrian').exists() and active_authorizations.filter(style__name='Mounted Gaming').exists()):
             return False, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.'
 
-    # Rule 15: In order to authorize someone in Mounted Archery, Crest Combat, Mounted Heavy Combat, Driving, or Foam-tipped Jousting,
-    # the Senior Marshal must have the same Authorizations.
-    if style.name in ['Mounted Archery', 'Crest Combat', 'Mounted Heavy Combat', 'Driving', 'Foam-Tipped Jousting']:
-        if not Authorization.objects.effectively_active().filter(person=marshal.person, style__name=style.name, style__discipline__name="Equestrian").exists():
-            return False, f'Must be authorized in {style.name} to authorize other participants.'
+    # Rule 15: For first-time special authorizations, the authorizing marshal must hold that skill.
+    if style.name in _MOUNTED_SPECIAL_STYLES:
+        first_time_special = not all_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=style_aliases,
+        ).exists()
+        if first_time_special:
+            if not Authorization.objects.effectively_active().filter(
+                person=marshal.person,
+                style__discipline__name="Equestrian",
+                style__name__in=style_aliases,
+            ).exists():
+                return False, f'Must be authorized in {style.name} to authorize a first-time participant in this skill.'
 
     # Rule 16: Junior and Senior marshals must be current members.
     if style.name in ['Junior Marshal', 'Senior Marshal']:
@@ -382,7 +480,17 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         return False, 'Cannot issue an authorization while a sanction is active for this style or discipline.'
 
     # Rule 18: Cannot duplicate/renew a pending authorization.
-    if all_authorizations.filter(style__name=style.name, style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval', 'Needs Concurrence']).exists():
+    if all_authorizations.filter(
+        style__name=style.name,
+        style__discipline__name=style.discipline.name,
+        status__name__in=[
+            'Pending',
+            'Needs Regional Approval',
+            KINGDOM_APPROVAL_STATUS,
+            KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            'Needs Concurrence',
+        ],
+    ).exists():
         return False, 'Cannot renew a pending authorization.'
 
     # Rule 19: Cannot make someone a junior marshal if they are already a senior marshal.
@@ -394,12 +502,30 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         # Do they already have an active junior marshal?
         if not active_authorizations.filter(style__name='Junior Marshal', style__discipline__name=style.discipline.name).exists():
             # We now know this is a new junior marshal. They cannot get a new junior marshal if there is a pending senior marshal.
-            if all_authorizations.filter(style__name='Senior Marshal', style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
+            if all_authorizations.filter(
+                style__name='Senior Marshal',
+                style__discipline__name=style.discipline.name,
+                status__name__in=[
+                    'Pending',
+                    'Needs Regional Approval',
+                    KINGDOM_APPROVAL_STATUS,
+                    KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+                ],
+            ).exists():
                 return False, 'Cannot have a new junior marshal if a senior marshal is pending.'
 
     # Rule 20: Cannot add a new senior marshal if there is a pending junior marshal.
     if style.name == 'Senior Marshal':
-        if all_authorizations.filter(style__name='Junior Marshal', style__discipline__name=style.discipline.name, status__name__in=['Pending', 'Needs Regional Approval', 'Needs Kingdom Approval']).exists():
+        if all_authorizations.filter(
+            style__name='Junior Marshal',
+            style__discipline__name=style.discipline.name,
+            status__name__in=[
+                'Pending',
+                'Needs Regional Approval',
+                KINGDOM_APPROVAL_STATUS,
+                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            ],
+        ).exists():
             return False, 'Cannot have a new senior marshal if a junior marshal is pending.'
 
     # Rule 21: Cannot make an authorization for yourself.
@@ -585,7 +711,7 @@ def _authorization_note_office_score(
                 score += 20
             else:
                 score += 10
-        elif status_name == 'Needs Kingdom Approval' or action in ['sanction_issued', 'sanction_lifted']:
+        elif is_kingdom_review_status_name(status_name) or action in ['sanction_issued', 'sanction_lifted']:
             if branch.name == 'An Tir':
                 score += 60
             elif branch.is_region():
@@ -602,7 +728,7 @@ def _authorization_note_office_score(
         return score
 
     if discipline.name == 'Authorization Officer':
-        if status_name == 'Needs Kingdom Approval' or action in ['sanction_issued', 'sanction_lifted']:
+        if is_kingdom_review_status_name(status_name) or action in ['sanction_issued', 'sanction_lifted']:
             return 200
         return 0
 
@@ -755,7 +881,7 @@ def approve_authorization(request):
     discipline = authorization.style.discipline.name
     requires_note = (
         authorization.style.name in ['Junior Marshal', 'Senior Marshal']
-        and authorization.status.name != 'Needs Kingdom Approval'
+        and not is_kingdom_review_status_name(authorization.status.name)
     )
     note = get_action_note() if requires_note else ''
     if requires_note and not note:
@@ -768,9 +894,22 @@ def approve_authorization(request):
 
     active_status = AuthorizationStatus.objects.get(name='Active')
     regional_status = AuthorizationStatus.objects.get(name='Needs Regional Approval')
-    kingdom_status = AuthorizationStatus.objects.get(name='Needs Kingdom Approval')
+    kingdom_status = AuthorizationStatus.objects.get(name=KINGDOM_APPROVAL_STATUS)
+    kingdom_equestrian_waiver_status = AuthorizationStatus.objects.filter(
+        name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
+    ).order_by('id').first()
+    if not kingdom_equestrian_waiver_status:
+        kingdom_equestrian_waiver_status = AuthorizationStatus.objects.create(
+            name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
+        )
     pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
     pending_background_check_status, _ = AuthorizationStatus.objects.get_or_create(name='Pending Background Check')
+
+    def kingdom_review_status_for(auth: Authorization):
+        status_name = kingdom_review_status_name_for_style(auth.style)
+        if status_name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
+            return kingdom_equestrian_waiver_status
+        return kingdom_status
 
     # Helper: determine if waiver is current strictly by waiver_expiration
     def waiver_current(u: User):
@@ -789,6 +928,7 @@ def approve_authorization(request):
     sign_off_required = authorization_officer_sign_off_enabled()
     is_kao = is_kingdom_authorization_officer(request_user)
     can_approve_kingdom_pending = is_kao
+    can_approve_equestrian_waiver_pending = is_kao or is_kingdom_marshal(request_user, 'Equestrian')
 
     if authorization.status.name == 'Pending':
         if is_kao and marshal.id == request_user.id:
@@ -812,10 +952,15 @@ def approve_authorization(request):
         
         # Rule 4a: If a junior marshal is approved it becomes active (or pending waiver).
         if authorization.style.name == 'Junior Marshal':
-            if sign_off_required:
-                authorization.status = kingdom_status
+            if sign_off_required or authorization.style.discipline.name == 'Equestrian':
+                authorization.status = kingdom_review_status_for(authorization)
                 save_authorization(authorization)
                 record_note(authorization, 'marshal_concurred', note)
+                if authorization.status == kingdom_equestrian_waiver_status:
+                    return True, (
+                        f'{authorization.style.discipline.name} {authorization.style.name} authorization '
+                        'ready for kingdom equestrian waiver review.'
+                    )
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
             else:
                 if not membership_is_current(authorization.person.user):
@@ -846,10 +991,15 @@ def approve_authorization(request):
             if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
         # Rule 5: If the regional marshal approves a senior marshal, it becomes active (or pending waiver).
-        if sign_off_required:
-            authorization.status = kingdom_status
+        if sign_off_required or authorization.style.discipline.name == 'Equestrian':
+            authorization.status = kingdom_review_status_for(authorization)
             save_authorization(authorization)
             record_note(authorization, 'marshal_approved', note)
+            if authorization.status == kingdom_equestrian_waiver_status:
+                return True, (
+                    f'{authorization.style.discipline.name} {authorization.style.name} authorization '
+                    'ready for kingdom equestrian waiver review.'
+                )
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization ready for kingdom approval.'
         else:
             if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
@@ -890,9 +1040,14 @@ def approve_authorization(request):
                     save_authorization(authorization)
                     return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
 
-    elif authorization.status.name == 'Needs Kingdom Approval':
-        if not can_approve_kingdom_pending:
+    elif is_kingdom_review_status_name(authorization.status.name):
+        if authorization.status.name == KINGDOM_APPROVAL_STATUS and not can_approve_kingdom_pending:
             return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
+        if (
+            authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS
+            and not can_approve_equestrian_waiver_pending
+        ):
+            return False, 'Only the Kingdom Authorization Officer or Kingdom Equestrian Marshal can approve this authorization.'
 
         # Marshal authorizations require current membership; never Pending Waiver for marshal styles
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
@@ -941,10 +1096,19 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
     sign_off_required = authorization_officer_sign_off_enabled()
     is_kao = is_kingdom_authorization_officer(request_user)
     can_approve_kingdom_pending = is_kao
+    can_approve_equestrian_waiver_pending = is_kao or is_kingdom_marshal(request_user, 'Equestrian')
 
-    if authorization.status.name == 'Needs Kingdom Approval':
+    if authorization.status.name == KINGDOM_APPROVAL_STATUS:
         if not can_approve_kingdom_pending:
             return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
+        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+        return True, 'OK'
+
+    if authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
+        if not can_approve_equestrian_waiver_pending:
+            return False, 'Only the Kingdom Authorization Officer or Kingdom Equestrian Marshal can approve this authorization.'
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
             if not membership_is_current(authorization.person.user):
                 return False, 'Marshal authorizations require a current membership.'
@@ -981,7 +1145,7 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
         else:
             if not is_regional_marshal(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline to approve this authorization.'
-        if sign_off_required:
+        if sign_off_required or authorization.style.discipline.name == 'Equestrian':
             return True, 'OK'
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
             if not membership_is_current(authorization.person.user):
@@ -998,10 +1162,18 @@ def validate_reject_authorization(marshal: User, authorization: Authorization):
     auth_discipline = authorization.style.discipline.name
     auth_region = _authorization_region_name(authorization)
 
-    if authorization.status.name == 'Needs Kingdom Approval':
+    if authorization.status.name == 'Pending Background Check':
         if is_kingdom_authorization_officer(marshal):
             return True, 'OK'
         return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
+    if authorization.status.name == KINGDOM_APPROVAL_STATUS:
+        if is_kingdom_authorization_officer(marshal):
+            return True, 'OK'
+        return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
+    if authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
+        if is_kingdom_authorization_officer(marshal) or is_kingdom_marshal(marshal, 'Equestrian'):
+            return True, 'OK'
+        return False, 'Only the Kingdom Authorization Officer or Kingdom Equestrian Marshal can reject this authorization.'
 
     if not auth_region:
         _log_unresolved_authorization_region('regional rejection validation', authorization, marshal)

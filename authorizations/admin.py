@@ -11,6 +11,9 @@ from .models import (
     Authorization,
     BranchMarshal,
     AuthorizationNote,
+    SupportingDocument,
+    SupportingDocumentPerson,
+    SupportingDocumentAuthorization,
 )
 
 # Register your models here.
@@ -23,6 +26,9 @@ admin.site.register(Person)
 admin.site.register(Authorization)
 admin.site.register(BranchMarshal)
 admin.site.register(AuthorizationNote)
+admin.site.register(SupportingDocument)
+admin.site.register(SupportingDocumentPerson)
+admin.site.register(SupportingDocumentAuthorization)
 
 
 @admin.register(ReportingPeriod)

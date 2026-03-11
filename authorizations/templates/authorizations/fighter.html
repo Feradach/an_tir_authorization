@@ -225,6 +225,21 @@
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
+                        {% if data.status == "Needs Kingdom Equestrian Waiver" and data.can_approve %}
+                        <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="approve_authorization">
+                            <input type="hidden" name="authorization_id" value="{{ data.auth_id }}">
+                            <input type="hidden" name="action_note" value="">
+                            {% if auth_officer %}
+                                <input type="hidden" name="submit_as_user_id" value="">
+                            {% endif %}
+                            {% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %}
+                                <input type="hidden" name="pending_authorization_action" value="1">
+                            {% endif %}
+                            <button type="submit" class="btn btn-success">Approve</button>
+                        </form>
+                        {% endif %}
                         {% if data.can_reject %}
                             <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Rejection Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                                 {% csrf_token %}

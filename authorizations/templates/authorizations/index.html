@@ -61,7 +61,6 @@
         <p><a href="{% url 'register' %}" class="btn btn-primary">Create an Account</a></p>
         <p><a href="{% url 'merge_accounts' %}" class="btn btn-primary">Merge Accounts</a></p>
     {% endif %}
-    <p><a href="{% url 'branch_marshals' %}" class="btn btn-primary">View Branch Marshals</a></p>
     {% if can_manage_sanctions %}
         <p><a href="{% url 'manage_sanctions' %}" class="btn btn-primary">Manage Sanctions</a></p>
     {% endif %}
@@ -120,6 +119,7 @@
                     <th>Discipline</th>
                     <th>Weapon Style</th>
                     <th>Status</th>
+                    <th>Documents</th>
                     <th>Action</th>
                 </tr>
                 {% for authorization in pending_authorizations %}
@@ -130,6 +130,40 @@
                         <td>{{ authorization.style.discipline.name }}</td>
                         <td>{{ authorization.style.name }}</td>
                         <td>{{ authorization.status.name }}</td>
+                        <td>
+                            {% if authorization.document_alert_state %}
+                                {% if authorization.document_alert_state == "new" %}
+                                    {% if authorization.document_alert_url %}
+                                        <a
+                                            href="{{ authorization.document_alert_url }}"
+                                            class="badge text-bg-warning text-decoration-none"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >{{ authorization.document_alert_text }}</a>
+                                    {% else %}
+                                        <span class="badge text-bg-warning">{{ authorization.document_alert_text }}</span>
+                                    {% endif %}
+                                {% elif authorization.document_alert_state == "on_file" %}
+                                    {% if authorization.document_alert_url %}
+                                        <a
+                                            href="{{ authorization.document_alert_url }}"
+                                            class="badge text-bg-success text-decoration-none"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >{{ authorization.document_alert_text }}</a>
+                                    {% else %}
+                                        <span class="badge text-bg-success">{{ authorization.document_alert_text }}</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="badge text-bg-secondary">{{ authorization.document_alert_text }}</span>
+                                {% endif %}
+                                {% if authorization.document_alert_uploaded_at %}
+                                    <div><small>{{ authorization.document_alert_uploaded_at|date:"Y-m-d H:i" }}</small></div>
+                                {% endif %}
+                            {% else %}
+                                <span>—</span>
+                            {% endif %}
+                        </td>
                         <td>
                     {% if auth_officer and authorization.status.name == "Pending Background Check" %}
                         <a href="{% url 'user_account' user_id=authorization.person.user_id %}" class="btn btn-primary">Go To Page</a>
@@ -145,7 +179,7 @@
                                 <button type="submit" class="btn btn-success">Approve</button>
                             </form>
                     {% endif %}
-                    {% if regional_marshal and not auth_officer or auth_officer and authorization.status.name == "Needs Kingdom Approval" %}
+                    {% if regional_marshal and not auth_officer or auth_officer and authorization.status.name == "Needs Kingdom Approval" or auth_officer and authorization.status.name == "Pending Background Check" or auth_officer and authorization.status.name == "Needs Kingdom Equestrian Waiver" or kingdom_marshal and authorization.status.name == "Needs Kingdom Equestrian Waiver" %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Rejection Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                         {% csrf_token %}
                         <input type="hidden" name="action" value="reject_authorization">

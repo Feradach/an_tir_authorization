@@ -32,3 +32,5 @@ urlpatterns = [
     path('authorizations/', include('authorizations.urls')),
 ]
 
+handler404 = 'authorizations.views.not_found_redirect_view'
+

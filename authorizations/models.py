@@ -587,6 +587,128 @@ class UserNote(models.Model):
         raise ValidationError('User notes cannot be deleted.')
 
 
+class SupportingDocument(models.Model):
+    """Uploaded documents used to validate authorization requirements."""
+
+    class DocumentType(models.TextChoices):
+        BACKGROUND_CHECK = 'background_check', 'Background Check'
+        EQUESTRIAN_WAIVER = 'equestrian_waiver', 'Equestrian Event Waiver'
+
+    class ReviewStatus(models.TextChoices):
+        PENDING = 'pending', 'Pending Review'
+        ACCEPTED = 'accepted', 'Accepted'
+        REJECTED = 'rejected', 'Rejected'
+
+    class Jurisdiction(models.TextChoices):
+        WA = 'WA', 'Washington'
+        OR = 'OR', 'Oregon'
+        ID = 'ID', 'Idaho'
+        BC = 'BC', 'British Columbia'
+
+    document_type = models.CharField(max_length=50, choices=DocumentType.choices, db_index=True)
+    jurisdiction = models.CharField(max_length=2, choices=Jurisdiction.choices, blank=True, default='')
+    file = models.FileField(upload_to='supporting_documents/%Y/%m/')
+    uploaded_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='supporting_documents_uploaded',
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    review_status = models.CharField(
+        max_length=20,
+        choices=ReviewStatus.choices,
+        default=ReviewStatus.PENDING,
+        db_index=True,
+    )
+    reviewed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='supporting_documents_reviewed',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_note = models.TextField(blank=True, default='')
+
+    def __str__(self):
+        return f'{self.get_document_type_display()} uploaded {self.uploaded_at.date().isoformat()}'
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(document_type='background_check', jurisdiction='')
+                    | models.Q(document_type='equestrian_waiver', jurisdiction__in=['WA', 'OR', 'ID', 'BC'])
+                ),
+                name='supporting_document_type_jurisdiction_valid',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['document_type', 'uploaded_at'],
+                name='authorizati_documen_54cc2b_idx',
+            ),
+            models.Index(
+                fields=['review_status', 'uploaded_at'],
+                name='authorizati_review__7917b1_idx',
+            ),
+        ]
+        verbose_name = 'supporting document'
+        verbose_name_plural = 'supporting documents'
+
+
+class SupportingDocumentPerson(models.Model):
+    """Associates an uploaded document with one or more fighters."""
+
+    document = models.ForeignKey(
+        SupportingDocument,
+        on_delete=models.CASCADE,
+        related_name='person_links',
+    )
+    person = models.ForeignKey(
+        Person,
+        on_delete=models.CASCADE,
+        related_name='supporting_document_links',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['document', 'person'],
+                name='unique_supporting_document_person_link',
+            ),
+        ]
+        verbose_name = 'supporting document person link'
+        verbose_name_plural = 'supporting document person links'
+
+
+class SupportingDocumentAuthorization(models.Model):
+    """Associates an uploaded document with one or more authorization rows."""
+
+    document = models.ForeignKey(
+        SupportingDocument,
+        on_delete=models.CASCADE,
+        related_name='authorization_links',
+    )
+    authorization = models.ForeignKey(
+        Authorization,
+        on_delete=models.CASCADE,
+        related_name='supporting_document_links',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['document', 'authorization'],
+                name='unique_supporting_document_authorization_link',
+            ),
+        ]
+        verbose_name = 'supporting document authorization link'
+        verbose_name_plural = 'supporting document authorization links'
+
+
 class ReportingPeriod(models.Model):
     """Quarterly reporting period for legacy and generated aggregate reports."""
 
