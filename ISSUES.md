@@ -1,0 +1,42 @@
+# ISSUES
+
+Need to launch the program. The current database has been destroyed by a ransomware attack.
+
+
+
+## Features
+
+### For Immediate Launch
+
+* Additional security measures to make the site resilient to attack.
+* (External) Get membership dump from Seneschal
+* (External) Migrate the 2025-05-01 data into the system.
+* Mass CSV uploader so we can rebuild the last year of missing data.
+* (External) Roll out plan including social media information campaign.
+
+
+
+### After Launch
+
+* Notification when authorization expiration is nearing (with ability to turn them off).
+* Make sure quarterly reports are working and emailing to appropriate people
+* Create chart/report functionality
+* Ability for users to submit reports in the system.
+* Allow the Authorization officer to change an auth start or end date.
+
+
+
+### Long Term
+
+* Pre-register for tournaments through the system
+* Offline access
+* Dedicated app
+* Run tournaments through the system
+* Fighter practice check in
+
+
+
+## Bugs
+
+None currently identified
+

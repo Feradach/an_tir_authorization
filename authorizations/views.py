@@ -1447,6 +1447,33 @@ def login_view(request):
         password = request.POST['password']
         ip_address = get_client_ip(request)
         user_agent = request.META.get("HTTP_USER_AGENT")
+        username_key = f"login:username:{username.lower()}"
+        ip_key = f"login:ip:{ip_address}"
+        login_window_seconds = _throttle_setting(
+            'AUTHZ_LOGIN_WINDOW_SECONDS',
+            prod_default=15 * 60,
+            test_default=5 * 60,
+        )
+        login_username_limit = _throttle_setting(
+            'AUTHZ_LOGIN_USERNAME_LIMIT',
+            prod_default=5,
+            test_default=100,
+        )
+        login_ip_limit = _throttle_setting(
+            'AUTHZ_LOGIN_IP_LIMIT',
+            prod_default=20,
+            test_default=200,
+        )
+        if _throttle_limit_reached(username_key, login_username_limit) or \
+           _throttle_limit_reached(ip_key, login_ip_limit):
+            log_security_event(
+                "login_throttled",
+                attempted_username=username,
+                ip=ip_address,
+                user_agent=user_agent
+            )
+            messages.error(request, 'Too many login attempts. Please wait a bit and try again.')
+            return render(request, 'authorizations/login.html')
 
         user = authenticate(request, username=username, password=password)
 
@@ -1475,6 +1502,8 @@ def login_view(request):
                 return redirect('password_reset', user_id=user.id)
             return HttpResponseRedirect(reverse('index'))
         else:
+            _throttle_request(username_key, login_username_limit, login_window_seconds)
+            _throttle_request(ip_key, login_ip_limit, login_window_seconds)
 
             log_security_event(
                 "login_failed",
@@ -1672,6 +1701,11 @@ def _throttle_request(key: str, limit: int, window_seconds: int) -> bool:
         return True
     cache.incr(key)
     return False
+
+
+def _throttle_limit_reached(key: str, limit: int) -> bool:
+    count = cache.get(key)
+    return count is not None and count >= limit
 
 
 def _throttle_setting(setting_name: str, prod_default: int, test_default: int) -> int:

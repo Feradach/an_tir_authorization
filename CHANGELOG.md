@@ -1,5 +1,19 @@
 ﻿
+
 ## [Unreleased]
+
+
+## [0.1.11] - 2026-05-05
+### Added
+- Changed the email address used for authorization notifications to a dedicated address.
+- Increased the size of the server the system is running on.
+- Added additional security measures to protect the system.
+- Added additional protection against repeated failed login attempts.
+
+### Fixed
+- Updated how database backups are performed to use a more reliable method.
+
+
 ## [0.1.10] - 2026-03-11
 ### Fixed
 - The account page now shows separate First Name and Last Name fields instead of a blank Legal Name field.

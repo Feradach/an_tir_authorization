@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 Required environment variables for production:
 
     DJANGO_SECRET_KEY
-    DEBUG
+    DJANGO_DEBUG
     DJANGO_ALLOWED_HOSTS
     DJANGO_SETTINGS_MODULE=An_Tir_Authorization.settings
 """
@@ -21,7 +21,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") # Stored in the environment
-DEBUG = os.environ.get("DEBUG") == "True"  # Stored in the environment
+DEBUG = os.environ.get("DJANGO_DEBUG", "False").strip().lower() in {"1", "true", "yes", "on"}  # Stored in the environment
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") # Stored in the environment
 
 # Gate test-only features (default off in production; enable via env as needed)
@@ -51,11 +51,15 @@ DATABASES = {
     }
 }
 
-# Caches (default for development)
+# Shared cache for production throttling. Create the table during deployment with:
+#   python manage.py createcachetable django_cache
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+        'BACKEND': os.environ.get(
+            'DJANGO_CACHE_BACKEND',
+            'django.core.cache.backends.db.DatabaseCache',
+        ),
+        'LOCATION': os.environ.get('DJANGO_CACHE_LOCATION', 'django_cache'),
     }
 }
 
@@ -63,7 +67,6 @@ CACHES = {
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',

@@ -223,6 +223,80 @@ class ViewTestBase(TestCase):
         return payload
 
 
+class LoginViewTests(ViewTestBase):
+    @override_settings(AUTHZ_TEST_FEATURES=False)
+    @patch('authorizations.views._throttle_request')
+    @patch('authorizations.views._throttle_limit_reached', return_value=False)
+    def test_failed_login_uses_production_throttle_defaults(self, mock_limit_reached, mock_throttle):
+        response = self.client.post(
+            reverse('login'),
+            {
+                'username': 'missing_user',
+                'password': 'bad-password',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_limit_reached.call_count, 2)
+        self.assertEqual(mock_throttle.call_count, 2)
+        self.assertEqual(mock_throttle.call_args_list[0].args[1:], (5, 15 * 60))
+        self.assertEqual(mock_throttle.call_args_list[1].args[1:], (20, 15 * 60))
+
+    @override_settings(AUTHZ_TEST_FEATURES=True)
+    @patch('authorizations.views._throttle_request')
+    @patch('authorizations.views._throttle_limit_reached', return_value=False)
+    def test_failed_login_uses_relaxed_test_throttle_defaults(self, mock_limit_reached, mock_throttle):
+        response = self.client.post(
+            reverse('login'),
+            {
+                'username': 'missing_user',
+                'password': 'bad-password',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_limit_reached.call_count, 2)
+        self.assertEqual(mock_throttle.call_count, 2)
+        self.assertEqual(mock_throttle.call_args_list[0].args[1:], (100, 5 * 60))
+        self.assertEqual(mock_throttle.call_args_list[1].args[1:], (200, 5 * 60))
+
+    @patch('authorizations.views._throttle_request')
+    @patch('authorizations.views._throttle_limit_reached', return_value=False)
+    def test_successful_login_does_not_increment_login_throttle(self, mock_limit_reached, mock_throttle):
+        user, _ = self.make_person('login_success_user', 'Login Success User')
+        user.has_logged_in = True
+        user.save()
+
+        response = self.client.post(
+            reverse('login'),
+            {
+                'username': user.username,
+                'password': 'StrongPass!123',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('index'))
+        self.assertEqual(mock_limit_reached.call_count, 2)
+        self.assertEqual(mock_throttle.call_count, 0)
+
+    @patch('authorizations.views.authenticate')
+    @patch('authorizations.views._throttle_limit_reached', return_value=True)
+    def test_throttled_login_does_not_authenticate(self, mock_limit_reached, mock_authenticate):
+        response = self.client.post(
+            reverse('login'),
+            {
+                'username': 'throttled_user',
+                'password': 'StrongPass!123',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_authenticate.call_count, 0)
+        response_messages = self.messages_for(response)
+        self.assertTrue(any('Too many login attempts' in message for message in response_messages))
+
+
 class IndexViewTests(ViewTestBase):
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_header_uses_standard_logo_when_test_features_disabled(self):
