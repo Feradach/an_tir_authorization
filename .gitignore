@@ -21,6 +21,9 @@ local_settings.py
 db.sqlite3
 sql_details.env
 import_csv
+client_secret*.json
+token*.json
+gmail_token*.json
 # Local dumps and backups
 backups/
 an_tir_authorization_anonymized*.sql
@@ -31,6 +34,7 @@ tmp/
 # Local helper scripts not needed in repo
 scripts/dump-anonymized.ps1
 antir_authorizations_handoff.md
+production_launch_plan.md
 
 # If your Django app stores media or static files that are generated
 # (if they're user-uploaded or created by Django), you might consider

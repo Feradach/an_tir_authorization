@@ -81,10 +81,31 @@ EMAIL_FILE_PATH = '/home/antir/mail_outbox'
 DEFAULT_FROM_EMAIL = 'no-reply@authorizations.antir.org'
 '''
 
-# Email using Gmail API
-EMAIL_BACKEND = 'authorizations.email_backends.GmailAPIBackend'
-GMAIL_TOKEN_FILE = os.environ.get("GMAIL_TOKEN_FILE")
+# Email configuration
+EMAIL_BACKEND = os.environ.get(
+    'EMAIL_BACKEND',
+    'authorizations.email_backends.GmailAPIBackend',
+)
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL')
+if EMAIL_BACKEND != 'django.core.mail.backends.filebased.EmailBackend' and not DEFAULT_FROM_EMAIL:
+    raise RuntimeError('DEFAULT_FROM_EMAIL must be set when production email sending is enabled.')
+
+if EMAIL_BACKEND == 'authorizations.email_backends.GmailAPIBackend':
+    GMAIL_TOKEN_FILE = os.environ.get("GMAIL_TOKEN_FILE")
+    if not GMAIL_TOKEN_FILE:
+        raise RuntimeError('GMAIL_TOKEN_FILE must be set when using the Gmail API email backend.')
+elif EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend':
+    EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
+    EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').strip().lower() in (
+        '1',
+        'true',
+        'yes',
+        'on',
+    )
+    EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '30'))
 
 
 # Static files (CSS, JavaScript, Images)
@@ -119,7 +140,14 @@ SESSION_COOKIE_SECURE = True
 SECURE_SSL_REDIRECT = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_BROWSER_XSS_FILTER = True
-CSRF_TRUSTED_ORIGINS = ['https://authorizations.thebusinessduck.com']
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        'CSRF_TRUSTED_ORIGINS',
+        'https://authorizations.thebusinessduck.com',
+    ).split(',')
+    if origin.strip()
+]
 
 ADMINS = [
     ('Don Reynolds', 'don.k.a.reynolds@outlook.com'),

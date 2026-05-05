@@ -1349,9 +1349,16 @@ class TombstoneBehaviorTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(mock_send_mail.call_count, 0)
-        self.assertIn(
-            'If an account exists for that username, a password reset link has been sent to the email on file.',
-            self.messages_for(response),
+        response_messages = self.messages_for(response)
+        self.assertTrue(
+            any(
+                'If an account exists for that username, a password reset link has been sent to the email on file.'
+                in message
+                for message in response_messages
+            )
+        )
+        self.assertTrue(
+            any('Please check your spam or junk folder' in message for message in response_messages)
         )
 
     @override_settings(AUTHZ_TEST_FEATURES=False)

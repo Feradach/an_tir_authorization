@@ -254,6 +254,32 @@ These checks are required for long‑term reliability.
 
 ---
 
+## Production Launch Backup Checklist
+
+Before the testing database is wiped and replaced with production records:
+
+- Confirm both systemd timers are active.
+- Confirm the most recent local backup exists and is non-zero size.
+- Confirm the most recent remote backup exists in DigitalOcean Spaces.
+- Perform a restore test into a temporary database.
+- Confirm the backup encryption key is recoverable by authorized operators.
+- Take a final pre-wipe backup of the testing database.
+
+After production records are imported and validated:
+
+- Take a new baseline production backup immediately.
+- Verify the baseline backup exists locally and remotely.
+- Record the baseline backup filename in the launch notes.
+- Consider preserving this baseline outside normal 30-day retention.
+
+For ransomware resilience:
+
+- Maintain at least one backup copy that the application server cannot overwrite or delete.
+- Keep backup credentials separate from application and database credentials.
+- Review whether monthly archive backups should be retained longer than normal remote backups.
+
+---
+
 ## Ownership and Handoff Notes
 
 - Backup logic lives in `/usr/local/sbin/`
@@ -262,4 +288,3 @@ These checks are required for long‑term reliability.
 - No personal cloud accounts are required
 
 This system is designed to be transferred to Kingdom ownership with minimal changes.
-

@@ -49,6 +49,22 @@ def _get_action_note(request, field_name='action_note'):
     return (request.POST.get(field_name) or '').strip()
 
 
+def _email_sender_notice():
+    sender_email = getattr(settings, 'DEFAULT_FROM_EMAIL', '')
+    return (
+        f'This email was sent from {sender_email}. '
+        f'If you were expecting this message but had trouble finding it, '
+        f'please check your spam or junk folder.'
+    )
+
+
+def _email_sent_message(message):
+    return (
+        f'{message} '
+        f'Please check your spam or junk folder for an email from {settings.DEFAULT_FROM_EMAIL}.'
+    )
+
+
 def not_found_redirect_view(request, exception):
     """Redirect unknown routes to the appropriate homepage shell."""
     if request.path.startswith('/authorizations/'):
@@ -1561,12 +1577,16 @@ def register(request):
                     'An Tir Authorization: New Account',
                     f'Your account has been created.\n\n'
                     f'Username: {person_form.cleaned_data["username"]}\n'
-                    f'Set your password here: {reset_link}',
+                    f'Set your password here: {reset_link}\n\n'
+                    f'{_email_sender_notice()}',
                     settings.DEFAULT_FROM_EMAIL,
                     [user.email],
                     fail_silently=False,
                 )
-                messages.success(request, 'Account created! A password setup link has been emailed to you.')
+                messages.success(
+                    request,
+                    _email_sent_message('Account created! A password setup link has been emailed to you.'),
+                )
             except Exception:
                 logger.exception('Error sending new account email for user_id=%s', user.id)
                 messages.warning(
@@ -1737,7 +1757,10 @@ def recover_account(request):
             if _throttle_request(username_key, password_reset_username_limit, password_reset_window_seconds) or \
                _throttle_request(ip_key, password_reset_ip_limit, password_reset_window_seconds):
                 logger.warning('Password reset throttled for username=%s ip=%s', username, ip_address)
-                messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
+                messages.success(
+                    request,
+                    _email_sent_message('If an account exists for that username, a password reset link has been sent to the email on file.'),
+                )
                 return redirect('login')
                 
             try:
@@ -1747,7 +1770,10 @@ def recover_account(request):
                 )
             except User.DoesNotExist:
                 # Avoid user enumeration: behave as if a reset was requested.
-                messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
+                messages.success(
+                    request,
+                    _email_sent_message('If an account exists for that username, a password reset link has been sent to the email on file.'),
+                )
                 return redirect('login')
 
             reset_link = _build_password_reset_link(user)
@@ -1759,7 +1785,8 @@ def recover_account(request):
                     f'We received a request to reset your password.\n\n'
                     f'Username: {user.username}\n'
                     f'Password Reset Link: {reset_link}\n\n'
-                    f'If you did not request this, you can ignore this email.',
+                    f'If you did not request this, you can ignore this email.\n\n'
+                    f'{_email_sender_notice()}',
                     settings.DEFAULT_FROM_EMAIL,
                     [user.email],
                     fail_silently=False,
@@ -1769,7 +1796,10 @@ def recover_account(request):
                 messages.error(request, 'We could not send a reset email right now. Please try again later.')
                 return render(request, 'authorizations/recover_account.html')
 
-            messages.success(request, 'If an account exists for that username, a password reset link has been sent to the email on file.')
+            messages.success(
+                request,
+                _email_sent_message('If an account exists for that username, a password reset link has been sent to the email on file.'),
+            )
             return redirect('login')
                 
         # Getting username
@@ -1821,7 +1851,8 @@ def recover_account(request):
                         f'We found the following usernames associated with this email address:\n\n'
                         f'{username_list}\n\n'
                         f'You can use any of these usernames to log in. If you need to reset your password, please use the "Forgot Password" option.\n\n'
-                        f'Login URL: {login_url}',
+                        f'Login URL: {login_url}\n\n'
+                        f'{_email_sender_notice()}',
                         settings.DEFAULT_FROM_EMAIL,
                         [email],
                         fail_silently=False,
@@ -1832,7 +1863,10 @@ def recover_account(request):
                     return render(request, 'authorizations/recover_account.html')
 
             # Avoid user enumeration: same response whether or not accounts exist.
-            messages.success(request, 'If any accounts exist for that email address, the usernames have been sent.')
+            messages.success(
+                request,
+                _email_sent_message('If any accounts exist for that email address, the usernames have been sent.'),
+            )
             return redirect('login')
             
         else:
@@ -2371,7 +2405,8 @@ def fighter(request, person_id):
                         f'Username: {user.username}\n'
                         f'Password Reset Link: {reset_link}\n'
                         f'Login URL: {login_url}\n\n'
-                        f'If you did not request this, you can ignore this email.',
+                        f'If you did not request this, you can ignore this email.\n\n'
+                        f'{_email_sender_notice()}',
                         sender_email,
                         [user.email],
                         fail_silently=False,
@@ -2382,7 +2417,7 @@ def fighter(request, person_id):
             messages.success(
                 request,
                 f'Login instructions have been sent to the email on file. '
-                f'Please check your spam folder for an email from {sender_email}. '
+                f'Please check your spam or junk folder for an email from {sender_email}. '
                 f'If you did not receive the email please contact the Database Officer at {sender_email} to update your email.',
             )
             return redirect('fighter', person_id=person_id)
@@ -3155,13 +3190,14 @@ def add_fighter(request):
                     'An Tir Authorization: New Account',
                     f'Your account has been created.\n\n'
                     f'Username: {person_form.cleaned_data["username"]}\n'
-                    f'Set your password here: {reset_link}',
+                    f'Set your password here: {reset_link}\n\n'
+                    f'{_email_sender_notice()}',
                     settings.DEFAULT_FROM_EMAIL,
                     [user.email],
                     fail_silently=False,
                 )
                 messages.success(request,
-                                 'User and person created successfully! A password setup link has been sent to the user.')
+                                 _email_sent_message('User and person created successfully! A password setup link has been sent to the user.'))
             except Exception:
                 logger.exception('Error sending new account email for user_id=%s', user.id)
                 messages.warning(
