@@ -25,6 +25,8 @@ urlpatterns = [
     path('forms/', TemplateView.as_view(template_name='forms.html'), name='forms'),
     path('reports/', reports_view, name='reports'),
     path('contact/', TemplateView.as_view(template_name='contact.html'), name='contact'),
+    path('privacy/', TemplateView.as_view(template_name='privacy.html'), name='privacy'),
+    path('terms/', TemplateView.as_view(template_name='terms.html'), name='terms'),
     path('changelog/', changelog_view, name='changelog'),
     path('faq/', TemplateView.as_view(template_name='faq.html'), name='faq'),
     path('roadmap/', TemplateView.as_view(template_name='roadmap.html'), name='roadmap'),
