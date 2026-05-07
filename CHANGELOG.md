@@ -1,4 +1,9 @@
 ﻿
+## [0.1.13] - 2026-05-07
+### Fixed
+- Fixed account edit dropdowns so imported state/province and country abbreviations show the correct selected values.
+
+
 ## [0.1.12] - 2026-05-06
 ### Added
 - Added a launch notice with training videos and account setup guidance to the home pages and FAQ.

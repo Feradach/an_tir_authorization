@@ -1802,6 +1802,18 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, "initUserAccountSearchableSelect('id_parent_id');")
         self.assertContains(response, '#user_account_form .choices.choices-compact')
 
+    def test_user_account_page_normalizes_legacy_jurisdiction_values_for_dropdowns(self):
+        self.owner_user.state_province = 'WA'
+        self.owner_user.country = 'USA'
+        self.owner_user.save(update_fields=['state_province', 'country'])
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['form'].initial['state_province'], 'Washington')
+        self.assertEqual(response.context['form'].initial['country'], 'United States')
+
     def test_user_account_page_shows_supporting_document_modal(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
 

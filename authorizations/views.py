@@ -2226,6 +2226,42 @@ state_choices = [(state, state) for state in all_states]
 province_choices = [(province, province) for province in all_provinces]
 state_province_choices = state_choices + province_choices
 
+STATE_PROVINCE_NORMALIZATION = {
+    'OR': 'Oregon',
+    'OREGON': 'Oregon',
+    'WA': 'Washington',
+    'WASHINGTON': 'Washington',
+    'ID': 'Idaho',
+    'IDAHO': 'Idaho',
+    'BC': 'British Columbia',
+    'B.C.': 'British Columbia',
+    'BRITISH COLUMBIA': 'British Columbia',
+}
+COUNTRY_NORMALIZATION = {
+    'USA': 'United States',
+    'US': 'United States',
+    'U.S.': 'United States',
+    'UNITED STATES': 'United States',
+    'UNITED STATES OF AMERICA': 'United States',
+    'CAN': 'Canada',
+    'CA': 'Canada',
+    'CANADA': 'Canada',
+}
+
+
+def normalize_state_province(value):
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    return STATE_PROVINCE_NORMALIZATION.get(raw.upper(), raw.title())
+
+
+def normalize_country(value):
+    raw = str(value or '').strip()
+    if not raw:
+        return ''
+    return COUNTRY_NORMALIZATION.get(raw.upper(), raw.title())
+
 # Create your views here.
 def index(request):
     """This is the page they land on for the authorization system."""
@@ -4852,9 +4888,9 @@ def user_account(request, user_id):
         'address': user.address,
         'address2': user.address2,
         'city': user.city,
-        'state_province': user.state_province,
+        'state_province': normalize_state_province(user.state_province),
         'postal_code': user.postal_code,
-        'country': user.country,
+        'country': normalize_country(user.country),
         'phone_number': user.phone_number,
         'birthday': user.birthday,
         'background_check_expiration': user.background_check_expiration,
@@ -7218,7 +7254,7 @@ class CreatePersonForm(forms.Form):
         return postal_code
 
     def clean_state_province(self):
-        state_province = self.cleaned_data.get('state_province', '').strip().title()
+        state_province = normalize_state_province(self.cleaned_data.get('state_province'))
         if not state_province:
             raise forms.ValidationError('State/Province is required.')
         
@@ -7236,6 +7272,14 @@ class CreatePersonForm(forms.Form):
             )
         
         return state_province
+
+    def clean_country(self):
+        country = normalize_country(self.cleaned_data.get('country'))
+        if not country:
+            raise forms.ValidationError('Country is required.')
+        if country not in ('Canada', 'United States'):
+            raise forms.ValidationError('Select a valid country from the list.')
+        return country
 
     def clean(self):
         cleaned_data = super().clean()
