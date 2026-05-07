@@ -44,6 +44,34 @@ KAO_SCA_NAME = "Administrator"
 ZERO_DATE = "0000-00-00"
 REMOVE_MARKER = "---"
 ACTIVE_CUTOFF = date(2026, 5, 1)
+CANADA_PROVINCES = {
+    "AB",
+    "BC",
+    "MB",
+    "NB",
+    "NL",
+    "NS",
+    "NT",
+    "NU",
+    "ON",
+    "PE",
+    "QC",
+    "SK",
+    "YT",
+    "ALBERTA",
+    "BRITISH COLUMBIA",
+    "MANITOBA",
+    "NEW BRUNSWICK",
+    "NEWFOUNDLAND AND LABRADOR",
+    "NOVA SCOTIA",
+    "NORTHWEST TERRITORIES",
+    "NUNAVUT",
+    "ONTARIO",
+    "PRINCE EDWARD ISLAND",
+    "QUEBEC",
+    "SASKATCHEWAN",
+    "YUKON",
+}
 
 REFERENCE_MODELS = [
     AuthorizationStatus,
@@ -318,6 +346,8 @@ class Command(BaseCommand):
             user.country = self._clip(row["Country"], 100)
             user.phone_number = self._clip(row["PhoneNumber"], 20)
             user.background_check_expiration = self._date_or_none(row["BackgroundCheckExpiration"])
+            minor_expiration = self._date_or_none(row["MinorExpDate"])
+            user.birthday = self._birthday_from_minor_expiration(row, minor_expiration)
             user.save(using=self.target_alias)
 
             Person.objects.using(self.target_alias).bulk_create(
@@ -327,7 +357,7 @@ class Command(BaseCommand):
                         sca_name=self._clip(row["SCAName"] or first_name, 255),
                         branch_id=branch_id,
                         title_id=title_id,
-                        is_minor=bool(self._date_or_none(row["MinorExpDate"])),
+                        is_minor=bool(minor_expiration and minor_expiration >= ACTIVE_CUTOFF),
                         created_by_id=KAO_USER_ID,
                         updated_by_id=KAO_USER_ID,
                     )
@@ -550,6 +580,16 @@ class Command(BaseCommand):
         if len(parts) == 1:
             return parts[0], "Fighter"
         return parts[0], " ".join(parts[1:])
+
+    def _birthday_from_minor_expiration(self, row, minor_expiration):
+        if not minor_expiration:
+            return None
+        return minor_expiration - relativedelta(years=19 if self._legacy_person_lives_in_canada(row) else 18)
+
+    def _legacy_person_lives_in_canada(self, row):
+        country = str(row.get("Country") or "").strip().casefold()
+        state = str(row.get("State") or "").strip().upper().replace(".", "")
+        return "canada" in country or state in CANADA_PROVINCES
 
     def _import_candidate(self, auth, person_id, style_id, marshal_id, expiration, source):
         return {

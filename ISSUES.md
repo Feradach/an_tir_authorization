@@ -20,10 +20,12 @@ Need to launch the program. The current database has been destroyed by a ransomw
 
 ### After Launch
 
+* Add maintenance mode to lock changes to the database.
 * Notification when authorization expiration is nearing (with ability to turn them off).
 * Make sure quarterly reports are working and emailing to appropriate people
 * Create chart/report functionality
 * Ability for users to submit reports in the system.
+* Remove is_minor status instead relying on birthday (maybe).
 * Allow the Authorization officer to change an auth start or end date.
 
 
