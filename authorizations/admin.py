@@ -11,6 +11,7 @@ from .models import (
     Authorization,
     BranchMarshal,
     AuthorizationNote,
+    LegacyAuthorizationRecoveryEntry,
     SupportingDocument,
     SupportingDocumentPerson,
     SupportingDocumentAuthorization,
@@ -26,6 +27,7 @@ admin.site.register(Person)
 admin.site.register(Authorization)
 admin.site.register(BranchMarshal)
 admin.site.register(AuthorizationNote)
+admin.site.register(LegacyAuthorizationRecoveryEntry)
 admin.site.register(SupportingDocument)
 admin.site.register(SupportingDocumentPerson)
 admin.site.register(SupportingDocumentAuthorization)

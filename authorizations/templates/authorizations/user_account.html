@@ -461,6 +461,25 @@
             initUserAccountSearchableSelect('id_parent_id');
         }
 
+        const accountMinorCheckbox = document.getElementById('id_is_minor');
+        const accountBirthdayInput = document.getElementById('id_birthday');
+        const accountParentSelect = document.getElementById('id_parent_id');
+        function accountFieldContainer(element) {
+            return element ? element.closest('.form-group') : null;
+        }
+        function syncAccountMinorDependentFields() {
+            const showMinorFields = Boolean(accountMinorCheckbox && accountMinorCheckbox.checked);
+            [accountFieldContainer(accountBirthdayInput), accountFieldContainer(accountParentSelect)].forEach(function (container) {
+                if (container) {
+                    container.style.display = showMinorFields ? '' : 'none';
+                }
+            });
+        }
+        if (accountMinorCheckbox) {
+            accountMinorCheckbox.addEventListener('change', syncAccountMinorDependentFields);
+            syncAccountMinorDependentFields();
+        }
+
         const supportingDocumentForm = document.getElementById('supporting_document_form');
         const documentTypeSelect = document.getElementById('id_document_type');
         const jurisdictionSelect = document.getElementById('id_jurisdiction');

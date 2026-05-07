@@ -26,6 +26,10 @@ ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "").split(",") # Stored i
 
 # Gate test-only features (default off in production; enable via env as needed)
 AUTHZ_TEST_FEATURES = os.environ.get('AUTHZ_TEST_FEATURES', '0').strip().lower() in ('1', 'true', 'yes', 'on')
+AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT = os.environ.get(
+    'AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT',
+    '0',
+).strip().lower() in ('1', 'true', 'yes', 'on')
 
 SITE_URL = os.environ.get("SITE_URL")
 

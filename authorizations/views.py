@@ -4,7 +4,7 @@ import uuid
 from django.core.mail import send_mail
 from django.conf import settings
 from datetime import date, datetime
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import force_bytes, force_str
@@ -24,7 +24,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS
 from itertools import groupby
 from collections import defaultdict
@@ -63,6 +63,10 @@ def _email_sent_message(message):
         f'{message} '
         f'Please check your spam or junk folder for an email from {settings.DEFAULT_FROM_EMAIL}.'
     )
+
+
+def _exclude_system_people(queryset):
+    return queryset.exclude(user_id__in=SYSTEM_USER_IDS)
 
 
 def not_found_redirect_view(request, exception):
@@ -298,6 +302,1046 @@ def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRos
 
 class MembershipRosterUploadForm(forms.Form):
     membership_csv = forms.FileField(required=True)
+
+
+class LegacyAuthorizationUploadForm(forms.Form):
+    authorization_csv = forms.FileField(required=True)
+
+
+class LegacyAuthorizationRecoveryForm(forms.Form):
+    person_sca_name = forms.CharField(max_length=255, required=True)
+    person_first_name = forms.CharField(max_length=150, required=True)
+    person_last_name = forms.CharField(max_length=150, required=True)
+    weapon_style = forms.CharField(max_length=255, required=True)
+    marshal_sca_name = forms.CharField(max_length=255, required=True)
+    marshal_first_name = forms.CharField(max_length=150, required=True)
+    marshal_last_name = forms.CharField(max_length=150, required=True)
+    second_marshal_sca_name = forms.CharField(max_length=255, required=False)
+    second_marshal_first_name = forms.CharField(max_length=150, required=False)
+    second_marshal_last_name = forms.CharField(max_length=150, required=False)
+    concurring_officer_sca_name = forms.CharField(max_length=255, required=False)
+    concurring_officer_first_name = forms.CharField(max_length=150, required=False)
+    concurring_officer_last_name = forms.CharField(max_length=150, required=False)
+    auth_date = forms.DateField(
+        required=True,
+        input_formats=['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'],
+        widget=forms.DateInput(attrs={'type': 'date'}),
+    )
+    is_minor = forms.BooleanField(required=False)
+
+
+class LegacyRecoveryNewFighterForm(forms.Form):
+    sca_name = forms.CharField(max_length=255, required=True)
+    email = forms.EmailField(required=True)
+    first_name = forms.CharField(max_length=150, required=True)
+    last_name = forms.CharField(max_length=150, required=True)
+    membership = forms.CharField(
+        max_length=20,
+        required=False,
+        validators=[RegexValidator(r'^\d{1,20}$', 'Enter 1-20 digits.')],
+    )
+    membership_expiration = forms.DateField(required=False, widget=forms.DateInput(attrs={'type': 'date'}))
+    address = forms.CharField(max_length=255, required=True)
+    address2 = forms.CharField(max_length=255, required=False)
+    city = forms.CharField(max_length=100, required=True)
+    state_province = forms.ChoiceField(choices=[], required=True)
+    postal_code = forms.CharField(max_length=10, required=True)
+    country = forms.ChoiceField(choices=[('', '-- select one --'), ('Canada', 'Canada'), ('United States', 'United States')], required=True)
+    phone_number = forms.CharField(max_length=20, required=True)
+    birthday = forms.DateField(required=False, widget=forms.DateInput(attrs={'type': 'date'}))
+    branch = forms.ModelChoiceField(queryset=Branch.objects.none(), required=True)
+    is_minor = forms.BooleanField(required=False)
+    background_check_expiration = forms.DateField(required=False, widget=forms.DateInput(attrs={'type': 'date'}))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['branch'].queryset = Branch.objects.non_regions().order_by('name')
+        self.fields['state_province'].choices = [('', '-- select one --')] + state_province_choices
+        self.order_fields([
+            'sca_name',
+            'email',
+            'first_name',
+            'last_name',
+            'membership',
+            'membership_expiration',
+            'address',
+            'address2',
+            'city',
+            'state_province',
+            'postal_code',
+            'country',
+            'phone_number',
+            'branch',
+            'is_minor',
+            'birthday',
+            'background_check_expiration',
+        ])
+
+    def clean_phone_number(self):
+        raw = self.cleaned_data['phone_number']
+        digits = re.sub(r'\D', '', raw)
+        if len(digits) != 10:
+            raise ValidationError("Enter a 10-digit U.S. phone number.")
+        return f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"
+
+    def clean(self):
+        cleaned = super().clean()
+        membership = cleaned.get('membership')
+        membership_expiration = cleaned.get('membership_expiration')
+        if bool(membership) != bool(membership_expiration):
+            raise forms.ValidationError('Membership number and membership expiration must be provided together.')
+        if cleaned.get('is_minor') and not cleaned.get('birthday'):
+            raise forms.ValidationError('Birthday is required when adding a minor fighter.')
+        return cleaned
+
+
+LEGACY_RECOVERY_BATCH_FIELDS = [
+    'person_sca_name',
+    'person_first_name',
+    'person_last_name',
+    'weapon_style',
+    'marshal_sca_name',
+    'marshal_first_name',
+    'marshal_last_name',
+    'second_marshal_sca_name',
+    'second_marshal_first_name',
+    'second_marshal_last_name',
+    'concurring_officer_sca_name',
+    'concurring_officer_first_name',
+    'concurring_officer_last_name',
+    'auth_date',
+    'is_minor',
+]
+
+
+LEGACY_AUTH_IMPORT_PERSON_ID_FIELDS = ['person_id', 'Person ID', 'User ID']
+LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS = ['sca_name', 'SCA Name', 'Fighter SCA Name']
+LEGACY_AUTH_IMPORT_DISCIPLINE_FIELDS = ['discipline', 'Discipline']
+LEGACY_AUTH_IMPORT_STYLE_FIELDS = ['style', 'Weapon Style', 'Authorization']
+LEGACY_AUTH_IMPORT_START_DATE_FIELDS = ['start_date', 'Start Date', 'Authorization Date']
+LEGACY_AUTH_IMPORT_EXPIRATION_FIELDS = ['expiration', 'Expiration', 'End Date']
+LEGACY_AUTH_IMPORT_MARSHAL_ID_FIELDS = ['marshal_person_id', 'Marshal Person ID', 'Marshal User ID']
+LEGACY_AUTH_IMPORT_MARSHAL_NAME_FIELDS = ['marshal_sca_name', 'Marshal SCA Name', 'Authorizing Marshal']
+LEGACY_AUTH_IMPORT_CONCURRING_ID_FIELDS = ['concurring_person_id', 'Concurring Person ID', 'Concurring Fighter ID']
+LEGACY_AUTH_IMPORT_CONCURRING_NAME_FIELDS = ['concurring_sca_name', 'Concurring SCA Name', 'Concurring Fighter']
+LEGACY_AUTH_IMPORT_BRANCH_FIELDS = ['branch', 'Branch']
+LEGACY_AUTH_IMPORT_TITLE_FIELDS = ['title', 'Title']
+LEGACY_AUTH_IMPORT_FIRST_NAME_FIELDS = ['first_name', 'Legal First Name', 'First Name']
+LEGACY_AUTH_IMPORT_LAST_NAME_FIELDS = ['last_name', 'Legal Last Name', 'Last Name']
+LEGACY_AUTH_IMPORT_EMAIL_FIELDS = ['email', 'Email']
+LEGACY_AUTH_IMPORT_ADDRESS_FIELDS = ['address', 'Address']
+LEGACY_AUTH_IMPORT_ADDRESS2_FIELDS = ['address2', 'Address 2']
+LEGACY_AUTH_IMPORT_CITY_FIELDS = ['city', 'City']
+LEGACY_AUTH_IMPORT_STATE_FIELDS = ['state_province', 'State/Province', 'State', 'Province']
+LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS = ['postal_code', 'Postal Code', 'Zip']
+LEGACY_AUTH_IMPORT_COUNTRY_FIELDS = ['country', 'Country']
+LEGACY_AUTH_IMPORT_PHONE_FIELDS = ['phone_number', 'Phone Number', 'Phone']
+LEGACY_AUTH_IMPORT_MEMBERSHIP_FIELDS = ['membership', 'Membership Number', 'Membership #']
+LEGACY_AUTH_IMPORT_MEMBERSHIP_EXPIRATION_FIELDS = [
+    'membership_expiration',
+    'Membership Expiration',
+    'Membership Expiration Date',
+]
+LEGACY_AUTH_IMPORT_WAIVER_EXPIRATION_FIELDS = ['waiver_expiration', 'Waiver Expiration']
+LEGACY_AUTH_IMPORT_BACKGROUND_CHECK_EXPIRATION_FIELDS = [
+    'background_check_expiration',
+    'Background Check Expiration',
+]
+LEGACY_AUTH_IMPORT_BIRTHDAY_FIELDS = ['birthday', 'Birth Date', 'Date of Birth']
+LEGACY_AUTH_IMPORT_MINOR_FIELDS = ['is_minor', 'Minor']
+LEGACY_AUTH_IMPORT_DISCIPLINE_ALIASES = {
+    'armored': 'Armored',
+    'heavy': 'Armored',
+    'rapier': 'Rapier Combat',
+    'rapier combat': 'Rapier Combat',
+    'c&t': 'Cut & Thrust',
+    'cut and thrust': 'Cut & Thrust',
+    'cut & thrust': 'Cut & Thrust',
+    'archery': 'Archery',
+    'thrown': 'Thrown',
+    'missile': 'Missile',
+    'siege': 'Siege',
+    'seige': 'Siege',
+    'equestrian': 'Equestrian',
+    'eq': 'Equestrian',
+    'youth armored': 'Youth Armored',
+    'ya': 'Youth Armored',
+    'youth rapier': 'Youth Rapier',
+    'yr': 'Youth Rapier',
+}
+
+
+def legacy_authorization_import_enabled() -> bool:
+    return bool(getattr(settings, 'AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT', False))
+
+
+def _parse_legacy_date(raw: str, row_number: int, label: str, *, required: bool = True):
+    raw = (raw or '').strip()
+    if not raw:
+        if required:
+            raise ValueError(f'Row {row_number}: {label} is required.')
+        return None
+    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f'Row {row_number}: Invalid {label} "{raw}". Use YYYY-MM-DD or MM/DD/YYYY.')
+
+
+def _parse_legacy_bool(raw: str) -> bool:
+    return (raw or '').strip().lower() in {'1', 'true', 'yes', 'y', 'minor'}
+
+
+def _csv_optional(row: dict, field_names: list[str]) -> str:
+    for field_name in field_names:
+        if field_name in row:
+            return (row.get(field_name) or '').strip()
+    return ''
+
+
+def _resolve_single_person_by_sca_name(sca_name: str, row_number: int, label: str):
+    matches = list(
+        Person.objects.select_related('user', 'branch').filter(
+            sca_name__iexact=sca_name,
+            user__merged_into__isnull=True,
+        ).order_by('user_id')
+    )
+    if not matches:
+        return None
+    if len(matches) > 1:
+        raise ValueError(
+            f'Row {row_number}: Multiple people match {label} "{sca_name}". '
+            'Use person_id or marshal_person_id to disambiguate.'
+        )
+    return matches[0]
+
+
+def _resolve_person_reference(row: dict, row_number: int):
+    raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_PERSON_ID_FIELDS)
+    if raw_id:
+        try:
+            return Person.objects.select_related('user', 'branch').get(user_id=int(raw_id), user__merged_into__isnull=True)
+        except (TypeError, ValueError, Person.DoesNotExist):
+            raise ValueError(f'Row {row_number}: Person ID "{raw_id}" was not found.')
+
+    sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
+    return _resolve_single_person_by_sca_name(sca_name, row_number, 'SCA Name')
+
+
+def _resolve_marshal_reference(row: dict, row_number: int):
+    raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_MARSHAL_ID_FIELDS)
+    if raw_id:
+        try:
+            return Person.objects.select_related('user', 'branch').get(user_id=int(raw_id), user__merged_into__isnull=True)
+        except (TypeError, ValueError, Person.DoesNotExist):
+            raise ValueError(f'Row {row_number}: Marshal Person ID "{raw_id}" was not found.')
+
+    marshal_name = _csv_optional(row, LEGACY_AUTH_IMPORT_MARSHAL_NAME_FIELDS)
+    if not marshal_name:
+        raise ValueError(
+            f'Row {row_number}: Authorizing marshal is required. '
+            'Use marshal_person_id or marshal_sca_name.'
+        )
+    return _resolve_single_person_by_sca_name(marshal_name, row_number, 'Marshal SCA Name')
+
+
+def _resolve_concurring_reference(row: dict, row_number: int):
+    raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_CONCURRING_ID_FIELDS)
+    if raw_id:
+        try:
+            return Person.objects.select_related('user', 'branch').get(user_id=int(raw_id), user__merged_into__isnull=True)
+        except (TypeError, ValueError, Person.DoesNotExist):
+            raise ValueError(f'Row {row_number}: Concurring Person ID "{raw_id}" was not found.')
+
+    concurring_name = _csv_optional(row, LEGACY_AUTH_IMPORT_CONCURRING_NAME_FIELDS)
+    if not concurring_name:
+        return None
+    return _resolve_single_person_by_sca_name(concurring_name, row_number, 'Concurring SCA Name')
+
+
+def _legacy_person_creation_data(row: dict, row_number: int):
+    sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
+    branch_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_BRANCH_FIELDS)
+    branch = Branch.objects.filter(name__iexact=branch_name).order_by('id').first()
+    if not branch:
+        raise ValueError(f'Row {row_number}: Branch "{branch_name}" was not found for new person "{sca_name}".')
+
+    title = None
+    title_name = _csv_optional(row, LEGACY_AUTH_IMPORT_TITLE_FIELDS)
+    if title_name:
+        title = Title.objects.filter(name__iexact=title_name).order_by('id').first()
+        if not title:
+            raise ValueError(f'Row {row_number}: Title "{title_name}" was not found for new person "{sca_name}".')
+
+    first_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_FIRST_NAME_FIELDS)
+    last_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_LAST_NAME_FIELDS)
+    email = _csv_optional(row, LEGACY_AUTH_IMPORT_EMAIL_FIELDS)
+    membership = _csv_optional(row, LEGACY_AUTH_IMPORT_MEMBERSHIP_FIELDS) or None
+    membership_expiration = _parse_legacy_date(
+        _csv_optional(row, LEGACY_AUTH_IMPORT_MEMBERSHIP_EXPIRATION_FIELDS),
+        row_number,
+        'membership expiration',
+        required=False,
+    )
+    birthday = _parse_legacy_date(
+        _csv_optional(row, LEGACY_AUTH_IMPORT_BIRTHDAY_FIELDS),
+        row_number,
+        'birthday',
+        required=False,
+    )
+    is_minor = _parse_legacy_bool(_csv_optional(row, LEGACY_AUTH_IMPORT_MINOR_FIELDS))
+    if is_minor and not birthday:
+        raise ValueError(f'Row {row_number}: Birthday is required when creating a minor account.')
+    if bool(membership) != bool(membership_expiration):
+        raise ValueError(
+            f'Row {row_number}: Membership number and membership expiration must be provided together.'
+        )
+
+    return {
+        'sca_name': sca_name,
+        'branch': branch,
+        'title': title,
+        'first_name': first_name,
+        'last_name': last_name,
+        'email': email or f'legacy-import+{uuid.uuid4().hex[:12]}@invalid.local',
+        'address': _csv_optional(row, LEGACY_AUTH_IMPORT_ADDRESS_FIELDS),
+        'address2': _csv_optional(row, LEGACY_AUTH_IMPORT_ADDRESS2_FIELDS),
+        'city': _csv_optional(row, LEGACY_AUTH_IMPORT_CITY_FIELDS),
+        'state_province': _csv_optional(row, LEGACY_AUTH_IMPORT_STATE_FIELDS),
+        'postal_code': _csv_optional(row, LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS),
+        'country': _csv_optional(row, LEGACY_AUTH_IMPORT_COUNTRY_FIELDS),
+        'phone_number': _csv_optional(row, LEGACY_AUTH_IMPORT_PHONE_FIELDS),
+        'membership': membership,
+        'membership_expiration': membership_expiration,
+        'waiver_expiration': _parse_legacy_date(
+            _csv_optional(row, LEGACY_AUTH_IMPORT_WAIVER_EXPIRATION_FIELDS),
+            row_number,
+            'waiver expiration',
+            required=False,
+        ),
+        'background_check_expiration': _parse_legacy_date(
+            _csv_optional(row, LEGACY_AUTH_IMPORT_BACKGROUND_CHECK_EXPIRATION_FIELDS),
+            row_number,
+            'background check expiration',
+            required=False,
+        ),
+        'birthday': birthday,
+        'is_minor': is_minor,
+    }
+
+
+def _legacy_person_update_data(row: dict, row_number: int):
+    data = {}
+    branch_name = _csv_optional(row, LEGACY_AUTH_IMPORT_BRANCH_FIELDS)
+    if branch_name:
+        branch = Branch.objects.filter(name__iexact=branch_name).order_by('id').first()
+        if not branch:
+            raise ValueError(f'Row {row_number}: Branch "{branch_name}" was not found.')
+        data['branch'] = branch
+
+    title_name = _csv_optional(row, LEGACY_AUTH_IMPORT_TITLE_FIELDS)
+    if title_name:
+        title = Title.objects.filter(name__iexact=title_name).order_by('id').first()
+        if not title:
+            raise ValueError(f'Row {row_number}: Title "{title_name}" was not found.')
+        data['title'] = title
+
+    string_fields = {
+        'sca_name': LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS,
+        'first_name': LEGACY_AUTH_IMPORT_FIRST_NAME_FIELDS,
+        'last_name': LEGACY_AUTH_IMPORT_LAST_NAME_FIELDS,
+        'email': LEGACY_AUTH_IMPORT_EMAIL_FIELDS,
+        'address': LEGACY_AUTH_IMPORT_ADDRESS_FIELDS,
+        'address2': LEGACY_AUTH_IMPORT_ADDRESS2_FIELDS,
+        'city': LEGACY_AUTH_IMPORT_CITY_FIELDS,
+        'state_province': LEGACY_AUTH_IMPORT_STATE_FIELDS,
+        'postal_code': LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS,
+        'country': LEGACY_AUTH_IMPORT_COUNTRY_FIELDS,
+        'phone_number': LEGACY_AUTH_IMPORT_PHONE_FIELDS,
+        'membership': LEGACY_AUTH_IMPORT_MEMBERSHIP_FIELDS,
+    }
+    for key, field_names in string_fields.items():
+        value = _csv_optional(row, field_names)
+        if value:
+            data[key] = value
+
+    date_fields = {
+        'membership_expiration': (LEGACY_AUTH_IMPORT_MEMBERSHIP_EXPIRATION_FIELDS, 'membership expiration'),
+        'waiver_expiration': (LEGACY_AUTH_IMPORT_WAIVER_EXPIRATION_FIELDS, 'waiver expiration'),
+        'background_check_expiration': (
+            LEGACY_AUTH_IMPORT_BACKGROUND_CHECK_EXPIRATION_FIELDS,
+            'background check expiration',
+        ),
+        'birthday': (LEGACY_AUTH_IMPORT_BIRTHDAY_FIELDS, 'birthday'),
+    }
+    for key, (field_names, label) in date_fields.items():
+        if _csv_optional(row, field_names):
+            data[key] = _parse_legacy_date(_csv_optional(row, field_names), row_number, label)
+
+    minor_value = _csv_optional(row, LEGACY_AUTH_IMPORT_MINOR_FIELDS)
+    if minor_value:
+        data['is_minor'] = _parse_legacy_bool(minor_value)
+
+    if bool(data.get('membership')) != bool(data.get('membership_expiration')):
+        if 'membership' in data or 'membership_expiration' in data:
+            raise ValueError(
+                f'Row {row_number}: Membership number and membership expiration must be provided together.'
+            )
+
+    return data
+
+
+def _find_legacy_style(row: dict, row_number: int):
+    style_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_STYLE_FIELDS)
+    discipline_name = _csv_optional(row, LEGACY_AUTH_IMPORT_DISCIPLINE_FIELDS)
+    if not discipline_name and ' - ' in style_name:
+        discipline_name, style_name = [part.strip() for part in style_name.split(' - ', 1)]
+    if discipline_name:
+        discipline_name = LEGACY_AUTH_IMPORT_DISCIPLINE_ALIASES.get(
+            discipline_name.strip().casefold(),
+            discipline_name,
+        )
+    styles_qs = WeaponStyle.objects.select_related('discipline').filter(name__iexact=style_name)
+    if discipline_name:
+        styles_qs = styles_qs.filter(discipline__name__iexact=discipline_name)
+    styles = list(styles_qs.order_by('discipline__name', 'name', 'id'))
+    if not styles:
+        if discipline_name:
+            raise ValueError(
+                f'Row {row_number}: Authorization "{discipline_name} / {style_name}" was not found.'
+            )
+        raise ValueError(f'Row {row_number}: Weapon Style "{style_name}" was not found.')
+    if len(styles) > 1:
+        matches = ', '.join(
+            f'{style.discipline.name} / {style.name}'
+            for style in styles[:8]
+        )
+        if len(styles) > 8:
+            matches = f'{matches}, ...'
+        raise ValueError(
+            f'Row {row_number}: Weapon Style "{style_name}" matches multiple disciplines '
+            f'({matches}). Add a Discipline column for this row.'
+        )
+    return styles[0]
+
+
+def _resolve_legacy_recovery_person(sca_name: str, first_name: str, last_name: str, row_label: str):
+    matches = list(
+        Person.objects.select_related('user', 'branch').filter(
+            sca_name__iexact=sca_name.strip(),
+            user__first_name__iexact=first_name.strip(),
+            user__last_name__iexact=last_name.strip(),
+            user__merged_into__isnull=True,
+        ).order_by('user_id')
+    )
+    if not matches:
+        raise ValueError(
+            f'{row_label} was not found. Check SCA name, first name, and last name, '
+            'or create the account before entering the authorization.'
+        )
+    if len(matches) > 1:
+        raise ValueError(
+            f'{row_label} matched multiple accounts. Merge or clean up the duplicate accounts before entering this row.'
+        )
+    return matches[0]
+
+
+def _find_legacy_recovery_style(style_value: str):
+    row = {'Weapon Style': style_value}
+    return _find_legacy_style(row, 1)
+
+
+def _legacy_recovery_authorization_expiration(style: WeaponStyle, auth_date: date, is_minor: bool):
+    if is_minor or (
+        style.name in ['Junior Marshal', 'Senior Marshal']
+        and style.discipline.name in ['Youth Armored', 'Youth Rapier']
+    ):
+        return auth_date + relativedelta(years=2)
+    return auth_date + relativedelta(years=4)
+
+
+def _legacy_recovery_is_marshal_style(style: WeaponStyle):
+    return style.name in ['Junior Marshal', 'Senior Marshal']
+
+
+def _legacy_recovery_optional_signoff(cleaned: dict, prefix: str, label: str, *, required: bool):
+    values = [
+        (cleaned.get(f'{prefix}_sca_name') or '').strip(),
+        (cleaned.get(f'{prefix}_first_name') or '').strip(),
+        (cleaned.get(f'{prefix}_last_name') or '').strip(),
+    ]
+    has_any = any(values)
+    if required and not all(values):
+        raise ValueError(f'{label} is required for this marshal authorization.')
+    if has_any and not all(values):
+        raise ValueError(f'{label} requires SCA name, first name, and last name.')
+    if not has_any:
+        return None
+    return _resolve_legacy_recovery_person(values[0], values[1], values[2], label)
+
+
+def _legacy_recovery_note_text(style: WeaponStyle, auth_date: date, second_marshal=None, concurring_officer=None):
+    note = (
+        'Authorization Added through Legacy Authorization Recovery Tool. '
+        f'Authorization: {style.discipline.name} - {style.name}. '
+        f'Historical authorization date: {auth_date.isoformat()}.'
+    )
+    if second_marshal:
+        note += f' Second Marshal: {second_marshal.sca_name}.'
+    if concurring_officer:
+        note += f' Senior Marshal Concurrence: {concurring_officer.sca_name}.'
+    return note
+
+
+def _legacy_recovery_username(sca_name: str):
+    base = re.sub(r'[^a-z0-9._+-]+', '.', sca_name.strip().lower()).strip('.') or 'legacy.fighter'
+    base = base[:120]
+    candidate = base
+    if Person.objects.filter(sca_name__iexact=sca_name.strip(), user__merged_into__isnull=True).exists():
+        candidate = f'{base[:145]}.{uuid.uuid4().int % 10000:04d}'
+    while User.objects.filter(username=candidate).exists():
+        candidate = f'{base[:145]}.{uuid.uuid4().int % 10000:04d}'
+    return candidate
+
+
+def _create_legacy_recovery_fighter(form: LegacyRecoveryNewFighterForm, actor: User):
+    cleaned = form.cleaned_data
+    try:
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=_legacy_recovery_username(cleaned['sca_name']),
+                password=None,
+                email=cleaned['email'],
+                first_name=cleaned['first_name'],
+                last_name=cleaned['last_name'],
+                membership=cleaned.get('membership') or None,
+                membership_expiration=cleaned.get('membership_expiration'),
+                address=cleaned['address'],
+                address2=cleaned.get('address2'),
+                city=cleaned['city'],
+                state_province=cleaned['state_province'],
+                postal_code=cleaned['postal_code'],
+                country=cleaned['country'],
+                phone_number=cleaned['phone_number'],
+                birthday=cleaned.get('birthday'),
+                background_check_expiration=cleaned.get('background_check_expiration'),
+                created_by=actor,
+                updated_by=actor,
+            )
+            person = Person.objects.create(
+                user=user,
+                sca_name=cleaned['sca_name'],
+                branch=cleaned['branch'],
+                is_minor=cleaned.get('is_minor', False),
+                created_by=actor,
+                updated_by=actor,
+            )
+            UserNote.objects.create(
+                person=person,
+                created_by=actor,
+                note='Account created from legacy authorization recovery paperwork.',
+            )
+    except IntegrityError:
+        raise ValueError('Could not create fighter. Check for duplicate legal name/email or membership number.')
+    return person
+
+
+def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm, actor: User):
+    cleaned = form.cleaned_data
+    person = _resolve_legacy_recovery_person(
+        cleaned['person_sca_name'],
+        cleaned['person_first_name'],
+        cleaned['person_last_name'],
+        'Person',
+    )
+    marshal = _resolve_legacy_recovery_person(
+        cleaned['marshal_sca_name'],
+        cleaned['marshal_first_name'],
+        cleaned['marshal_last_name'],
+        'Marshal',
+    )
+    style = _find_legacy_recovery_style(cleaned['weapon_style'])
+    auth_date = cleaned['auth_date']
+    is_minor = cleaned.get('is_minor', False)
+    is_marshal_style = _legacy_recovery_is_marshal_style(style)
+    second_marshal = _legacy_recovery_optional_signoff(
+        cleaned,
+        'second_marshal',
+        'Second Marshal',
+        required=is_marshal_style,
+    )
+    concurring_officer = _legacy_recovery_optional_signoff(
+        cleaned,
+        'concurring_officer',
+        'Concurring Officer',
+        required=style.name == 'Senior Marshal',
+    )
+
+    latest_recovery = LegacyAuthorizationRecoveryEntry.objects.filter(
+        person=person,
+        style=style,
+    ).select_related('created_by', 'authorization').order_by('-auth_date', '-created_at').first()
+    if latest_recovery and auth_date <= latest_recovery.auth_date:
+        created_by = latest_recovery.created_by.person.sca_name if (
+            latest_recovery.created_by and hasattr(latest_recovery.created_by, 'person')
+        ) else 'another processor'
+        raise ValueError(
+            f'{person.sca_name} already has a recovery entry for {style.discipline.name} - {style.name} '
+            f'dated {latest_recovery.auth_date.isoformat()} entered by {created_by}.'
+        )
+
+    existing_authorization = Authorization.objects.select_related(
+        'status',
+        'marshal',
+        'concurring_fighter',
+    ).filter(person=person, style=style).first()
+
+    active_status = _get_or_create_status_by_name('Active')
+    expiration = _legacy_recovery_authorization_expiration(style, auth_date, is_minor)
+    if existing_authorization and existing_authorization.expiration and expiration <= existing_authorization.expiration:
+        raise ValueError(
+            f'{person.sca_name} already has {style.discipline.name} - {style.name} through '
+            f'{existing_authorization.expiration.isoformat()}. This row would not move the authorization forward.'
+        )
+
+    authorization_officer_person = getattr(actor, 'person', None)
+    recovery_note = _legacy_recovery_note_text(style, auth_date, second_marshal, concurring_officer)
+
+    try:
+        with transaction.atomic():
+            previous_status = None
+            previous_marshal = None
+            previous_concurring_fighter = None
+            previous_expiration = None
+            if existing_authorization:
+                authorization = existing_authorization
+                previous_status = authorization.status
+                previous_marshal = authorization.marshal
+                previous_concurring_fighter = authorization.concurring_fighter
+                previous_expiration = authorization.expiration
+                authorization.status = active_status
+                authorization.marshal = marshal
+                authorization.concurring_fighter = authorization_officer_person if style.name == 'Senior Marshal' else None
+                authorization.expiration = expiration
+                authorization.updated_by = actor
+                authorization.save()
+            else:
+                authorization = Authorization.objects.create(
+                    person=person,
+                    style=style,
+                    status=active_status,
+                    marshal=marshal,
+                    concurring_fighter=authorization_officer_person if style.name == 'Senior Marshal' else None,
+                    expiration=expiration,
+                    created_by=actor,
+                    updated_by=actor,
+                )
+            recovery_entry = LegacyAuthorizationRecoveryEntry.objects.create(
+                person=person,
+                style=style,
+                marshal=marshal,
+                second_marshal=second_marshal,
+                concurring_officer=concurring_officer,
+                auth_date=auth_date,
+                minor_on_paperwork=is_minor,
+                expiration=expiration,
+                authorization=authorization,
+                previous_status=previous_status,
+                previous_marshal=previous_marshal,
+                previous_concurring_fighter=previous_concurring_fighter,
+                previous_expiration=previous_expiration,
+                created_by=actor,
+            )
+            AuthorizationNote.objects.create(
+                authorization=authorization,
+                created_by=actor,
+                action='marshal_approved',
+                note=recovery_note,
+            )
+            noted_people = {person.user_id: person, marshal.user_id: marshal}
+            if second_marshal:
+                noted_people[second_marshal.user_id] = second_marshal
+            if concurring_officer:
+                noted_people[concurring_officer.user_id] = concurring_officer
+            for noted_person in noted_people.values():
+                UserNote.objects.create(
+                    person=noted_person,
+                    created_by=actor,
+                    note=recovery_note,
+                )
+    except IntegrityError:
+        raise ValueError(
+            f'{person.sca_name} / {style.discipline.name} - {style.name} was entered by another processor first.'
+        )
+
+    return recovery_entry
+
+
+def _legacy_recovery_rows_from_post(post_data):
+    row_count = max((len(post_data.getlist(field_name)) for field_name in LEGACY_RECOVERY_BATCH_FIELDS), default=0)
+    rows = []
+    for index in range(row_count):
+        row = {}
+        for field_name in LEGACY_RECOVERY_BATCH_FIELDS:
+            values = post_data.getlist(field_name)
+            row[field_name] = values[index] if index < len(values) else ''
+        if any((value or '').strip() for value in row.values()):
+            rows.append(row)
+    return rows
+
+
+def _legacy_recovery_audit_csv_response():
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = 'attachment; filename="legacy_authorization_recovery_audit.csv"'
+    response.write('\ufeff')
+    writer = csv.writer(response)
+    writer.writerow([
+        'Processed At',
+        'Processed By',
+        'Person SCA Name',
+        'Person First Name',
+        'Person Last Name',
+        'Weapon Style',
+        'Marshal SCA Name',
+        'Marshal First Name',
+        'Marshal Last Name',
+        'Second Marshal SCA Name',
+        'Second Marshal First Name',
+        'Second Marshal Last Name',
+        'Concurring Officer SCA Name',
+        'Concurring Officer First Name',
+        'Concurring Officer Last Name',
+        'Authorization Date',
+        'Expiration',
+        'Minor On Paperwork',
+        'Authorization ID',
+        'Previous Status',
+        'Previous Marshal SCA Name',
+        'Previous Concurring Fighter SCA Name',
+        'Previous Expiration',
+    ])
+    entries = LegacyAuthorizationRecoveryEntry.objects.select_related(
+        'person__user',
+        'style__discipline',
+        'marshal__user',
+        'second_marshal__user',
+        'concurring_officer__user',
+        'previous_status',
+        'previous_marshal',
+        'previous_concurring_fighter',
+        'created_by__person',
+        'authorization',
+    ).order_by('created_at', 'id')
+    for entry in entries:
+        processor = ''
+        if entry.created_by:
+            processor = (
+                entry.created_by.person.sca_name
+                if hasattr(entry.created_by, 'person')
+                else entry.created_by.username
+            )
+        expiration = entry.expiration or (entry.authorization.expiration if entry.authorization else None)
+        writer.writerow([
+            timezone.localtime(entry.created_at).strftime('%Y-%m-%d %H:%M:%S') if entry.created_at else '',
+            processor,
+            entry.person.sca_name,
+            entry.person.user.first_name,
+            entry.person.user.last_name,
+            f'{entry.style.discipline.name} - {entry.style.name}',
+            entry.marshal.sca_name,
+            entry.marshal.user.first_name,
+            entry.marshal.user.last_name,
+            entry.second_marshal.sca_name if entry.second_marshal else '',
+            entry.second_marshal.user.first_name if entry.second_marshal else '',
+            entry.second_marshal.user.last_name if entry.second_marshal else '',
+            entry.concurring_officer.sca_name if entry.concurring_officer else '',
+            entry.concurring_officer.user.first_name if entry.concurring_officer else '',
+            entry.concurring_officer.user.last_name if entry.concurring_officer else '',
+            entry.auth_date.isoformat() if entry.auth_date else '',
+            expiration.isoformat() if expiration else '',
+            'Yes' if entry.minor_on_paperwork else 'No',
+            entry.authorization_id or '',
+            entry.previous_status.name if entry.previous_status else '',
+            entry.previous_marshal.sca_name if entry.previous_marshal else '',
+            entry.previous_concurring_fighter.sca_name if entry.previous_concurring_fighter else '',
+            entry.previous_expiration.isoformat() if entry.previous_expiration else '',
+        ])
+    return response
+
+
+def _build_legacy_import_rows(uploaded_file):
+    decoded = uploaded_file.read().decode('utf-8-sig', errors='replace')
+    reader = csv.DictReader(decoded.splitlines())
+    if not reader.fieldnames:
+        raise ValueError('The uploaded file does not contain a header row.')
+
+    raw_rows = [
+        (row_number, row)
+        for row_number, row in enumerate(reader, start=2)
+        if any((value or '').strip() for value in row.values())
+    ]
+    rows = []
+    pending_people = {}
+    seen_authorizations = set()
+
+    for row_number, row in raw_rows:
+        raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_PERSON_ID_FIELDS)
+        if raw_id:
+            continue
+        sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
+        if _resolve_single_person_by_sca_name(sca_name, row_number, 'SCA Name'):
+            continue
+        person_data = _legacy_person_creation_data(row, row_number)
+        person_key = f'new:{person_data["sca_name"].strip().casefold()}'
+        existing_data = pending_people.get(person_key)
+        if existing_data and (
+            existing_data['first_name'] != person_data['first_name']
+            or existing_data['last_name'] != person_data['last_name']
+            or existing_data['branch'].id != person_data['branch'].id
+        ):
+            raise ValueError(
+                f'Row {row_number}: New person "{person_data["sca_name"]}" has conflicting account details.'
+            )
+        pending_people.setdefault(person_key, person_data)
+
+    for row_number, row in raw_rows:
+        style = _find_legacy_style(row, row_number)
+        start_date = _parse_legacy_date(
+            _csv_value(row, row_number, LEGACY_AUTH_IMPORT_START_DATE_FIELDS),
+            row_number,
+            'start date',
+        )
+        explicit_expiration = _parse_legacy_date(
+            _csv_optional(row, LEGACY_AUTH_IMPORT_EXPIRATION_FIELDS),
+            row_number,
+            'expiration',
+            required=False,
+        )
+        if explicit_expiration and explicit_expiration < start_date:
+            raise ValueError(f'Row {row_number}: Expiration cannot be before start date.')
+
+        person = _resolve_person_reference(row, row_number)
+        person_key = None
+        if person:
+            person_key = f'id:{person.user_id}'
+        else:
+            sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
+            person_key = f'new:{sca_name.strip().casefold()}'
+
+        marshal = _resolve_marshal_reference(row, row_number)
+        marshal_name = _csv_optional(row, LEGACY_AUTH_IMPORT_MARSHAL_NAME_FIELDS)
+        marshal_key = None
+        if marshal:
+            marshal_key = f'id:{marshal.user_id}'
+        elif marshal_name:
+            pending_key = f'new:{marshal_name.strip().casefold()}'
+            if pending_key not in pending_people:
+                raise ValueError(
+                    f'Row {row_number}: Marshal "{marshal_name}" was not found. '
+                    'Import or create that person first, or leave marshal_sca_name blank.'
+                )
+            marshal_key = pending_key
+
+        concurring = _resolve_concurring_reference(row, row_number)
+        concurring_name = _csv_optional(row, LEGACY_AUTH_IMPORT_CONCURRING_NAME_FIELDS)
+        concurring_key = None
+        if concurring:
+            concurring_key = f'id:{concurring.user_id}'
+        elif concurring_name:
+            pending_key = f'new:{concurring_name.strip().casefold()}'
+            if pending_key not in pending_people:
+                raise ValueError(
+                    f'Row {row_number}: Concurring fighter "{concurring_name}" was not found. '
+                    'Import or create that person first, or leave concurring_sca_name blank.'
+                )
+            concurring_key = pending_key
+
+        auth_key = (person_key, style.id)
+        if auth_key in seen_authorizations:
+            raise ValueError(
+                f'Row {row_number}: Duplicate authorization for the same person and style in this CSV.'
+            )
+        seen_authorizations.add(auth_key)
+
+        rows.append({
+            'row_number': row_number,
+            'person_key': person_key,
+            'person_update': _legacy_person_update_data(row, row_number),
+            'style': style,
+            'marshal_key': marshal_key,
+            'concurring_key': concurring_key,
+            'start_date': start_date,
+            'explicit_expiration': explicit_expiration,
+        })
+
+    if not rows:
+        raise ValueError('The uploaded file has no authorization rows.')
+    return rows, pending_people
+
+
+def _legacy_import_username(sca_name: str) -> str:
+    base = re.sub(r'[^a-z0-9]+', '.', sca_name.strip().lower()).strip('.') or 'legacy.user'
+    base = base[:120]
+    candidate = f'{base}.legacy'
+    while User.objects.filter(username=candidate).exists():
+        candidate = f'{base[:110]}.{uuid.uuid4().hex[:8]}'
+    return candidate
+
+
+def _apply_legacy_person_update(person: Person, data: dict, actor: User) -> bool:
+    if not data:
+        return False
+
+    user = person.user
+    user_fields = [
+        'first_name',
+        'last_name',
+        'email',
+        'address',
+        'address2',
+        'city',
+        'state_province',
+        'postal_code',
+        'country',
+        'phone_number',
+        'membership',
+        'membership_expiration',
+        'waiver_expiration',
+        'background_check_expiration',
+        'birthday',
+    ]
+    person_fields = ['sca_name', 'branch', 'title', 'is_minor']
+
+    user_changed = False
+    for field_name in user_fields:
+        if field_name in data and getattr(user, field_name) != data[field_name]:
+            setattr(user, field_name, data[field_name])
+            user_changed = True
+    if user_changed:
+        user.updated_by = actor
+        user.save()
+
+    person_changed = False
+    for field_name in person_fields:
+        if field_name in data and getattr(person, field_name) != data[field_name]:
+            setattr(person, field_name, data[field_name])
+            person_changed = True
+    if person_changed:
+        person.updated_by = actor
+        person.save()
+
+    return user_changed or person_changed
+
+
+def _apply_legacy_authorization_import(rows, pending_people, actor: User, source_filename: str):
+    person_map = {}
+    for key, person_data in pending_people.items():
+        user = User.objects.create_user(
+            username=_legacy_import_username(person_data['sca_name']),
+            password=None,
+            email=person_data['email'],
+            first_name=person_data['first_name'],
+            last_name=person_data['last_name'],
+            membership=person_data['membership'],
+            membership_expiration=person_data['membership_expiration'],
+            address=person_data['address'],
+            address2=person_data['address2'],
+            city=person_data['city'],
+            state_province=person_data['state_province'],
+            postal_code=person_data['postal_code'],
+            country=person_data['country'],
+            phone_number=person_data['phone_number'],
+            birthday=person_data['birthday'],
+            waiver_expiration=person_data['waiver_expiration'],
+            background_check_expiration=person_data['background_check_expiration'],
+            is_active=True,
+            created_by=actor,
+            updated_by=actor,
+        )
+        person = Person.objects.create(
+            user=user,
+            sca_name=person_data['sca_name'],
+            branch=person_data['branch'],
+            title=person_data['title'],
+            is_minor=person_data['is_minor'],
+            created_by=actor,
+            updated_by=actor,
+        )
+        person_map[key] = person
+        UserNote.objects.create(
+            person=person,
+            created_by=actor,
+            note='Placeholder account created during legacy authorization CSV import.',
+        )
+
+    created_count = 0
+    updated_count = 0
+    profile_updated_keys = set()
+    active_status = _get_or_create_status_by_name('Active')
+
+    for row in rows:
+        person = person_map.get(row['person_key'])
+        if person is None:
+            person_id = int(row['person_key'].split(':', 1)[1])
+            person = Person.objects.select_related('user').get(user_id=person_id)
+
+        if row['person_key'] not in profile_updated_keys:
+            if _apply_legacy_person_update(person, row['person_update'], actor):
+                UserNote.objects.create(
+                    person=person,
+                    created_by=actor,
+                    note='Account details updated from legacy authorization CSV paperwork.',
+                )
+            profile_updated_keys.add(row['person_key'])
+
+        marshal = None
+        if row['marshal_key']:
+            marshal = person_map.get(row['marshal_key'])
+            if marshal is None:
+                marshal_id = int(row['marshal_key'].split(':', 1)[1])
+                marshal = Person.objects.get(user_id=marshal_id)
+
+        concurring = None
+        if row['concurring_key']:
+            concurring = person_map.get(row['concurring_key'])
+            if concurring is None:
+                concurring_id = int(row['concurring_key'].split(':', 1)[1])
+                concurring = Person.objects.get(user_id=concurring_id)
+
+        expiration = row['explicit_expiration'] or calculate_authorization_expiration(
+            person,
+            row['style'],
+            today=row['start_date'],
+        )
+        authorization, created = Authorization.objects.update_or_create(
+            person=person,
+            style=row['style'],
+            defaults={
+                'status': active_status,
+                'marshal': marshal,
+                'concurring_fighter': concurring,
+                'expiration': expiration,
+                'created_by': actor,
+                'updated_by': actor,
+            },
+        )
+        if created:
+            created_count += 1
+        else:
+            updated_count += 1
+
+        AuthorizationNote.objects.create(
+            authorization=authorization,
+            created_by=actor,
+            action='marshal_approved',
+            note=(
+                f'Legacy authorization CSV import from {source_filename}. '
+                f'Historical start date: {row["start_date"].isoformat()}.'
+            ),
+        )
+
+    return created_count, updated_count, len(pending_people)
 
 
 SUPPORTED_DOCUMENT_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png'}
@@ -1127,7 +2171,9 @@ state_province_choices = state_choices + province_choices
 def index(request):
     """This is the page they land on for the authorization system."""
 
-    all_people_qs = Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name')
+    all_people_qs = _exclude_system_people(
+        Person.objects.filter(user__merged_into__isnull=True)
+    ).order_by('sca_name')
     all_people = all_people_qs.values_list('sca_name', flat=True).distinct()
     sign_off_required = authorization_officer_sign_off_enabled()
     fighter_name = request.GET.get('sca_name')
@@ -1138,6 +2184,7 @@ def index(request):
             sca_name=fighter_name,
             user__merged_into__isnull=True,
         )
+        matches = _exclude_system_people(matches)
         match_count = matches.count()
 
         # Single match: go straight to fighter card
@@ -1426,6 +2473,7 @@ def index(request):
         'authorization_officer_sign_off_required': sign_off_required,
         'can_set_authorization_officer_sign_off': auth_officer,
         'membership_roster_import': MembershipRosterImport.objects.first() if auth_officer else None,
+        'legacy_authorization_import_enabled': auth_officer and legacy_authorization_import_enabled(),
         'pending_authorization_action': pending_authorization_action,
     }
 
@@ -2199,12 +3247,14 @@ def search(request):
     """
 
     # === Step 1: Get dropdown options (we need these for the search form too) ===
-    sca_name_options = Person.objects.order_by('sca_name').values_list('sca_name', flat=True).distinct()
+    sca_name_options = _exclude_system_people(Person.objects.all()).order_by('sca_name').values_list('sca_name', flat=True).distinct()
     region_options = Branch.objects.regions().order_by('name').values_list('name', flat=True)
     branch_options = Branch.objects.non_regions().order_by('name').values_list('name', flat=True)
     discipline_options = Discipline.objects.order_by('name').values_list('name', flat=True)
     style_options = WeaponStyle.objects.order_by('name').values_list('name', flat=True).distinct()
-    marshal_options = Person.objects.filter(marshal__isnull=False).order_by('sca_name').values_list('sca_name', flat=True).distinct()
+    marshal_options = _exclude_system_people(
+        Person.objects.filter(marshal__isnull=False)
+    ).order_by('sca_name').values_list('sca_name', flat=True).distinct()
 
     # === Step 2: Check if the user is requesting the search form page ===
     if request.GET.get('goal') == 'search':
@@ -2221,11 +3271,7 @@ def search(request):
 
     # === Step 3: If not goal=search, proceed with showing results (this is our existing logic) ===
 
-    try:
-        active_status_id = AuthorizationStatus.objects.get(name='Active').id
-        dynamic_filter = Q(status_id=active_status_id)
-    except AuthorizationStatus.DoesNotExist:
-        dynamic_filter = Q(pk__in=[])
+    dynamic_filter = Q(status__name='Active')
 
     # ... (all the `if sca_name:`, `if region:`, etc. blocks remain the same) ...
     sca_name = request.GET.get('sca_name')
@@ -2283,7 +3329,7 @@ def search(request):
     matching_authorizations = Authorization.objects.with_effective_expiration().with_sanction_flag().filter(
         dynamic_filter,
         has_active_sanction=False,
-    ).exclude(person__user_id=11968)
+    ).exclude(person__user_id__in=SYSTEM_USER_IDS)
     download_format = (request.GET.get('download') or '').strip().lower()
 
     if view_mode == 'card':
@@ -3009,7 +4055,9 @@ def fighter(request, person_id):
             'discipline_choices': discipline_choices,
             'sanctions': sanctions,
             'regional_marshal': regional_marshal,
-            'all_people': Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name'),
+            'all_people': _exclude_system_people(
+                Person.objects.filter(user__merged_into__isnull=True)
+            ).order_by('sca_name'),
             'pending_waivers': pending_waivers,
             'pending_note_required': pending_note_required,
             'pending_authorization_action': pending_authorization_action,
@@ -4064,7 +5112,9 @@ def user_account(request, user_id):
         # Prep authorization UI (initially just show the form; logic wired later)
         'auth_form': CreateAuthorizationForm(user=request.user, show_all=True),
         'auth_officer': is_kingdom_authorization_officer(request.user),
-        'all_people': Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name'),
+        'all_people': _exclude_system_people(
+            Person.objects.filter(user__merged_into__isnull=True)
+        ).order_by('sca_name'),
         # Branch choices for self-appointment (exclude Other type)
         'branch_choices': Branch.objects.exclude(type='Other').order_by('name'),
         'discipline_choices': Discipline.objects.order_by('name'),
@@ -4174,6 +5224,125 @@ def upload_membership_roster(request):
     return redirect(next_url)
 
 
+def upload_legacy_authorizations(request):
+    if not legacy_authorization_import_enabled():
+        raise Http404
+    if not request.user.is_authenticated:
+        return redirect('login')
+    if not is_kingdom_authorization_officer(request.user):
+        raise PermissionDenied
+    if request.method != 'POST':
+        return redirect('index')
+
+    next_url = request.POST.get('next') or reverse('index')
+    form = LegacyAuthorizationUploadForm(request.POST, request.FILES)
+    if not form.is_valid():
+        messages.error(request, 'Please choose a legacy authorization CSV file to upload.')
+        return redirect(next_url)
+
+    uploaded_file = form.cleaned_data['authorization_csv']
+    try:
+        rows, pending_people = _build_legacy_import_rows(uploaded_file)
+    except ValueError as exc:
+        messages.error(request, f'Legacy authorization import failed: {exc}')
+        return redirect(next_url)
+
+    try:
+        with transaction.atomic():
+            created_count, updated_count, person_count = _apply_legacy_authorization_import(
+                rows,
+                pending_people,
+                request.user,
+                uploaded_file.name,
+            )
+    except Exception:
+        logger.exception('Legacy authorization CSV import failed for file %s', uploaded_file.name)
+        messages.error(request, 'Legacy authorization import failed before any rows were saved.')
+        return redirect(next_url)
+
+    messages.success(
+        request,
+        (
+            f'Legacy authorization import complete: {created_count} created, '
+            f'{updated_count} updated, {person_count} placeholder account(s) created.'
+        ),
+    )
+    return redirect(next_url)
+
+
+def legacy_authorization_recovery(request):
+    if not legacy_authorization_import_enabled():
+        raise Http404
+    if not request.user.is_authenticated:
+        return redirect('login')
+    if not is_kingdom_authorization_officer(request.user):
+        raise PermissionDenied
+    if request.method == 'GET' and request.GET.get('download') == 'audit_csv':
+        return _legacy_recovery_audit_csv_response()
+
+    pending_rows = []
+    new_fighter_form = LegacyRecoveryNewFighterForm()
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'add_legacy_recovery_fighter':
+            new_fighter_form = LegacyRecoveryNewFighterForm(request.POST)
+            if new_fighter_form.is_valid():
+                try:
+                    person = _create_legacy_recovery_fighter(new_fighter_form, request.user)
+                except ValueError as exc:
+                    messages.error(request, str(exc))
+                else:
+                    messages.success(request, f'Added fighter {person.sca_name}.')
+                    return redirect('legacy_authorization_recovery')
+            else:
+                messages.error(request, 'Please correct the new fighter fields.')
+        else:
+            submitted_rows = _legacy_recovery_rows_from_post(request.POST)
+            if not submitted_rows:
+                messages.error(request, 'Add at least one recovery row before processing.')
+            processed_count = 0
+            failed_rows = []
+            for index, row in enumerate(submitted_rows, start=1):
+                form = LegacyAuthorizationRecoveryForm(row)
+                if not form.is_valid():
+                    failed_rows.append(row)
+                    messages.error(request, f'Row {index}: Please complete all required fields with a valid date.')
+                    continue
+                try:
+                    recovery_entry = _create_legacy_recovery_authorization(form, request.user)
+                except ValueError as exc:
+                    failed_rows.append(row)
+                    messages.error(request, f'Row {index}: {exc}')
+                else:
+                    processed_count += 1
+            if processed_count:
+                messages.success(request, f'Processed {processed_count} legacy authorization recovery row(s).')
+            pending_rows = failed_rows
+
+    recent_entries = LegacyAuthorizationRecoveryEntry.objects.select_related(
+        'person__user',
+        'style__discipline',
+        'marshal__user',
+        'second_marshal__user',
+        'concurring_officer__user',
+        'created_by__person',
+    ).order_by('-created_at')[:100]
+    people = Person.objects.select_related('user').filter(
+        user__merged_into__isnull=True,
+    )
+    people = _exclude_system_people(people).order_by('sca_name', 'user__first_name', 'user__last_name')
+    styles = WeaponStyle.objects.select_related('discipline').order_by('discipline__name', 'name')
+
+    context = {
+        'new_fighter_form': new_fighter_form,
+        'pending_rows': pending_rows,
+        'recent_entries': recent_entries,
+        'people': people,
+        'styles': styles,
+    }
+    return render(request, 'authorizations/legacy_authorization_recovery.html', context)
+
+
 def supporting_documents(request):
     if not request.user.is_authenticated:
         return redirect('index')
@@ -4247,7 +5416,9 @@ def supporting_documents(request):
         'supporting_document_type_choices': SupportingDocument.DocumentType.choices,
         'supporting_document_jurisdiction_choices': SupportingDocument.Jurisdiction.choices,
         'upload_person': request.user.person if request.user.is_authenticated and hasattr(request.user, 'person') else None,
-        'all_people': Person.objects.filter(user__merged_into__isnull=True).order_by('sca_name')
+        'all_people': _exclude_system_people(
+            Person.objects.filter(user__merged_into__isnull=True)
+        ).order_by('sca_name')
         if request.user.is_authenticated
         else [],
     }
@@ -4427,7 +5598,9 @@ def manage_sanctions(request):
             active_sanctions = active_sanctions.none()
         else:
             active_sanctions = active_sanctions.filter(discipline_id__in=allowed_discipline_ids)
-    sca_name_options = Person.objects.filter(sanctions__in=active_sanctions).distinct().order_by('sca_name').values_list('sca_name', flat=True)
+    sca_name_options = _exclude_system_people(
+        Person.objects.filter(sanctions__in=active_sanctions)
+    ).distinct().order_by('sca_name').values_list('sca_name', flat=True)
     discipline_options = Discipline.objects.filter(sanction__in=active_sanctions).distinct().order_by('name').values_list('name', flat=True)
     style_options = WeaponStyle.objects.filter(sanction__in=active_sanctions, sanction__style__isnull=False).distinct().order_by('name').values_list('name', flat=True)
 
@@ -4450,7 +5623,7 @@ def manage_sanctions(request):
     if style := request.GET.get('style'):
         dynamic_filter &= Q(style__name=style)
 
-    matching_sanctions = active_sanctions.filter(dynamic_filter).exclude(person__user_id=11968)
+    matching_sanctions = active_sanctions.filter(dynamic_filter).exclude(person__user_id__in=SYSTEM_USER_IDS)
     if not sanctions_supervisor:
         if not allowed_discipline_ids:
             matching_sanctions = matching_sanctions.none()
@@ -4984,6 +6157,7 @@ def merge_accounts(request):
 
     all_people = (
         Person.objects.filter(user__merged_into__isnull=True)
+        .exclude(user_id__in=SYSTEM_USER_IDS)
         .exclude(sca_name__isnull=True)
         .exclude(sca_name='')
         .order_by('sca_name')
@@ -5044,6 +6218,7 @@ def merge_accounts(request):
             old_matches = list(
                 Person.objects.select_related('user', 'branch')
                 .filter(sca_name=old_sca_name, user__merged_into__isnull=True)
+                .exclude(user_id__in=SYSTEM_USER_IDS)
                 .order_by('user_id')
             )
 
@@ -5060,6 +6235,7 @@ def merge_accounts(request):
             new_matches = list(
                 Person.objects.select_related('user', 'branch')
                 .filter(sca_name=new_sca_name, user__merged_into__isnull=True)
+                .exclude(user_id__in=SYSTEM_USER_IDS)
                 .order_by('user_id')
             )
 
@@ -5086,12 +6262,14 @@ def merge_accounts(request):
             old_matches = list(
                 Person.objects.select_related('user', 'branch')
                 .filter(sca_name=old_sca_name, user__merged_into__isnull=True)
+                .exclude(user_id__in=SYSTEM_USER_IDS)
                 .order_by('user_id')
             )
         if new_sca_name:
             new_matches = list(
                 Person.objects.select_related('user', 'branch')
                 .filter(sca_name=new_sca_name, user__merged_into__isnull=True)
+                .exclude(user_id__in=SYSTEM_USER_IDS)
                 .order_by('user_id')
             )
 
@@ -5252,7 +6430,9 @@ def branch_marshals(request):
 
     # Get dropdown options for the search form
     current_marshal_offices = BranchMarshal.objects.filter(end_date__gte=date.today())
-    sca_name_options = Person.objects.filter(branchmarshal__in=current_marshal_offices).distinct().order_by('sca_name').values_list('sca_name', flat=True)
+    sca_name_options = _exclude_system_people(
+        Person.objects.filter(branchmarshal__in=current_marshal_offices)
+    ).distinct().order_by('sca_name').values_list('sca_name', flat=True)
     branch_options = Branch.objects.filter(branchmarshal__in=current_marshal_offices).distinct().order_by('name').values_list('name', flat=True)
     discipline_options = Discipline.objects.filter(branchmarshal__in=current_marshal_offices).distinct().order_by('name').values_list('name', flat=True)
     region_options = Branch.objects.regions().order_by('name').values_list('name', flat=True)
@@ -5281,7 +6461,7 @@ def branch_marshals(request):
         # Region is a property of the related Branch (self-referential FK)
         dynamic_filter &= Q(branch__region__name=region)
     
-    matching_appointments = BranchMarshal.objects.filter(dynamic_filter).exclude(person__user_id=11968)
+    matching_appointments = BranchMarshal.objects.filter(dynamic_filter).exclude(person__user_id__in=SYSTEM_USER_IDS)
     view_mode = request.GET.get('view', 'table')
     page_obj = None
     show_manage_actions = False
@@ -5634,6 +6814,140 @@ def reports_view(request):
     return render(request, 'reports.html', context)
 
 
+class EmailChangeRequestForm(forms.Form):
+    sca_name = forms.CharField(label='SCA Name', required=True, max_length=255)
+    legal_name = forms.CharField(label='Legal Name', required=True, max_length=255)
+    new_email = forms.EmailField(label='New Email Address', required=True, max_length=254)
+    membership_number = forms.CharField(
+        label='Membership Number',
+        required=False,
+        max_length=20,
+        validators=[RegexValidator(r'^\d{1,20}$', 'Enter 1-20 digits.')]
+    )
+    honeypot = forms.CharField(
+        label='Website',
+        required=False,
+        widget=forms.TextInput(attrs={
+            'autocomplete': 'off',
+            'tabindex': '-1',
+        })
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field_name, field in self.fields.items():
+            if field_name == 'honeypot':
+                continue
+            field.widget.attrs.update({'class': 'form-control'})
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get('honeypot'):
+            raise forms.ValidationError('Unable to process submission.')
+        for field_name in ['sca_name', 'legal_name', 'membership_number']:
+            value = cleaned_data.get(field_name)
+            if isinstance(value, str):
+                cleaned_data[field_name] = value.strip()
+        return cleaned_data
+
+
+def contact_view(request):
+    session_key = 'email_change_request_started_at'
+    now_ts = timezone.now().timestamp()
+    form = EmailChangeRequestForm()
+
+    if request.method == 'POST':
+        form = EmailChangeRequestForm(request.POST)
+        ip_address = _get_client_ip(request)
+        raw_min_seconds = getattr(settings, 'AUTHZ_EMAIL_CHANGE_MIN_SECONDS', None)
+        if raw_min_seconds is None:
+            min_seconds = 0 if getattr(settings, 'AUTHZ_TEST_FEATURES', False) else 5
+        else:
+            try:
+                min_seconds = max(0, int(raw_min_seconds))
+            except (TypeError, ValueError):
+                logger.warning('Invalid throttle setting AUTHZ_EMAIL_CHANGE_MIN_SECONDS=%r. Using default.', raw_min_seconds)
+                min_seconds = 0 if getattr(settings, 'AUTHZ_TEST_FEATURES', False) else 5
+        started_at = request.session.get(session_key)
+        elapsed_seconds = now_ts - float(started_at or 0)
+
+        ip_key = f"email-change-request:ip:{ip_address}"
+        email_key = f"email-change-request:email:{(request.POST.get('new_email') or '').strip().lower()}"
+        sca_name_key = f"email-change-request:sca:{re.sub(r'[^a-z0-9_.@-]+', '-', (request.POST.get('sca_name') or '').strip().lower())}"
+        window_seconds = _throttle_setting(
+            'AUTHZ_EMAIL_CHANGE_WINDOW_SECONDS',
+            prod_default=60 * 60,
+            test_default=5 * 60,
+        )
+        ip_limit = _throttle_setting(
+            'AUTHZ_EMAIL_CHANGE_IP_LIMIT',
+            prod_default=2,
+            test_default=50,
+        )
+        email_limit = _throttle_setting(
+            'AUTHZ_EMAIL_CHANGE_EMAIL_LIMIT',
+            prod_default=2,
+            test_default=50,
+        )
+        sca_name_limit = _throttle_setting(
+            'AUTHZ_EMAIL_CHANGE_SCA_NAME_LIMIT',
+            prod_default=3,
+            test_default=50,
+        )
+
+        throttled = (
+            _throttle_request(ip_key, ip_limit, window_seconds)
+            or _throttle_request(email_key, email_limit, window_seconds)
+            or _throttle_request(sca_name_key, sca_name_limit, window_seconds)
+        )
+        timing_failed = started_at is None or elapsed_seconds < min_seconds
+
+        if form.is_valid() and not throttled and not timing_failed:
+            cleaned = form.cleaned_data
+            membership_number = cleaned.get('membership_number') or 'Not provided'
+            try:
+                send_mail(
+                    'An Tir Authorization Portal email change request',
+                    (
+                        'A user submitted a request to change the email address on their authorization account.\n\n'
+                        'Do not make this change without verifying the request through an appropriate trusted channel.\n\n'
+                        f"SCA Name: {cleaned['sca_name']}\n"
+                        f"Legal Name: {cleaned['legal_name']}\n"
+                        f"Requested New Email: {cleaned['new_email']}\n"
+                        f"Membership Number: {membership_number}\n"
+                        f"Request IP: {ip_address}\n"
+                    ),
+                    settings.DEFAULT_FROM_EMAIL,
+                    ['antir.authorization.database@gmail.com'],
+                    fail_silently=False,
+                )
+            except Exception:
+                logger.exception('Error sending email change request notification.')
+                messages.error(
+                    request,
+                    'We could not send your email change request right now. Please try again later.',
+                )
+                return render(request, 'contact.html', {'email_change_form': form})
+            messages.success(request, 'Your email change request has been sent to the database officer for review.')
+            request.session[session_key] = timezone.now().timestamp()
+            return redirect('contact')
+
+        if throttled or timing_failed:
+            logger.warning(
+                'Email change request blocked by anti-abuse checks. ip=%s throttled=%s timing_failed=%s elapsed=%.2f',
+                ip_address,
+                throttled,
+                timing_failed,
+                elapsed_seconds,
+            )
+            messages.success(request, 'Your email change request has been sent to the database officer for review.')
+            request.session[session_key] = timezone.now().timestamp()
+            return redirect('contact')
+
+    request.session[session_key] = timezone.now().timestamp()
+    return render(request, 'contact.html', {'email_change_form': form})
+
+
 def changelog_view(request):
     """Render the local CHANGELOG.md as HTML on the changelog page.
 
@@ -5755,7 +7069,7 @@ class CreatePersonForm(forms.Form):
     )
     branch = forms.ModelChoiceField(label='Branch', queryset=Branch.objects.non_regions(), required=True)
     is_minor = forms.BooleanField(label='Is Minor', required=False)
-    parent_id = forms.ModelChoiceField(label='Parent ID', queryset=Person.objects.all().exclude(sca_name='admin'),required=False)
+    parent_id = forms.ModelChoiceField(label='Parent ID', queryset=Person.objects.exclude(user_id__in=SYSTEM_USER_IDS), required=False)
     background_check_expiration = forms.DateField(
         label='Background Check Expiration',
         required=False,
@@ -5777,6 +7091,31 @@ class CreatePersonForm(forms.Form):
         self.fields['title'].queryset = qs
         # Order branches alphabetically and exclude region-level types (Kingdom/Principality/Region)
         self.fields['branch'].queryset = Branch.objects.non_regions().order_by('name')
+        self.order_fields([
+            'email',
+            'honeypot',
+            'username',
+            'first_name',
+            'last_name',
+            'membership',
+            'membership_expiration',
+            'address',
+            'address2',
+            'city',
+            'state_province',
+            'postal_code',
+            'country',
+            'phone_number',
+            'sca_name',
+            'title',
+            'new_title',
+            'new_title_rank',
+            'branch',
+            'is_minor',
+            'birthday',
+            'parent_id',
+            'background_check_expiration',
+        ])
 
     def clean_phone_number(self):
         raw = self.cleaned_data['phone_number']

@@ -35,6 +35,11 @@ Items may change, be deferred, or be removed as priorities evolve.
 - Decide whether to retain periodic database snapshots for historical analysis.
   - Evaluate storage/retention needs and restore procedures.
 
+- Add a stable public fighter number separate from the internal database user ID.
+  - Candidate field names: `public_id` or `fighter_number`.
+  - Keep internal primary keys unchanged, but use the public number for URLs, lookup, and user-facing references.
+  - Make the number short enough to read or memorize while avoiding low sequential IDs that feel like test records.
+
 ## Mobile + Event Operations Ideas
 
 ### 1) Mobile app integrated with the website

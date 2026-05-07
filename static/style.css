@@ -256,6 +256,23 @@ td {
     margin: 0 0 10px 0;
 }
 
+.launch-notice-caret {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-top: 0.35rem solid transparent;
+    border-bottom: 0.35rem solid transparent;
+    border-left: 0.45rem solid currentColor;
+    margin-right: 0.4rem;
+    vertical-align: middle;
+    transition: transform 0.15s ease-in-out;
+}
+
+.launch-notice-toggle[aria-expanded="true"] .launch-notice-caret,
+.launch-notice-toggle:not(.collapsed) .launch-notice-caret {
+    transform: rotate(90deg);
+}
+
 .card ul {
     padding-left: 20px;
 }

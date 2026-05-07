@@ -1,6 +1,11 @@
 ﻿
 
-## [Unreleased]
+## [0.1.12] - 2026-05-06
+### Added
+- Added a launch notice with training videos and account setup guidance to the home pages and FAQ.
+- Added a temporary contact form for requesting an email address update during account rollout.
+- Migrated legacy data to new database structure.
+- Changed the registration form so that ParentID and Birthday fields are not visible unless the user is a minor.
 
 
 ## [0.1.11] - 2026-05-05

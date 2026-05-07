@@ -180,11 +180,10 @@
 </style>
 <script>
     document.addEventListener('DOMContentLoaded', function () {
-        if (typeof Choices === 'undefined') {
-            return;
-        }
-
         function initRegisterSearchableSelect(fieldId) {
+            if (typeof Choices === 'undefined') {
+                return null;
+            }
             const element = document.getElementById(fieldId);
             if (!element) {
                 return null;
@@ -207,6 +206,25 @@
         initRegisterSearchableSelect('id_title');
         initRegisterSearchableSelect('id_branch');
         initRegisterSearchableSelect('id_parent_id');
+
+        const minorCheckbox = document.getElementById('id_is_minor');
+        const birthdayInput = document.getElementById('id_birthday');
+        const parentSelect = document.getElementById('id_parent_id');
+        function fieldContainer(element) {
+            return element ? element.closest('.form-group') : null;
+        }
+        function syncMinorDependentFields() {
+            const showMinorFields = Boolean(minorCheckbox && minorCheckbox.checked);
+            [fieldContainer(birthdayInput), fieldContainer(parentSelect)].forEach(function (container) {
+                if (container) {
+                    container.style.display = showMinorFields ? '' : 'none';
+                }
+            });
+        }
+        if (minorCheckbox) {
+            minorCheckbox.addEventListener('change', syncMinorDependentFields);
+            syncMinorDependentFields();
+        }
     });
 </script>
 {% endblock %}

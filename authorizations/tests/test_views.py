@@ -35,6 +35,8 @@ from authorizations.models import (
     UserNote,
     User,
     WeaponStyle,
+    LegacyAuthorizationRecoveryEntry,
+    SYSTEM_USER_IDS,
 )
 from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER
 
@@ -111,26 +113,33 @@ class ViewTestBase(TestCase):
         background_check_expiration=None,
         waiver_expiration=None,
         password='StrongPass!123',
+        user_id=None,
     ):
         if membership == 'auto':
             membership = self._next_membership()
         if membership_expiration == 'auto':
             membership_expiration = date.today() + relativedelta(years=1)
 
-        user = User.objects.create_user(
-            username=username,
-            password=password,
-            email=email or f'{username}@example.com',
-            first_name=sca_name.split()[0],
-            last_name='Tester',
-            membership=membership,
-            membership_expiration=membership_expiration,
-            birthday=birthday,
-            state_province='Oregon',
-            country='United States',
-            background_check_expiration=background_check_expiration,
-            waiver_expiration=waiver_expiration,
-        )
+        user_kwargs = {
+            'username': username,
+            'email': email or f'{username}@example.com',
+            'first_name': sca_name.split()[0],
+            'last_name': 'Tester',
+            'membership': membership,
+            'membership_expiration': membership_expiration,
+            'birthday': birthday,
+            'state_province': 'Oregon',
+            'country': 'United States',
+            'background_check_expiration': background_check_expiration,
+            'waiver_expiration': waiver_expiration,
+        }
+        if user_id is None:
+            user = User.objects.create_user(password=password, **user_kwargs)
+        else:
+            User.objects.filter(pk=user_id).delete()
+            user = User(id=user_id, **user_kwargs)
+            user.set_password(password)
+            user.save(force_insert=True)
         person = Person.objects.create(
             user=user,
             sca_name=sca_name,
@@ -297,6 +306,75 @@ class LoginViewTests(ViewTestBase):
         self.assertTrue(any('Too many login attempts' in message for message in response_messages))
 
 
+class ContactViewTests(ViewTestBase):
+    def email_change_payload(self, **overrides):
+        payload = {
+            'sca_name': 'Example Fighter',
+            'legal_name': 'Example Legalname',
+            'new_email': 'new-email@example.com',
+            'membership_number': '123456',
+            'honeypot': '',
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_contact_page_shows_email_change_request_form(self):
+        response = self.client.get(reverse('contact'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Request Email Change')
+        self.assertContains(response, 'Please try your fighter page first')
+        self.assertContains(response, 'name="sca_name"')
+        self.assertContains(response, 'name="legal_name"')
+        self.assertContains(response, 'name="new_email"')
+        self.assertContains(response, 'name="membership_number"')
+
+    @override_settings(AUTHZ_EMAIL_CHANGE_MIN_SECONDS=0)
+    @patch('authorizations.views.send_mail')
+    def test_email_change_request_sends_admin_email(self, mock_send_mail):
+        self.client.get(reverse('contact'))
+
+        response = self.client.post(reverse('contact'), self.email_change_payload(), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 1)
+        call_args = mock_send_mail.call_args.args
+        self.assertEqual(call_args[0], 'An Tir Authorization Portal email change request')
+        self.assertIn('Example Fighter', call_args[1])
+        self.assertIn('new-email@example.com', call_args[1])
+        self.assertIn('Do not make this change without verifying', call_args[1])
+        self.assertEqual(call_args[3], ['antir.authorization.database@gmail.com'])
+        self.assertIn(
+            'Your email change request has been sent to the database officer for review.',
+            self.messages_for(response),
+        )
+
+    @override_settings(AUTHZ_EMAIL_CHANGE_MIN_SECONDS=0)
+    @patch('authorizations.views.send_mail')
+    def test_email_change_honeypot_does_not_send_email(self, mock_send_mail):
+        self.client.get(reverse('contact'))
+
+        response = self.client.post(
+            reverse('contact'),
+            self.email_change_payload(honeypot='spam-site'),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 0)
+
+    @override_settings(AUTHZ_EMAIL_CHANGE_MIN_SECONDS=5)
+    @patch('authorizations.views.send_mail')
+    def test_email_change_direct_post_without_session_does_not_send_email(self, mock_send_mail):
+        response = self.client.post(reverse('contact'), self.email_change_payload(), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send_mail.call_count, 0)
+        self.assertIn(
+            'Your email change request has been sent to the database officer for review.',
+            self.messages_for(response),
+        )
+
+
 class IndexViewTests(ViewTestBase):
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_header_uses_standard_logo_when_test_features_disabled(self):
@@ -365,6 +443,27 @@ class IndexViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, 'Upload Society Membership CSV')
         self.assertNotContains(response, 'name="membership_csv"')
+
+    def test_index_excludes_system_admin_from_people_dropdown_and_name_lookup(self):
+        system_user, _ = self.make_person(
+            'index_system_admin',
+            'Administrator',
+            user_id=SYSTEM_USER_IDS[0],
+            membership='150500',
+        )
+        self.make_person('index_visible_fighter', 'Index Visible Fighter')
+
+        response = self.client.get(reverse('index'))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('Administrator', list(response.context['all_people']))
+
+        response = self.client.get(reverse('index'), {'sca_name': 'Administrator'})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(
+            getattr(response, 'url', None),
+            reverse('fighter', kwargs={'person_id': system_user.id}),
+        )
+        self.assertNotIn('name_matches', response.context)
 
     def test_non_kao_cannot_change_authorization_officer_sign_off_setting(self):
         user, _ = self.make_person('index_setting_non_kao', 'Index Setting Non KAO')
@@ -954,6 +1053,29 @@ class SearchViewTests(ViewTestBase):
         self.assertTrue(hasattr(people[0], 'filtered_authorizations'))
         self.assertEqual(len(people[0].filtered_authorizations), 1)
 
+    def test_search_excludes_system_admin_from_options_and_results(self):
+        _, system_person = self.make_person(
+            'search_system_admin',
+            'Administrator',
+            user_id=SYSTEM_USER_IDS[0],
+            membership='150501',
+        )
+        _, visible_person = self.make_person('search_visible_fighter', 'Search Visible Fighter')
+        system_auth = self.grant_authorization(system_person, self.style_weapon_armored, status=self.status_active)
+        visible_auth = self.grant_authorization(visible_person, self.style_weapon_armored, status=self.status_active)
+
+        response = self.client.get(reverse('search'), {'goal': 'search'})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('Administrator', list(response.context['sca_name_options']))
+
+        response = self.client.get(reverse('search'), {'membership': visible_person.user.membership})
+        page_ids = [auth.id for auth in response.context['page_obj'].object_list]
+        self.assertIn(visible_auth.id, page_ids)
+
+        response = self.client.get(reverse('search'), {'membership': system_person.user.membership})
+        page_ids = [auth.id for auth in response.context['page_obj'].object_list]
+        self.assertNotIn(system_auth.id, page_ids)
+
     def test_start_date_filter_uses_effective_expiration_for_youth_marshal(self):
         _, marshal_person = self.make_person('search_date_marshal', 'Search Date Marshal')
         _, youth_person = self.make_person(
@@ -1334,6 +1456,19 @@ class TombstoneBehaviorTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': survivor_user.id}))
+
+    def test_fighter_page_allows_direct_system_admin_lookup(self):
+        system_user, _ = self.make_person(
+            'fighter_system_admin',
+            'Administrator',
+            user_id=SYSTEM_USER_IDS[0],
+            membership='150502',
+        )
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': system_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Administrator')
 
     @patch('authorizations.views.send_mail')
     def test_fighter_login_instructions_can_be_requested_anonymously(self, mock_send_mail):
@@ -2304,6 +2439,689 @@ class UserAccountViewTests(ViewTestBase):
         no_entry = MembershipRosterEntry.objects.get(membership_number='666666')
         self.assertTrue(yes_entry.has_society_waiver)
         self.assertFalse(no_entry.has_society_waiver)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=False)
+    def test_legacy_authorization_import_is_hidden_when_disabled(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Upload Legacy Authorization CSV')
+        self.assertNotContains(response, 'name="authorization_csv"')
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=False)
+    def test_legacy_authorization_import_url_is_not_available_when_disabled(self):
+        self.client.force_login(self.ao_user)
+        upload = SimpleUploadedFile(
+            'legacy_authorizations.csv',
+            b'SCA Name,Discipline,Weapon Style,Start Date\nTest,Armored,Weapon & Shield,2025-01-01\n',
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'That page was not found. Redirected to the Authorizations Homepage.')
+        self.assertFalse(Authorization.objects.filter(person__sca_name='Test').exists())
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_import_legacy_authorization_for_existing_person(self):
+        self.client.force_login(self.ao_user)
+        upload = SimpleUploadedFile(
+            'legacy_authorizations.csv',
+            (
+                'Person ID,Discipline,Weapon Style,Start Date,Marshal SCA Name\n'
+                f'{self.owner_person.user_id},Armored,Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        self.assertEqual(authorization.status.name, 'Active')
+        self.assertEqual(authorization.expiration, date(2029, 1, 15))
+        self.assertEqual(authorization.marshal, self.ao_person)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=authorization,
+                note__contains='Historical start date: 2025-01-15.',
+            ).exists()
+        )
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_import_legacy_authorization_with_unambiguous_style_only(self):
+        self.client.force_login(self.ao_user)
+        upload = SimpleUploadedFile(
+            'legacy_authorizations_style_only.csv',
+            (
+                'Person ID,Weapon Style,Start Date,Marshal SCA Name\n'
+                f'{self.owner_person.user_id},Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        self.assertEqual(authorization.status.name, 'Active')
+        self.assertEqual(authorization.marshal, self.ao_person)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_import_legacy_authorization_with_combined_discipline_style(self):
+        self.client.force_login(self.ao_user)
+        upload = SimpleUploadedFile(
+            'legacy_authorizations_combined_style.csv',
+            (
+                'Person ID,Weapon Style,Start Date,Marshal SCA Name\n'
+                f'{self.owner_person.user_id},Armored - Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        self.assertEqual(authorization.status.name, 'Active')
+        self.assertEqual(authorization.marshal, self.ao_person)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_import_legacy_authorization_with_discipline_abbreviation(self):
+        self.client.force_login(self.ao_user)
+        upload = SimpleUploadedFile(
+            'legacy_authorizations_combined_style_abbrev.csv',
+            (
+                'Person ID,Weapon Style,Start Date,Marshal SCA Name\n'
+                f'{self.owner_person.user_id},Heavy - Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        self.assertEqual(authorization.status.name, 'Active')
+        self.assertEqual(authorization.marshal, self.ao_person)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_authorization_import_requires_authorizing_marshal(self):
+        self.client.force_login(self.ao_user)
+        upload = SimpleUploadedFile(
+            'legacy_authorizations_missing_marshal.csv',
+            (
+                'Person ID,Weapon Style,Start Date\n'
+                f'{self.owner_person.user_id},Weapon & Shield,2025-01-15\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Authorizing marshal is required')
+        self.assertFalse(
+            Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists()
+        )
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_import_legacy_authorization_and_create_placeholder_person(self):
+        self.client.force_login(self.ao_user)
+        upload = SimpleUploadedFile(
+            'legacy_new_person.csv',
+            (
+                'SCA Name,First Name,Last Name,Email,Branch,City,State,Country,Phone,Waiver Expiration,'
+                'Discipline,Weapon Style,Start Date,Marshal SCA Name\n'
+                'New Legacy Fighter,New,Legacy,new.legacy@example.com,Barony of Glyn Dwfn,Portland,Oregon,'
+                'United States,555-0100,2028-02-01,Armored,Weapon & Shield,2025-02-01,Authorization Officer\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        person = Person.objects.get(sca_name='New Legacy Fighter')
+        self.assertEqual(person.branch, self.branch_gd)
+        self.assertEqual(person.user.first_name, 'New')
+        self.assertEqual(person.user.last_name, 'Legacy')
+        self.assertEqual(person.user.email, 'new.legacy@example.com')
+        self.assertEqual(person.user.city, 'Portland')
+        self.assertEqual(person.user.state_province, 'Oregon')
+        self.assertEqual(person.user.country, 'United States')
+        self.assertEqual(person.user.phone_number, '555-0100')
+        self.assertEqual(person.user.waiver_expiration, date(2028, 2, 1))
+        self.assertFalse(person.user.has_usable_password())
+        authorization = Authorization.objects.get(person=person, style=self.style_weapon_armored)
+        self.assertEqual(authorization.status.name, 'Active')
+        self.assertEqual(authorization.expiration, date(2029, 2, 1))
+        self.assertEqual(authorization.marshal, self.ao_person)
+        self.assertTrue(UserNote.objects.filter(person=person, note__contains='Placeholder account').exists())
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_non_ao_cannot_import_legacy_authorizations(self):
+        self.client.force_login(self.owner_user)
+        upload = SimpleUploadedFile(
+            'legacy_authorizations.csv',
+            b'SCA Name,Discipline,Weapon Style,Start Date\nTest,Armored,Weapon & Shield,2025-01-01\n',
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_legacy_authorizations'),
+            {'authorization_csv': upload, 'next': reverse('index')},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_process_legacy_recovery_batch(self):
+        self.client.force_login(self.ao_user)
+        other_style = WeaponStyle.objects.create(name='Two-Handed Sword', discipline=self.discipline_armored)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name, self.other_person.sca_name],
+                'person_first_name': [self.owner_user.first_name, self.other_user.first_name],
+                'person_last_name': [self.owner_user.last_name, self.other_user.last_name],
+                'weapon_style': ['Armored - Weapon & Shield', 'Armored - Two-Handed Sword'],
+                'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
+                'auth_date': ['2025-05-10', '2025-05-11'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 2 legacy authorization recovery row(s).')
+        first_auth = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        second_auth = Authorization.objects.get(person=self.other_person, style=other_style)
+        self.assertEqual(first_auth.expiration, date(2029, 5, 10))
+        self.assertEqual(second_auth.expiration, date(2029, 5, 11))
+        self.assertEqual(LegacyAuthorizationRecoveryEntry.objects.count(), 2)
+        first_entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=first_auth)
+        self.assertFalse(first_entry.minor_on_paperwork)
+        self.assertEqual(first_entry.expiration, date(2029, 5, 10))
+        note_text = 'Authorization Added through Legacy Authorization Recovery Tool'
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=first_auth,
+                created_by=self.ao_user,
+                note__contains=note_text,
+            ).exists()
+        )
+        self.assertTrue(
+            UserNote.objects.filter(
+                person=self.owner_person,
+                created_by=self.ao_user,
+                note__contains=note_text,
+            ).exists()
+        )
+        self.assertTrue(
+            UserNote.objects.filter(
+                person=self.ao_person,
+                created_by=self.ao_user,
+                note__contains=note_text,
+            ).exists()
+        )
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_batch_blocks_duplicate_person_style(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
+                'weapon_style': ['Armored - Weapon & Shield', 'Armored - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
+                'auth_date': ['2025-05-10', '2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'already has a recovery entry')
+        self.assertEqual(
+            Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).count(),
+            1,
+        )
+        self.assertEqual(
+            LegacyAuthorizationRecoveryEntry.objects.filter(
+                person=self.owner_person,
+                style=self.style_weapon_armored,
+            ).count(),
+            1,
+        )
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_updates_existing_authorization_and_records_previous_state(self):
+        self.client.force_login(self.ao_user)
+        existing_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_weapon_armored,
+            expiration=date(2028, 5, 10),
+            marshal=self.other_person,
+        )
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        existing_authorization.refresh_from_db()
+        self.assertEqual(existing_authorization.expiration, date(2029, 5, 10))
+        self.assertEqual(existing_authorization.marshal, self.ao_person)
+        self.assertEqual(existing_authorization.updated_by, self.ao_user)
+        entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=existing_authorization)
+        self.assertEqual(entry.previous_status, self.status_active)
+        self.assertEqual(entry.previous_marshal, self.other_person)
+        self.assertIsNone(entry.previous_concurring_fighter)
+        self.assertEqual(entry.previous_expiration, date(2028, 5, 10))
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_blocks_existing_authorization_from_moving_backward(self):
+        self.client.force_login(self.ao_user)
+        existing_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_weapon_armored,
+            expiration=date(2029, 5, 10),
+            marshal=self.other_person,
+        )
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-09'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This row would not move the authorization forward.')
+        existing_authorization.refresh_from_db()
+        self.assertEqual(existing_authorization.expiration, date(2029, 5, 10))
+        self.assertEqual(existing_authorization.marshal, self.other_person)
+        self.assertFalse(LegacyAuthorizationRecoveryEntry.objects.exists())
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_minor_checkbox_uses_two_year_expiration(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                'is_minor': ['1'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        self.assertEqual(authorization.expiration, date(2027, 5, 10))
+        entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
+        self.assertTrue(entry.minor_on_paperwork)
+        self.assertEqual(entry.expiration, date(2027, 5, 10))
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_youth_marshal_uses_two_year_expiration(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Youth Armored - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_sca_name': [self.other_person.sca_name],
+                'second_marshal_first_name': [self.other_user.first_name],
+                'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_sca_name': [self.ao_person.sca_name],
+                'concurring_officer_first_name': [self.ao_user.first_name],
+                'concurring_officer_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                'is_minor': [''],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_youth_armored)
+        self.assertEqual(authorization.expiration, date(2027, 5, 10))
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_junior_marshal_requires_second_marshal(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Junior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Second Marshal is required for this marshal authorization.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_jm_armored).exists())
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_junior_marshal_records_second_marshal(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Junior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_sca_name': [self.other_person.sca_name],
+                'second_marshal_first_name': [self.other_user.first_name],
+                'second_marshal_last_name': [self.other_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_jm_armored)
+        entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
+        self.assertEqual(entry.second_marshal, self.other_person)
+        self.assertIsNone(entry.concurring_officer)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_senior_marshal_requires_concurring_officer(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_sca_name': [self.other_person.sca_name],
+                'second_marshal_first_name': [self.other_user.first_name],
+                'second_marshal_last_name': [self.other_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Concurring Officer is required for this marshal authorization.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_sm_armored).exists())
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_senior_marshal_records_signoffs(self):
+        self.client.force_login(self.ao_user)
+        concurring_user, concurring_person = self.make_person('legacy_concurrer', 'Legacy Concurrer')
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_sca_name': [self.other_person.sca_name],
+                'second_marshal_first_name': [self.other_user.first_name],
+                'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_sca_name': [concurring_person.sca_name],
+                'concurring_officer_first_name': [concurring_user.first_name],
+                'concurring_officer_last_name': [concurring_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
+        entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
+        self.assertEqual(entry.second_marshal, self.other_person)
+        self.assertEqual(entry.concurring_officer, concurring_person)
+        self.assertEqual(authorization.concurring_fighter, self.ao_person)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=authorization,
+                note__contains=f'Second Marshal: {self.other_person.sca_name}.',
+            ).exists()
+        )
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=authorization,
+                note__contains=f'Senior Marshal Concurrence: {concurring_person.sca_name}.',
+            ).exists()
+        )
+        note_text = 'Authorization Added through Legacy Authorization Recovery Tool'
+        self.assertTrue(
+            UserNote.objects.filter(
+                person=self.other_person,
+                created_by=self.ao_user,
+                note__contains=note_text,
+            ).exists()
+        )
+        self.assertEqual(
+            UserNote.objects.filter(
+                person=self.ao_person,
+                created_by=self.ao_user,
+                note__contains=note_text,
+            ).filter(note__contains='Armored - Senior Marshal').count(),
+            1,
+        )
+        self.assertTrue(
+            UserNote.objects.filter(
+                person=concurring_person,
+                created_by=self.ao_user,
+                note__contains=note_text,
+            ).exists()
+        )
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_add_new_fighter_from_legacy_recovery_page(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'action': 'add_legacy_recovery_fighter',
+                'sca_name': 'New Recovery Fighter',
+                'email': 'new.recovery@example.com',
+                'first_name': 'New',
+                'last_name': 'Recovery',
+                'membership': '',
+                'membership_expiration': '',
+                'address': '123 Recovery Way',
+                'address2': '',
+                'city': 'Portland',
+                'state_province': 'Oregon',
+                'postal_code': '97201',
+                'country': 'United States',
+                'phone_number': '5035550100',
+                'birthday': '',
+                'branch': str(self.branch_gd.id),
+                'background_check_expiration': '',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Added fighter New Recovery Fighter.')
+        person = Person.objects.get(sca_name='New Recovery Fighter')
+        self.assertEqual(person.user.first_name, 'New')
+        self.assertEqual(person.user.last_name, 'Recovery')
+        self.assertEqual(person.user.username, 'new.recovery.fighter')
+        self.assertEqual(person.user.email, 'new.recovery@example.com')
+        self.assertEqual(person.user.address, '123 Recovery Way')
+        self.assertEqual(person.user.city, 'Portland')
+        self.assertEqual(person.user.state_province, 'Oregon')
+        self.assertEqual(person.user.postal_code, '97201')
+        self.assertEqual(person.user.country, 'United States')
+        self.assertEqual(person.user.phone_number, '(503) 555-0100')
+        self.assertEqual(person.branch, self.branch_gd)
+        self.assertFalse(person.user.has_usable_password())
+        self.assertTrue(UserNote.objects.filter(person=person, note__contains='Account created').exists())
+        self.assertContains(response, 'New Recovery Fighter | New | Recovery')
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_new_fighter_duplicate_sca_name_gets_four_digit_username_suffix(self):
+        self.client.force_login(self.ao_user)
+        self.make_person('existing_same_sca', 'Shared Recovery Name')
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'action': 'add_legacy_recovery_fighter',
+                'sca_name': 'Shared Recovery Name',
+                'email': 'shared.recovery@example.com',
+                'first_name': 'Shared',
+                'last_name': 'Recovery',
+                'membership': '',
+                'membership_expiration': '',
+                'address': '123 Recovery Way',
+                'address2': '',
+                'city': 'Portland',
+                'state_province': 'Oregon',
+                'postal_code': '97201',
+                'country': 'United States',
+                'phone_number': '5035550101',
+                'birthday': '',
+                'branch': str(self.branch_gd.id),
+                'background_check_expiration': '',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        person = Person.objects.get(user__email='shared.recovery@example.com')
+        self.assertRegex(person.user.username, r'^shared\.recovery\.name\.\d{4}$')
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_ao_can_download_legacy_recovery_audit_csv(self):
+        self.client.force_login(self.ao_user)
+        authorization = Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_weapon_armored,
+            status=self.status_active,
+            marshal=self.ao_person,
+            expiration=date(2029, 5, 10),
+        )
+        LegacyAuthorizationRecoveryEntry.objects.create(
+            person=self.owner_person,
+            style=self.style_weapon_armored,
+            marshal=self.ao_person,
+            second_marshal=self.other_person,
+            concurring_officer=self.ao_person,
+            auth_date=date(2025, 5, 10),
+            minor_on_paperwork=True,
+            expiration=date(2027, 5, 10),
+            authorization=authorization,
+            created_by=self.ao_user,
+        )
+
+        response = self.client.get(
+            reverse('legacy_authorization_recovery'),
+            {'download': 'audit_csv'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'text/csv; charset=utf-8')
+        content = response.content.decode('utf-8-sig')
+        self.assertIn('Processed At,Processed By,Person SCA Name', content)
+        self.assertIn('Second Marshal SCA Name,Second Marshal First Name,Second Marshal Last Name', content)
+        self.assertIn('Concurring Officer SCA Name,Concurring Officer First Name,Concurring Officer Last Name', content)
+        self.assertIn('Owner of Account,Owner,User,Armored - Weapon & Shield', content)
+        self.assertIn(f'{self.other_person.sca_name},{self.other_user.first_name},{self.other_user.last_name}', content)
+        self.assertIn('2025-05-10,2027-05-10,Yes', content)
 
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_self_set_regional_is_blocked_when_testing_disabled(self):

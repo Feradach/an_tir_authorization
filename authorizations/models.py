@@ -35,6 +35,8 @@ TITLE_RANK_CHOICES = [
     ('Non-Armigerous', 'Non-Armigerous'),
 ]
 
+SYSTEM_USER_IDS = (15050,)
+
 # Create your models here.
 class User(AbstractUser):
     """User model. It is extended to include the membership information and their address."""
@@ -445,6 +447,79 @@ class Authorization(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['person', 'style'], name='unique_person_style')
         ]
+
+
+class LegacyAuthorizationRecoveryEntry(models.Model):
+    """Audit row for one authorization rebuilt from legacy paperwork."""
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name='legacy_recovery_entries')
+    style = models.ForeignKey(WeaponStyle, on_delete=models.CASCADE, related_name='legacy_recovery_entries')
+    marshal = models.ForeignKey(
+        Person,
+        on_delete=models.PROTECT,
+        related_name='legacy_recovery_marshal_entries',
+    )
+    second_marshal = models.ForeignKey(
+        Person,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='legacy_recovery_second_marshal_entries',
+    )
+    concurring_officer = models.ForeignKey(
+        Person,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name='legacy_recovery_concurring_officer_entries',
+    )
+    auth_date = models.DateField(db_index=True)
+    minor_on_paperwork = models.BooleanField(default=False)
+    expiration = models.DateField(null=True, blank=True, db_index=True)
+    authorization = models.ForeignKey(
+        Authorization,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='legacy_recovery_entries',
+    )
+    previous_status = models.ForeignKey(
+        AuthorizationStatus,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+    previous_marshal = models.ForeignKey(
+        Person,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+    previous_concurring_fighter = models.ForeignKey(
+        Person,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+    previous_expiration = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    created_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='legacy_recovery_entries_created',
+    )
+
+    def __str__(self):
+        return f'{self.person.sca_name}: {self.style.discipline.name} {self.style.name} recovered'
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'legacy authorization recovery entry'
+        verbose_name_plural = 'legacy authorization recovery entries'
 
 
 class Sanction(models.Model):

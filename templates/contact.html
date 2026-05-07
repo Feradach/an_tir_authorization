@@ -18,6 +18,52 @@
         </a>
     </p>
 
+    <h2>Request Email Change</h2>
+    <p>
+        If you no longer have access to the email address on your fighter record, you may request an email update below.
+        Please try your fighter page first: open your fighter page and use <strong>Send Login Instructions</strong> to request
+        the account setup email directly.
+    </p>
+    <p>
+        Email changes are reviewed manually before any account is updated. This temporary form is intended to help during
+        the initial rollout and may be removed after account setup emails have gone out.
+    </p>
+    <form method="post" action="{% url 'contact' %}" class="mb-4" novalidate>
+        {% csrf_token %}
+        {% if email_change_form.non_field_errors %}
+            <div class="alert alert-danger" role="alert">
+                {{ email_change_form.non_field_errors }}
+            </div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label for="{{ email_change_form.sca_name.id_for_label }}" class="form-label">{{ email_change_form.sca_name.label }}</label>
+                {{ email_change_form.sca_name }}
+                {{ email_change_form.sca_name.errors }}
+            </div>
+            <div class="col-md-4">
+                <label for="{{ email_change_form.legal_name.id_for_label }}" class="form-label">{{ email_change_form.legal_name.label }}</label>
+                {{ email_change_form.legal_name }}
+                {{ email_change_form.legal_name.errors }}
+            </div>
+            <div class="col-md-4">
+                <label for="{{ email_change_form.new_email.id_for_label }}" class="form-label">{{ email_change_form.new_email.label }}</label>
+                {{ email_change_form.new_email }}
+                {{ email_change_form.new_email.errors }}
+            </div>
+            <div class="col-md-4">
+                <label for="{{ email_change_form.membership_number.id_for_label }}" class="form-label">{{ email_change_form.membership_number.label }}</label>
+                {{ email_change_form.membership_number }}
+                {{ email_change_form.membership_number.errors }}
+            </div>
+        </div>
+        <div class="d-none" aria-hidden="true">
+            {{ email_change_form.honeypot.label_tag }}
+            {{ email_change_form.honeypot }}
+        </div>
+        <button type="submit" class="btn btn-primary mt-3">Request Email Change</button>
+    </form>
+
 {% endblock %}
 
 {% block script %}

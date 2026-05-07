@@ -35,6 +35,10 @@ def _env_truthy(name: str, default: str = '0') -> bool:
 # Gate test-only behavior (e.g., public register, test sections)
 AUTHZ_TEST_FEATURES = _env_truthy('AUTHZ_TEST_FEATURES', '0')
 
+# Temporary disaster-recovery importer. Keep off unless actively rebuilding
+# vetted historical authorization records.
+AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT = _env_truthy('AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT', '0')
+
 # For sending login emails
 EMAIL_BACKEND = 'django.core.mail.backends.filebased.EmailBackend'
 EMAIL_FILE_PATH = BASE_DIR /'tmp/app-emails'

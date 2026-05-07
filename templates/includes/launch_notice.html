@@ -1,0 +1,42 @@
+<div class="card shadow-sm mb-4 launch-notice">
+    <div class="card-header p-0">
+        <button
+            class="btn btn-light w-100 text-start px-3 py-2 launch-notice-toggle"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#launchNotice"
+            aria-expanded="true"
+            aria-controls="launchNotice"
+        >
+            <span class="launch-notice-caret" aria-hidden="true"></span>
+            <strong>Welcome to the New An Tir Authorization Portal</strong>
+        </button>
+    </div>
+    <div id="launchNotice" class="collapse show">
+        <div class="card-body">
+            <p>
+                Welcome to the new online portal for An Tir martial authorizations. This system has been in development for several months and is the new system that An Tir will use for authorizations going forward.
+            </p>
+            <p>
+                The abruptness of the transition is due to an emergency situation with the previous system that has made it permanently unavailable. Part of this situation is that some of the more recent authorizations were deleted. We are working on restoring all of those over the next few weeks. We apologize for any inconvenience this may cause but hope you will find this new system easier to use.
+            </p>
+            <p>
+                This site supports all of the same functions as the previous system. Additionally, it includes the ability for marshals to upload authorizations directly online rather than needing to fill out paper forms. There are several additional features and we have produced training videos to help you get started.
+            </p>
+            <p>
+                Every user of the site has an account set up for them. In order to avoid hitting spam limits, we will be sending out account setup links in batches. If you would like to receive your account setup link sooner, you can go to your fighter page and request it directly. These account setup emails will be sent to the email address that was filed during your last authorization. If you no longer have access to that email, you can fill out a request for email update form on the contact page.
+            </p>
+            <p>
+                <a
+                    href="https://www.youtube.com/playlist?list=PLJmmPor-P9kcPjxOokyyBJZYO2lYxm8QL"
+                    class="btn btn-primary"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    Watch Training Videos
+                </a>
+                <a href="{% url 'search' %}?goal=search" class="btn btn-outline-primary ms-2">Find Your Fighter Page</a>
+            </p>
+        </div>
+    </div>
+</div>

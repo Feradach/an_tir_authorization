@@ -8,10 +8,12 @@ Need to launch the program. The current database has been destroyed by a ransomw
 
 ### For Immediate Launch
 
-* Additional security measures to make the site resilient to attack.
 * (External) Get membership dump from Seneschal
 * (External) Migrate the 2025-05-01 data into the system.
-* Mass CSV uploader so we can rebuild the last year of missing data.
+* (External) Add post backup authorizations into the system.
+* (External) Create Welcome video.
+* Create welcome email template.
+* Create welcome page on website.
 * (External) Roll out plan including social media information campaign.
 
 

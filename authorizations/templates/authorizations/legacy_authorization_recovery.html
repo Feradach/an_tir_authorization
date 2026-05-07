@@ -1,0 +1,577 @@
+{% extends "authorizations/inner_layout.html" %}
+
+{% block title %}
+    Legacy Authorization Recovery
+{% endblock %}
+
+{% block body %}
+<h1>Legacy Authorization Recovery</h1>
+
+<div class="mb-4">
+    <div class="row g-3">
+        <div class="col-md-4">
+            <label for="person_lookup" class="form-label"><strong>Person</strong></label>
+            <select id="person_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+                <option value=""></option>
+                {% for person in people %}
+                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="col-md-5">
+            <label for="editor_weapon_style" class="form-label"><strong>Weapon Style</strong></label>
+            <select id="editor_weapon_style" class="choices-dropdown form-control" data-editor-choice="1">
+                <option value=""></option>
+                {% for style in styles %}
+                    <option value="{{ style.discipline.name }} - {{ style.name }}">{{ style.discipline.name }} - {{ style.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="editor_auth_date" class="form-label"><strong>Auth Date</strong></label>
+            <input id="editor_auth_date" type="date" class="form-control" required>
+        </div>
+
+        <div class="col-md-4">
+            <label for="marshal_lookup" class="form-label"><strong>Marshal</strong></label>
+            <select id="marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+                <option value=""></option>
+                {% for person in people %}
+                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4" id="second_marshal_lookup_field" style="display:none;">
+            <label for="second_marshal_lookup" class="form-label"><strong>Second Marshal</strong></label>
+            <select id="second_marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+                <option value=""></option>
+                {% for person in people %}
+                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-4" id="concurring_officer_lookup_field" style="display:none;">
+            <label for="concurring_officer_lookup" class="form-label"><strong>Concurring Officer</strong></label>
+            <select id="concurring_officer_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+                <option value=""></option>
+                {% for person in people %}
+                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-2 d-flex align-items-end">
+            <div class="form-check">
+                <input id="editor_is_minor" type="checkbox" class="form-check-input">
+                <label for="editor_is_minor" class="form-check-label"><strong>Minor</strong></label>
+            </div>
+        </div>
+    </div>
+
+    <input id="editor_person_sca_name" type="hidden">
+    <input id="editor_person_first_name" type="hidden">
+    <input id="editor_person_last_name" type="hidden">
+    <input id="editor_marshal_sca_name" type="hidden">
+    <input id="editor_marshal_first_name" type="hidden">
+    <input id="editor_marshal_last_name" type="hidden">
+    <input id="editor_second_marshal_sca_name" type="hidden">
+    <input id="editor_second_marshal_first_name" type="hidden">
+    <input id="editor_second_marshal_last_name" type="hidden">
+    <input id="editor_concurring_officer_sca_name" type="hidden">
+    <input id="editor_concurring_officer_first_name" type="hidden">
+    <input id="editor_concurring_officer_last_name" type="hidden">
+
+    <div class="mt-3">
+        <button type="button" id="add_row_button" class="btn btn-secondary">Add Row</button>
+    </div>
+</div>
+
+<details class="mb-4">
+    <summary><strong>Add New Fighter</strong></summary>
+    <div id="new_fighter_batch_warning" class="alert alert-warning mt-3" role="alert" style="display:none;">
+        <strong>You must process the current batch before adding a new fighter.</strong>
+    </div>
+    <form method="post" id="new_fighter_form" class="mt-3">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="add_legacy_recovery_fighter">
+        {% if new_fighter_form.errors %}
+            <div class="alert alert-danger" role="alert">
+                <strong>Please correct the following errors:</strong>
+                <ul class="mb-0">
+                    {% for error in new_fighter_form.non_field_errors %}
+                        <li>{{ error }}</li>
+                    {% endfor %}
+                    {% for field in new_fighter_form %}
+                        {% for error in field.errors %}
+                            <li>{{ field.label }}: {{ error }}</li>
+                        {% endfor %}
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+        <div class="row g-3">
+            <div class="col-md-4">
+                <label for="id_sca_name" class="form-label">SCA Name</label>
+                <input id="id_sca_name" name="sca_name" class="form-control" value="{{ new_fighter_form.sca_name.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_email" class="form-label">Email</label>
+                <input id="id_email" name="email" type="email" class="form-control" value="{{ new_fighter_form.email.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_first_name" class="form-label">First Name</label>
+                <input id="id_first_name" name="first_name" class="form-control" value="{{ new_fighter_form.first_name.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_last_name" class="form-label">Last Name</label>
+                <input id="id_last_name" name="last_name" class="form-control" value="{{ new_fighter_form.last_name.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_membership" class="form-label">Membership Number</label>
+                <input id="id_membership" name="membership" class="form-control" value="{{ new_fighter_form.membership.value|default_if_none:'' }}">
+            </div>
+            <div class="col-md-4">
+                <label for="id_membership_expiration" class="form-label">Membership Expiration</label>
+                <input id="id_membership_expiration" name="membership_expiration" type="date" class="form-control" value="{{ new_fighter_form.membership_expiration.value|default_if_none:'' }}">
+            </div>
+            <div class="col-md-4">
+                <label for="id_address" class="form-label">Address</label>
+                <input id="id_address" name="address" class="form-control" value="{{ new_fighter_form.address.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_address2" class="form-label">Address Line 2</label>
+                <input id="id_address2" name="address2" class="form-control" value="{{ new_fighter_form.address2.value|default_if_none:'' }}">
+            </div>
+            <div class="col-md-4">
+                <label for="id_city" class="form-label">City</label>
+                <input id="id_city" name="city" class="form-control" value="{{ new_fighter_form.city.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_state_province" class="form-label">State/Province</label>
+                <select id="id_state_province" name="state_province" class="choices-dropdown form-control" required>
+                    {% for value, label in new_fighter_form.fields.state_province.choices %}
+                        <option value="{{ value }}"{% if new_fighter_form.state_province.value == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="id_postal_code" class="form-label">Postal Code</label>
+                <input id="id_postal_code" name="postal_code" class="form-control" value="{{ new_fighter_form.postal_code.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_country" class="form-label">Country</label>
+                <select id="id_country" name="country" class="choices-dropdown form-control" required>
+                    {% for value, label in new_fighter_form.fields.country.choices %}
+                        <option value="{{ value }}"{% if new_fighter_form.country.value == value %} selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label for="id_phone_number" class="form-label">Phone Number</label>
+                <input id="id_phone_number" name="phone_number" class="form-control" value="{{ new_fighter_form.phone_number.value|default_if_none:'' }}" required>
+            </div>
+            <div class="col-md-4">
+                <label for="id_branch" class="form-label">Branch</label>
+                <select id="id_branch" name="branch" class="choices-dropdown form-control" required>
+                    <option value=""></option>
+                    {% for branch in new_fighter_form.fields.branch.queryset %}
+                        <option value="{{ branch.id }}"{% if new_fighter_form.branch.value|stringformat:"s" == branch.id|stringformat:"s" %} selected{% endif %}>{{ branch.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <div class="form-check">
+                    <input id="id_is_minor" name="is_minor" type="checkbox" class="form-check-input"{% if new_fighter_form.is_minor.value %} checked{% endif %}>
+                    <label for="id_is_minor" class="form-check-label">Minor</label>
+                </div>
+            </div>
+            <div class="col-md-4" id="new_fighter_birthday_field">
+                <label for="id_birthday" class="form-label">Birthday</label>
+                <input id="id_birthday" name="birthday" type="date" class="form-control" value="{{ new_fighter_form.birthday.value|default_if_none:'' }}">
+            </div>
+            <div class="col-md-4">
+                <label for="id_background_check_expiration" class="form-label">Background Check Expiration</label>
+                <input id="id_background_check_expiration" name="background_check_expiration" type="date" class="form-control" value="{{ new_fighter_form.background_check_expiration.value|default_if_none:'' }}">
+            </div>
+        </div>
+        <div class="mt-3">
+            <button type="submit" class="btn btn-secondary">Add Fighter</button>
+        </div>
+    </form>
+</details>
+
+<form method="post" id="recovery_batch_form" class="mb-4">
+    {% csrf_token %}
+    <div id="hidden_rows"></div>
+    <h2>Batch To Process</h2>
+    <table id="batch_table">
+        <thead>
+            <tr>
+                <th>Person</th>
+                <th>Style</th>
+                <th>Marshal</th>
+                <th>Second Marshal</th>
+                <th>Concurring Officer</th>
+                <th>Auth Date</th>
+                <th>Minor</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+    <div class="mt-3">
+        <button type="submit" class="btn btn-primary">Process Batch</button>
+        <button type="button" id="clear_batch_button" class="btn btn-secondary">Clear Batch</button>
+    </div>
+</form>
+
+{{ pending_rows|json_script:"pending_rows_data" }}
+
+<h2>Recently Processed</h2>
+<p><a href="{% url 'legacy_authorization_recovery' %}?download=audit_csv" class="btn btn-secondary">Download Recovery Audit CSV</a></p>
+{% if recent_entries %}
+    <table>
+        <tr>
+            <th>Processed</th>
+            <th>Person</th>
+            <th>Style</th>
+            <th>Marshal</th>
+            <th>Second Marshal</th>
+            <th>Concurring Officer</th>
+            <th>Auth Date</th>
+            <th>Expiration</th>
+            <th>Minor</th>
+            <th>Processor</th>
+        </tr>
+        {% for entry in recent_entries %}
+            <tr>
+                <td>{{ entry.created_at|date:"Y-m-d H:i" }}</td>
+                <td>{{ entry.person.sca_name }} ({{ entry.person.user.first_name }} {{ entry.person.user.last_name }})</td>
+                <td>{{ entry.style.discipline.name }} - {{ entry.style.name }}</td>
+                <td>{{ entry.marshal.sca_name }}</td>
+                <td>{% if entry.second_marshal %}{{ entry.second_marshal.sca_name }}{% else %}-{% endif %}</td>
+                <td>{% if entry.concurring_officer %}{{ entry.concurring_officer.sca_name }}{% else %}-{% endif %}</td>
+                <td>{{ entry.auth_date|date:"Y-m-d" }}</td>
+                <td>{% if entry.expiration %}{{ entry.expiration|date:"Y-m-d" }}{% elif entry.authorization %}{{ entry.authorization.expiration|date:"Y-m-d" }}{% else %}-{% endif %}</td>
+                <td>{% if entry.minor_on_paperwork %}Yes{% else %}No{% endif %}</td>
+                <td>{% if entry.created_by and entry.created_by.person %}{{ entry.created_by.person.sca_name }}{% else %}-{% endif %}</td>
+            </tr>
+        {% endfor %}
+    </table>
+{% else %}
+    <p>No recovery rows have been processed yet.</p>
+{% endif %}
+{% endblock %}
+
+{% block script %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const fields = [
+            'person_sca_name',
+            'person_first_name',
+            'person_last_name',
+            'weapon_style',
+            'marshal_sca_name',
+            'marshal_first_name',
+            'marshal_last_name',
+            'second_marshal_sca_name',
+            'second_marshal_first_name',
+            'second_marshal_last_name',
+            'concurring_officer_sca_name',
+            'concurring_officer_first_name',
+            'concurring_officer_last_name',
+            'auth_date',
+            'is_minor',
+        ];
+        const editor = {
+            person_sca_name: document.getElementById('editor_person_sca_name'),
+            person_first_name: document.getElementById('editor_person_first_name'),
+            person_last_name: document.getElementById('editor_person_last_name'),
+            weapon_style: document.getElementById('editor_weapon_style'),
+            marshal_sca_name: document.getElementById('editor_marshal_sca_name'),
+            marshal_first_name: document.getElementById('editor_marshal_first_name'),
+            marshal_last_name: document.getElementById('editor_marshal_last_name'),
+            second_marshal_sca_name: document.getElementById('editor_second_marshal_sca_name'),
+            second_marshal_first_name: document.getElementById('editor_second_marshal_first_name'),
+            second_marshal_last_name: document.getElementById('editor_second_marshal_last_name'),
+            concurring_officer_sca_name: document.getElementById('editor_concurring_officer_sca_name'),
+            concurring_officer_first_name: document.getElementById('editor_concurring_officer_first_name'),
+            concurring_officer_last_name: document.getElementById('editor_concurring_officer_last_name'),
+            auth_date: document.getElementById('editor_auth_date'),
+            is_minor: document.getElementById('editor_is_minor'),
+        };
+        const rows = [];
+        const tbody = document.querySelector('#batch_table tbody');
+        const hiddenRows = document.getElementById('hidden_rows');
+        const newFighterForm = document.getElementById('new_fighter_form');
+        const newFighterBatchWarning = document.getElementById('new_fighter_batch_warning');
+        const newFighterMinorCheckbox = document.getElementById('id_is_minor');
+        const newFighterBirthdayField = document.getElementById('new_fighter_birthday_field');
+        const weaponStyleSelect = document.getElementById('editor_weapon_style');
+        const secondMarshalField = document.getElementById('second_marshal_lookup_field');
+        const secondMarshalLookup = document.getElementById('second_marshal_lookup');
+        const concurringOfficerField = document.getElementById('concurring_officer_lookup_field');
+        const concurringOfficerLookup = document.getElementById('concurring_officer_lookup');
+
+        const editorChoicesInstances = [];
+        const editorChoicesById = {};
+
+        document.querySelectorAll('.choices-dropdown').forEach(function (dropdown) {
+            const instance = new Choices(dropdown, {
+                removeItemButton: true,
+                shouldSort: false,
+                searchEnabled: true,
+                searchResultLimit: 1000,
+                fuseOptions: {
+                    threshold: 0.3,
+                },
+                itemSelectText: '',
+            });
+            if (dropdown.dataset.editorChoice === '1') {
+                editorChoicesInstances.push(instance);
+                editorChoicesById[dropdown.id] = instance;
+            }
+        });
+
+        function parsePersonLookup(lookup, scaId, firstId, lastId) {
+            const sca = document.getElementById(scaId);
+            const first = document.getElementById(firstId);
+            const last = document.getElementById(lastId);
+            const parts = lookup.value.split('|').map((part) => part.trim());
+            if (parts.length === 3) {
+                sca.value = parts[0];
+                first.value = parts[1];
+                last.value = parts[2];
+            }
+        }
+
+        function wireLookup(lookupId, scaId, firstId, lastId) {
+            const lookup = document.getElementById(lookupId);
+            lookup.addEventListener('change', function () {
+                parsePersonLookup(lookup, scaId, firstId, lastId);
+            });
+        }
+
+        function clearLookup(lookupId, fieldPrefix) {
+            const lookup = document.getElementById(lookupId);
+            if (lookup) {
+                lookup.value = '';
+            }
+            if (editorChoicesById[lookupId]) {
+                editorChoicesById[lookupId].removeActiveItems();
+                editorChoicesById[lookupId].setChoiceByValue('');
+            }
+            editor[`${fieldPrefix}_sca_name`].value = '';
+            editor[`${fieldPrefix}_first_name`].value = '';
+            editor[`${fieldPrefix}_last_name`].value = '';
+        }
+
+        function isJuniorMarshalStyle(styleValue) {
+            return styleValue.endsWith(' - Junior Marshal');
+        }
+
+        function isSeniorMarshalStyle(styleValue) {
+            return styleValue.endsWith(' - Senior Marshal');
+        }
+
+        function updateMarshalSignoffFields() {
+            const styleValue = weaponStyleSelect.value;
+            const needsSecondMarshal = isJuniorMarshalStyle(styleValue) || isSeniorMarshalStyle(styleValue);
+            const needsConcurringOfficer = isSeniorMarshalStyle(styleValue);
+
+            secondMarshalField.style.display = needsSecondMarshal ? '' : 'none';
+            concurringOfficerField.style.display = needsConcurringOfficer ? '' : 'none';
+
+            if (!needsSecondMarshal) {
+                clearLookup('second_marshal_lookup', 'second_marshal');
+            }
+            if (!needsConcurringOfficer) {
+                clearLookup('concurring_officer_lookup', 'concurring_officer');
+            }
+        }
+
+        function signoffDisplay(row, prefix) {
+            if (!row[`${prefix}_sca_name`]) {
+                return '-';
+            }
+            return `${row[`${prefix}_sca_name`]} (${row[`${prefix}_first_name`]} ${row[`${prefix}_last_name`]})`;
+        }
+
+        function fieldIsRequiredForRow(fieldName, rowStyle) {
+            if (fieldName === 'is_minor') {
+                return false;
+            }
+            if (fieldName.startsWith('second_marshal_')) {
+                return isJuniorMarshalStyle(rowStyle) || isSeniorMarshalStyle(rowStyle);
+            }
+            if (fieldName.startsWith('concurring_officer_')) {
+                return isSeniorMarshalStyle(rowStyle);
+            }
+            return true;
+        }
+
+        function focusForField(fieldName) {
+            if (fieldName.startsWith('person_')) {
+                document.getElementById('person_lookup').focus();
+            } else if (fieldName.startsWith('second_marshal_')) {
+                secondMarshalLookup.focus();
+            } else if (fieldName.startsWith('concurring_officer_')) {
+                concurringOfficerLookup.focus();
+            } else if (fieldName.startsWith('marshal_')) {
+                document.getElementById('marshal_lookup').focus();
+            } else {
+                editor[fieldName].focus();
+            }
+        }
+
+        function renderRows() {
+            tbody.innerHTML = '';
+            hiddenRows.innerHTML = '';
+            if (newFighterForm && newFighterBatchWarning) {
+                const hasBatchRows = rows.length > 0;
+                newFighterForm.style.display = hasBatchRows ? 'none' : '';
+                newFighterBatchWarning.style.display = hasBatchRows ? '' : 'none';
+            }
+            rows.forEach(function (row, index) {
+                const tr = document.createElement('tr');
+                [
+                    `${row.person_sca_name} (${row.person_first_name} ${row.person_last_name})`,
+                    row.weapon_style,
+                    `${row.marshal_sca_name} (${row.marshal_first_name} ${row.marshal_last_name})`,
+                    signoffDisplay(row, 'second_marshal'),
+                    signoffDisplay(row, 'concurring_officer'),
+                    row.auth_date,
+                    row.is_minor ? 'Yes' : 'No',
+                ].forEach(function (value) {
+                    const td = document.createElement('td');
+                    td.textContent = value;
+                    tr.appendChild(td);
+                });
+                const actionTd = document.createElement('td');
+                const removeButton = document.createElement('button');
+                removeButton.type = 'button';
+                removeButton.className = 'btn btn-danger btn-sm';
+                removeButton.dataset.removeRow = String(index);
+                removeButton.textContent = 'Remove';
+                actionTd.appendChild(removeButton);
+                tr.appendChild(actionTd);
+                tbody.appendChild(tr);
+                fields.forEach(function (fieldName) {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = fieldName;
+                    input.value = row[fieldName] || '';
+                    hiddenRows.appendChild(input);
+                });
+            });
+        }
+
+        function syncNewFighterMinorDependentFields() {
+            if (newFighterBirthdayField && newFighterMinorCheckbox) {
+                newFighterBirthdayField.style.display = newFighterMinorCheckbox.checked ? '' : 'none';
+            }
+        }
+
+        function addEditorRow() {
+            parsePersonLookup(
+                document.getElementById('person_lookup'),
+                'editor_person_sca_name',
+                'editor_person_first_name',
+                'editor_person_last_name'
+            );
+            parsePersonLookup(
+                document.getElementById('marshal_lookup'),
+                'editor_marshal_sca_name',
+                'editor_marshal_first_name',
+                'editor_marshal_last_name'
+            );
+            parsePersonLookup(
+                secondMarshalLookup,
+                'editor_second_marshal_sca_name',
+                'editor_second_marshal_first_name',
+                'editor_second_marshal_last_name'
+            );
+            parsePersonLookup(
+                concurringOfficerLookup,
+                'editor_concurring_officer_sca_name',
+                'editor_concurring_officer_first_name',
+                'editor_concurring_officer_last_name'
+            );
+            const row = {};
+            for (const fieldName of fields) {
+                const value = fieldName === 'is_minor' ? (editor[fieldName].checked ? '1' : '') : editor[fieldName].value.trim();
+                if (fieldName === 'is_minor') {
+                    row[fieldName] = value;
+                    continue;
+                }
+                if (!value) {
+                    if (fieldIsRequiredForRow(fieldName, row.weapon_style || editor.weapon_style.value.trim())) {
+                        focusForField(fieldName);
+                        return;
+                    }
+                }
+                row[fieldName] = value;
+            }
+            rows.push(row);
+            renderRows();
+            editorChoicesInstances.forEach(function (instance) {
+                instance.removeActiveItems();
+                instance.setChoiceByValue('');
+            });
+            fields.forEach(function (fieldName) {
+                if (fieldName === 'is_minor') {
+                    editor[fieldName].checked = false;
+                } else {
+                    editor[fieldName].value = '';
+                }
+            });
+            updateMarshalSignoffFields();
+            document.getElementById('person_lookup').focus();
+        }
+
+        document.getElementById('add_row_button').addEventListener('click', addEditorRow);
+        document.getElementById('clear_batch_button').addEventListener('click', function () {
+            rows.splice(0, rows.length);
+            renderRows();
+        });
+        tbody.addEventListener('click', function (event) {
+            const button = event.target.closest('[data-remove-row]');
+            if (!button) {
+                return;
+            }
+            rows.splice(Number(button.dataset.removeRow), 1);
+            renderRows();
+        });
+        document.getElementById('recovery_batch_form').addEventListener('submit', function (event) {
+            if (rows.length === 0) {
+                event.preventDefault();
+            }
+        });
+        if (newFighterMinorCheckbox) {
+            newFighterMinorCheckbox.addEventListener('change', syncNewFighterMinorDependentFields);
+            syncNewFighterMinorDependentFields();
+        }
+
+        wireLookup('person_lookup', 'editor_person_sca_name', 'editor_person_first_name', 'editor_person_last_name');
+        wireLookup('marshal_lookup', 'editor_marshal_sca_name', 'editor_marshal_first_name', 'editor_marshal_last_name');
+        wireLookup('second_marshal_lookup', 'editor_second_marshal_sca_name', 'editor_second_marshal_first_name', 'editor_second_marshal_last_name');
+        wireLookup('concurring_officer_lookup', 'editor_concurring_officer_sca_name', 'editor_concurring_officer_first_name', 'editor_concurring_officer_last_name');
+        weaponStyleSelect.addEventListener('change', updateMarshalSignoffFields);
+        updateMarshalSignoffFields();
+
+        const pendingRowsScript = document.getElementById('pending_rows_data');
+        if (pendingRowsScript) {
+            rows.push(...JSON.parse(pendingRowsScript.textContent));
+            renderRows();
+        }
+    });
+</script>
+{% endblock %}
