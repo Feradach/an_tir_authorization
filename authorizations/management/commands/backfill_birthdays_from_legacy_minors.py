@@ -132,8 +132,8 @@ class Command(BaseCommand):
                 )
                 continue
 
-            inferred_birthday = self._birthday_from_minor_expiration(legacy_row, minor_expiration)
             new_is_minor = minor_expiration >= MINOR_CUTOFF
+            inferred_birthday = self._birthday_from_minor_expiration(legacy_row, minor_expiration) if new_is_minor else None
             needs_update = user.birthday != inferred_birthday or person.is_minor != new_is_minor
             rows.append(
                 self._row(
