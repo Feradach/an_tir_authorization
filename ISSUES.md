@@ -19,6 +19,7 @@ Need to launch the program. The current database has been destroyed by a ransomw
 
 * Remove is_minor status instead relying on birthday.
 * Add maintenance mode to lock changes to the database.
+* ISSUE-001: Improve fighter page performance for Kingdom Authorization Officer users. The public and normal marshal views are fast, but the auth officer view is slow because it renders full-database person dropdowns for "authorize as", "approve as", and concurrence workflows. This affects only one or two officer accounts and is not a launch blocker. Potential fix: replace those full `<select>` controls with server-backed typeahead/autocomplete lookups that return a small number of matching people as the officer types.
 * Notification when authorization expiration is nearing (with ability to turn them off).
 * Make sure quarterly reports are working and emailing to appropriate people
 * Create chart/report functionality
@@ -40,4 +41,3 @@ Need to launch the program. The current database has been destroyed by a ransomw
 ## Bugs
 
 None currently identified
-
