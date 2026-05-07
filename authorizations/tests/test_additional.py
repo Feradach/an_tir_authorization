@@ -28,6 +28,7 @@ from authorizations.models import (
     WeaponStyle,
 )
 from authorizations.permissions import validate_reject_authorization
+from authorizations.management.commands.backfill_address_jurisdictions import Command as BackfillAddressJurisdictionsCommand
 from authorizations.views import CreateAuthorizationForm, CreatePersonForm
 
 
@@ -140,6 +141,67 @@ class AdditionalCoverageBase(TestCase):
 
     def messages_for(self, response):
         return [m.message for m in response.context['messages']]
+
+
+class BackfillAddressJurisdictionsCommandTests(TestCase):
+    def test_backfills_only_missing_state_and_country(self):
+        missing = User.objects.create_user(
+            username='missing_jurisdiction',
+            password='StrongPass!123',
+            email='missing_jurisdiction@example.com',
+            first_name='Missing',
+            last_name='Jurisdiction',
+            address='123 Main St',
+            city='Portland',
+            postal_code='97201',
+        )
+        complete = User.objects.create_user(
+            username='complete_jurisdiction',
+            password='StrongPass!123',
+            email='complete_jurisdiction@example.com',
+            first_name='Complete',
+            last_name='Jurisdiction',
+            state_province='Washington',
+            country='United States',
+        )
+
+        command = BackfillAddressJurisdictionsCommand()
+        source_rows = {
+            missing.id: {'state_province': 'Oregon', 'country': 'United States'},
+            complete.id: {'state_province': 'Oregon', 'country': 'Canada'},
+        }
+        actions, skipped = command._build_actions(source_rows, 'default', include_system_users=False)
+        command._apply_actions(actions, 'default')
+
+        missing.refresh_from_db()
+        complete.refresh_from_db()
+        self.assertEqual(missing.state_province, 'Oregon')
+        self.assertEqual(missing.country, 'United States')
+        self.assertEqual(complete.state_province, 'Washington')
+        self.assertEqual(complete.country, 'United States')
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(skipped['target_has_different_existing_value'], 1)
+
+    def test_report_dry_run_does_not_update(self):
+        user = User.objects.create_user(
+            username='dry_run_jurisdiction',
+            password='StrongPass!123',
+            email='dry_run_jurisdiction@example.com',
+            first_name='Dry',
+            last_name='Run',
+        )
+
+        command = BackfillAddressJurisdictionsCommand()
+        source_rows = {user.id: {'state_province': 'British Columbia', 'country': 'Canada'}}
+        actions, skipped = command._build_actions(source_rows, 'default', include_system_users=False)
+        output = StringIO()
+        command.stdout = output
+        command._write_report(actions, skipped, apply=False)
+
+        user.refresh_from_db()
+        self.assertIsNone(user.state_province)
+        self.assertIsNone(user.country)
+        self.assertIn('Users to update: 1', output.getvalue())
 
 class AddAuthorizationSecurityTests(AdditionalCoverageBase):
     def test_non_authorization_officer_cannot_spoof_marshal_id(self):

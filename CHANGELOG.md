@@ -1,5 +1,4 @@
 ﻿
-
 ## [0.1.12] - 2026-05-06
 ### Added
 - Added a launch notice with training videos and account setup guidance to the home pages and FAQ.
