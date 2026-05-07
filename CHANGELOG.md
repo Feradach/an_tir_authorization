@@ -6,6 +6,7 @@
 - Added a temporary contact form for requesting an email address update during account rollout.
 - Migrated legacy data to new database structure.
 - Changed the registration form so that ParentID and Birthday fields are not visible unless the user is a minor.
+- Updated how minor status is determined in the back end.
 
 
 ## [0.1.11] - 2026-05-05

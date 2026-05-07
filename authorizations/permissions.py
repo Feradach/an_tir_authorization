@@ -334,7 +334,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     all_authorizations = Authorization.objects.filter(person=existing_fighter)
     active_authorizations = Authorization.objects.effectively_active().filter(person=existing_fighter)
     style_aliases = _equestrian_aliases_for_style_name(style.name)
-    if existing_fighter.is_minor:
+    fighter_is_minor = existing_fighter.is_current_minor
+    if existing_fighter.user.birthday:
         birthday = existing_fighter.user.birthday
         age = calculate_age(birthday)
     else:
@@ -348,14 +349,14 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     if style.name == 'Junior Marshal':
         # Rule 2a: Archery and Thrown junior marshals must be adults
         if style.discipline.name in ['Archery', 'Thrown']:
-            if existing_fighter.is_minor:
+            if fighter_is_minor:
                 return False, 'Must be an adult to become an archery or thrown weapon junior marshal.'
         if age < 16:
             return False, 'Must be at least 16 years old to become a junior marshal.'
 
     # Rule 3: A senior marshal must be an adult
     if style.name == 'Senior Marshal':
-        if existing_fighter.is_minor:
+        if fighter_is_minor:
             return False, 'Must be an adult to become a senior marshal.'
 
     # Rule 4: A Rapier or Youth Rapier fighter must have single sword as their first weapon authorization
@@ -399,7 +400,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         if not style.name in ['Junior Marshal', 'Senior Marshal']:
             if age < 6:
                 return False, f'Must be at least 6 years old to become authorized in {style.discipline.name} combat.'
-            if not existing_fighter.is_minor:
+            if not fighter_is_minor:
                 return False, f'Must be a minor to become authorized in {style.discipline.name} combat.'
 
     # Rule 10: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew.
@@ -414,7 +415,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
 
     # Rule 11: For equestrian, a person must be an adult for crest/combat/driving/foam-tipped jousting.
     if style.name in (_MOUNTED_CREST_COMBAT_STYLES | _MOUNTED_COMBAT_STYLES | _DRIVING_STYLES | _FOAM_TIPPED_JOUSTING_STYLES):
-        if existing_fighter.is_minor:
+        if fighter_is_minor:
             return False, f'Must be an adult to become authorized in {style.name}.'
 
     # Rule 11a: Mounted Gaming requires General Riding.
@@ -533,12 +534,12 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         return False, 'Cannot make an authorization for yourself.'
 
     # Rule 22: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored combat, they can only be authorized by a regional marshal.
-    if existing_fighter.is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored']:
+    if fighter_is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored']:
         if not is_regional_marshal(marshal):
             return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored combat unless you are a regional marshal.'
 
     # Rule 23: Adults cannot be authorized as youth armored or youth rapier fighters. They can be authorized as youth marshals.
-    if not existing_fighter.is_minor and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+    if not fighter_is_minor and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
         if style.name != 'Junior Marshal' and style.name != 'Senior Marshal':
             return False, 'Adults cannot be authorized as youth armored or youth rapier fighters.'
 
@@ -552,40 +553,13 @@ def calculate_age(birthday):
     age = today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
     return age
 
-_CANADIAN_ABBREVIATIONS = {
-    'AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT',
-}
-_CANADIAN_NAMES = {
-    'Alberta', 'British Columbia', 'Manitoba', 'New Brunswick', 'Newfoundland and Labrador',
-    'Nova Scotia', 'Northwest Territories', 'Nunavut', 'Ontario', 'Prince Edward Island',
-    'Quebec', 'Saskatchewan', 'Yukon',
-}
-
-def _is_canadian(user: User) -> bool:
-    if user.country:
-        country = user.country.strip().lower()
-        if country in ['canada', 'ca']:
-            return True
-    if user.state_province:
-        province = user.state_province.strip()
-        if province in _CANADIAN_ABBREVIATIONS or province in _CANADIAN_NAMES:
-            return True
-        if province.upper() in _CANADIAN_ABBREVIATIONS:
-            return True
-        if province.title() in _CANADIAN_NAMES:
-            return True
-    return False
-
-def _adult_age_for_user(user: User) -> int:
-    return 19 if _is_canadian(user) else 18
-
 def calculate_authorization_expiration(person: Person, style: WeaponStyle, today: Optional[date] = None) -> date:
     if today is None:
         today = date.today()
     base_years = 2 if style.discipline.name in ['Youth Armored', 'Youth Rapier'] else 4
     base_expiration = today + relativedelta(years=base_years)
-    if person.is_minor and person.user.birthday:
-        adult_date = person.user.birthday + relativedelta(years=_adult_age_for_user(person.user))
+    adult_date = person.adult_date
+    if person.is_current_minor and adult_date:
         return min(base_expiration, adult_date)
     return base_expiration
 

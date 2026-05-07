@@ -274,11 +274,13 @@ class AuthorizationExpirationCalculationTests(AuthorizationTestBase):
         _, fighter = self.make_person(
             'minor_us',
             'Minor US',
-            is_minor=True,
+            is_minor=False,
             birthday=birthday,
             country='United States',
             state_province='Oregon',
         )
+        type(fighter).objects.filter(pk=fighter.pk).update(is_minor=False)
+        fighter.refresh_from_db()
 
         expected = birthday + relativedelta(years=18)
         self.assertEqual(calculate_authorization_expiration(fighter, self.style_weapon_armored), expected)
@@ -390,9 +392,11 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         _, minor = self.make_person(
             'age_minor',
             'Age Minor',
-            is_minor=True,
+            is_minor=False,
             birthday=birthday,
         )
+        type(minor).objects.filter(pk=minor.pk).update(is_minor=False)
+        minor.refresh_from_db()
 
         ok, msg = authorization_follows_rules(marshal_user, minor, self.style_weapon_armored.id)
 

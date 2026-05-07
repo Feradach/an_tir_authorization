@@ -1,5 +1,6 @@
 from datetime import date
 
+from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
@@ -36,6 +37,44 @@ TITLE_RANK_CHOICES = [
 ]
 
 SYSTEM_USER_IDS = (15050,)
+
+CANADIAN_PROVINCE_ABBREVIATIONS = {
+    'AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT',
+}
+CANADIAN_PROVINCE_NAMES = {
+    'Alberta', 'British Columbia', 'Manitoba', 'New Brunswick', 'Newfoundland and Labrador',
+    'Nova Scotia', 'Northwest Territories', 'Nunavut', 'Ontario', 'Prince Edward Island',
+    'Quebec', 'Saskatchewan', 'Yukon',
+}
+
+
+def is_canadian_jurisdiction(country, state_province) -> bool:
+    if country:
+        normalized_country = str(country).strip().lower()
+        if normalized_country in ['canada', 'ca']:
+            return True
+    if state_province:
+        province = str(state_province).strip()
+        if province in CANADIAN_PROVINCE_ABBREVIATIONS or province in CANADIAN_PROVINCE_NAMES:
+            return True
+        if province.upper() in CANADIAN_PROVINCE_ABBREVIATIONS:
+            return True
+        if province.title() in CANADIAN_PROVINCE_NAMES:
+            return True
+    return False
+
+
+def adult_age_for_jurisdiction(country, state_province) -> int:
+    return 19 if is_canadian_jurisdiction(country, state_province) else 18
+
+
+def is_minor_from_birthday(birthday, country, state_province, today=None) -> bool:
+    if not birthday:
+        return False
+    if today is None:
+        today = date.today()
+    adult_date = birthday + relativedelta(years=adult_age_for_jurisdiction(country, state_province))
+    return today < adult_date
 
 # Create your models here.
 class User(AbstractUser):
@@ -372,7 +411,37 @@ class Person(models.Model):
 
     @property
     def minor_status(self):
-        return 'Yes' if self.is_minor else 'No'
+        return 'Yes' if self.is_current_minor else 'No'
+
+    @property
+    def adult_age(self):
+        return adult_age_for_jurisdiction(self.user.country, self.user.state_province)
+
+    @property
+    def adult_date(self):
+        if not self.user.birthday:
+            return None
+        return self.user.birthday + relativedelta(years=self.adult_age)
+
+    @property
+    def is_current_minor(self):
+        adult_date = self.adult_date
+        if not adult_date:
+            return False
+        return date.today() < adult_date
+
+    def sync_transitional_minor_fields(self):
+        inferred_minor = self.is_current_minor
+        self.is_minor = inferred_minor
+        if not inferred_minor:
+            self.parent = None
+
+        birthday = self.user.birthday
+        if birthday and date.today() >= birthday + relativedelta(years=20):
+            self.user.birthday = None
+            self.parent = None
+            self.is_minor = False
+            self.user.save(update_fields=['birthday', 'updated_at'])
 
     class Meta:
         verbose_name = 'person'
@@ -382,8 +451,7 @@ class Person(models.Model):
         # Automatically set sca_name to user first name if not provided
         if not self.sca_name:
             self.sca_name = self.user.first_name
-        if not self.is_minor:
-            self.parent = None
+        self.sync_transitional_minor_fields()
 
         self.full_clean()
         super().save(*args, **kwargs)
@@ -392,8 +460,8 @@ class Person(models.Model):
         return self.children.exists()
 
     def clean(self):
-        if self.is_minor and not self.user.birthday:
-            raise ValidationError('A birthday must be provided for minors.')
+        if self.parent and not self.is_current_minor:
+            raise ValidationError('A non-minor must not have a parent ID.')
         super().clean()
 
 

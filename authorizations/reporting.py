@@ -196,7 +196,7 @@ def build_current_report_snapshot(as_of=None):
         person_id = auth.person_id
         style_name = auth.style.name
         discipline_name = auth.style.discipline.name
-        is_minor = auth.person.is_minor
+        is_minor = auth.person.is_current_minor
         region_name = _person_region_name(auth.person)
 
         disc_key = discipline_name

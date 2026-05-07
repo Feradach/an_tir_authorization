@@ -14,7 +14,7 @@ from django.http import JsonResponse, Http404, FileResponse
 from datetime import timedelta
 import logging
 from io import BytesIO
-from django.db.models import Q, Prefetch, Max
+from django.db.models import Q, Prefetch, Max, Case, When, Value, BooleanField
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.core.paginator import Paginator
@@ -24,7 +24,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS
 from itertools import groupby
 from collections import defaultdict
@@ -43,6 +43,54 @@ import bleach
 from types import SimpleNamespace
 from authorizations.security.events import log_security_event
 from authorizations.reporting import build_current_report_snapshot, ReportingConfigurationError
+
+
+def _canadian_jurisdiction_q(user_prefix='person__user__'):
+    country_field = f'{user_prefix}country'
+    province_field = f'{user_prefix}state_province'
+    province_values = sorted(
+        CANADIAN_PROVINCE_ABBREVIATIONS
+        | CANADIAN_PROVINCE_NAMES
+        | {province.upper() for province in CANADIAN_PROVINCE_NAMES}
+    )
+    return (
+        Q(**{f'{country_field}__iexact': 'Canada'})
+        | Q(**{f'{country_field}__iexact': 'CA'})
+        | Q(**{f'{province_field}__in': province_values})
+    )
+
+
+def _inferred_minor_q(user_prefix='person__user__'):
+    birthday_field = f'{user_prefix}birthday'
+    canadian_q = _canadian_jurisdiction_q(user_prefix)
+    return Q(**{f'{birthday_field}__isnull': False}) & (
+        canadian_q & Q(**{f'{birthday_field}__gt': date.today() - relativedelta(years=19)})
+        | ~canadian_q & Q(**{f'{birthday_field}__gt': date.today() - relativedelta(years=18)})
+    )
+
+
+def _inferred_minor_annotation(user_prefix='person__user__'):
+    return Case(
+        When(_inferred_minor_q(user_prefix), then=Value(True)),
+        default=Value(False),
+        output_field=BooleanField(),
+    )
+
+
+def _sync_form_minor_fields(cleaned_data):
+    inferred_minor = is_minor_from_birthday(
+        cleaned_data.get('birthday'),
+        cleaned_data.get('country'),
+        cleaned_data.get('state_province'),
+    )
+    cleaned_data['is_minor'] = inferred_minor
+    if not inferred_minor:
+        cleaned_data['parent_id'] = None
+        cleaned_data['parent'] = None
+        birthday = cleaned_data.get('birthday')
+        if birthday and date.today() >= birthday + relativedelta(years=20):
+            cleaned_data['birthday'] = None
+    return inferred_minor
 
 
 def _get_action_note(request, field_name='action_note'):
@@ -390,8 +438,10 @@ class LegacyRecoveryNewFighterForm(forms.Form):
         membership_expiration = cleaned.get('membership_expiration')
         if bool(membership) != bool(membership_expiration):
             raise forms.ValidationError('Membership number and membership expiration must be provided together.')
-        if cleaned.get('is_minor') and not cleaned.get('birthday'):
+        checked_minor = cleaned.get('is_minor')
+        if checked_minor and not cleaned.get('birthday'):
             raise forms.ValidationError('Birthday is required when adding a minor fighter.')
+        _sync_form_minor_fields(cleaned)
         return cleaned
 
 
@@ -2637,7 +2687,7 @@ def register(request):
                         title=person_form.cleaned_data.get('title'),
                         branch=person_form.cleaned_data['branch'],
                         is_minor=person_form.cleaned_data['is_minor'],
-                        parent=person_form.cleaned_data.get('parent', None),
+                        parent=person_form.cleaned_data.get('parent_id', None),
                     )
 
             except Exception:
@@ -3310,7 +3360,9 @@ def search(request):
         if end_date:
             dynamic_filter &= Q(effective_expiration_date__lte=end_date)
     is_minor = request.GET.get('is_minor')
-    if is_minor: dynamic_filter &= Q(person__is_minor=(is_minor == 'True'))
+    minor_filter_value = None
+    if is_minor:
+        minor_filter_value = is_minor == 'True'
     if membership_num := request.GET.get('membership'):
         # The path is Authorization -> person -> user -> membership
         dynamic_filter &= Q(person__user__membership=membership_num)
@@ -3326,10 +3378,14 @@ def search(request):
 
     # First, get all authorizations that match the filter.
     # We use this as a base for both views.
-    matching_authorizations = Authorization.objects.with_effective_expiration().with_sanction_flag().filter(
+    matching_authorizations = Authorization.objects.with_effective_expiration().with_sanction_flag().annotate(
+        inferred_minor=_inferred_minor_annotation('person__user__'),
+    ).filter(
         dynamic_filter,
         has_active_sanction=False,
     ).exclude(person__user_id__in=SYSTEM_USER_IDS)
+    if minor_filter_value is not None:
+        matching_authorizations = matching_authorizations.filter(inferred_minor=minor_filter_value)
     download_format = (request.GET.get('download') or '').strip().lower()
 
     if view_mode == 'card':
@@ -3365,6 +3421,8 @@ def search(request):
         user_sort = request.GET.get('sort', 'person__sca_name')
         if user_sort in ['expiration', '-expiration']:
             user_sort = user_sort.replace('expiration', 'effective_expiration_date')
+        if user_sort in ['person__is_minor', '-person__is_minor']:
+            user_sort = user_sort.replace('person__is_minor', 'inferred_minor')
         
         authorization_list = matching_authorizations.select_related(
             'person__branch__region',
@@ -3507,6 +3565,7 @@ def fighter(request, person_id):
             return redirect('login')
 
         if action == 'add_authorization':
+            person.save()
             return add_authorization(request, person_id)
         elif action == 'clear_pending_authorization':
             pending_key = f'pending_authorization_{person_id}'
@@ -4256,7 +4315,7 @@ def add_fighter(request):
                         title=person_form.cleaned_data['title'],
                         branch=person_form.cleaned_data['branch'],
                         is_minor=person_form.cleaned_data['is_minor'],
-                        parent=person_form.cleaned_data.get('parent', None),
+                        parent=person_form.cleaned_data.get('parent_id', None),
                     )
 
             except Exception:
@@ -4794,7 +4853,7 @@ def user_account(request, user_id):
         # Person fields
         'sca_name': person.sca_name,
         'branch': person.branch,
-        'is_minor': person.is_minor,
+        'is_minor': person.is_current_minor,
         'parent_id': person.parent,
     }
 
@@ -4818,6 +4877,7 @@ def user_account(request, user_id):
             return redirect(next_url)
 
         if action == 'add_authorization_self':
+            person.save()
             if not testing:
                 messages.error(request, 'Testing is not enabled; cannot submit authorization.')
                 return redirect('user_account', user_id=user.id)
@@ -5862,10 +5922,10 @@ def _build_merge_profile_initial(survivor_user: User, source_user: User, survivo
     newer_user = _newer_user(survivor_user, source_user)
     newer_person = survivor_person if newer_user.id == survivor_user.id else source_person
 
-    is_minor = newer_person.is_minor
+    is_minor = newer_person.is_current_minor
     parent_id = newer_person.parent_id if is_minor else None
     if parent_id is None and is_minor:
-        fallback_parent = survivor_person.parent_id if survivor_person.is_minor else None
+        fallback_parent = survivor_person.parent_id if survivor_person.is_current_minor else None
         parent_id = fallback_parent
 
     return {
@@ -7180,7 +7240,12 @@ class CreatePersonForm(forms.Form):
         if cleaned_data.get('honeypot'):
             raise forms.ValidationError('Unable to process submission.')
 
-        if not cleaned_data.get('is_minor') and cleaned_data.get('parent_id'):
+        checked_minor = cleaned_data.get('is_minor')
+        submitted_parent = cleaned_data.get('parent_id')
+        if checked_minor and not cleaned_data.get('birthday'):
+            raise forms.ValidationError('A birthday must be provided for minors.')
+        inferred_minor = _sync_form_minor_fields(cleaned_data)
+        if not inferred_minor and submitted_parent:
             raise forms.ValidationError('A non-minor must not have a parent ID.')
 
         username = cleaned_data.get('username')
@@ -7249,9 +7314,6 @@ class CreatePersonForm(forms.Form):
                         self.membership_mismatch_bypass_used = True
                     else:
                         raise forms.ValidationError(MEMBERSHIP_INVALID_MESSAGE)
-
-        if cleaned_data.get('is_minor') and not cleaned_data.get('birthday'):
-            raise forms.ValidationError('A birthday must be provided for minors.')
 
         if new_title:
             if not new_title_rank:

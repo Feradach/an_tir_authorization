@@ -1,8 +1,11 @@
 
 from datetime import date, timedelta
+from io import StringIO
 
 from dateutil.relativedelta import relativedelta
+from django.core import mail
 from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from django.db import IntegrityError
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -1142,7 +1145,7 @@ class ConcurrenceFlowTests(AdditionalCoverageBase):
 
 @override_settings(AUTHZ_TEST_FEATURES=False)
 class ModelValidationAndConstraintTests(AdditionalCoverageBase):
-    def test_person_clean_raises_for_minor_without_birthday(self):
+    def test_person_save_treats_missing_birthday_as_adult(self):
         user = User.objects.create_user(
             username='person_minor_no_bday',
             password='StrongPass!123',
@@ -1160,24 +1163,27 @@ class ModelValidationAndConstraintTests(AdditionalCoverageBase):
             birthday=None,
         )
 
-        with self.assertRaises(ValidationError):
-            Person.objects.create(user=user, sca_name='Minor No Birthday', branch=self.branch_gd, is_minor=True)
+        person = Person.objects.create(user=user, sca_name='Minor No Birthday', branch=self.branch_gd, is_minor=True)
+        self.assertFalse(person.is_minor)
+        self.assertFalse(person.is_current_minor)
 
-    def test_person_save_clears_parent_when_not_minor(self):
+    def test_person_save_clears_parent_and_old_birthday_when_adult_20_or_older(self):
         parent_user, parent_person = self.make_person('person_parent', 'Person Parent')
         child_user, child_person = self.make_person(
             'person_child',
             'Person Child',
             is_minor=True,
-            birthday=date.today() - relativedelta(years=15),
+            birthday=date.today() - relativedelta(years=20),
             parent=parent_person,
         )
 
-        child_person.is_minor = False
         child_person.save()
         child_person.refresh_from_db()
+        child_user.refresh_from_db()
 
         self.assertIsNone(child_person.parent)
+        self.assertFalse(child_person.is_minor)
+        self.assertIsNone(child_user.birthday)
 
     def test_user_save_normalizes_partial_membership_fields_to_none(self):
         user = User.objects.create_user(
@@ -1369,9 +1375,11 @@ class SearchFilteringAndPaginationTests(AdditionalCoverageBase):
         _, minor = self.make_person(
             'search_minor_yes',
             'Search Minor Yes',
-            is_minor=True,
+            is_minor=False,
             birthday=date.today() - relativedelta(years=13),
         )
+        Person.objects.filter(pk=minor.pk).update(is_minor=False)
+        minor.refresh_from_db()
         _, adult = self.make_person('search_minor_no', 'Search Minor No')
         minor_auth = self.grant_authorization(minor, self.style_weapon_armored, status=self.status_active)
         self.grant_authorization(adult, self.style_weapon_armored, status=self.status_active)
@@ -1381,6 +1389,65 @@ class SearchFilteringAndPaginationTests(AdditionalCoverageBase):
         self.assertEqual(response.status_code, 200)
         page_ids = [auth.id for auth in response.context['page_obj'].object_list]
         self.assertEqual(page_ids, [minor_auth.id])
+
+
+class CleanupMinorTransitionDataCommandTests(AdditionalCoverageBase):
+    def _stale_adult_child(self):
+        _, parent = self.make_person('cleanup_parent', 'Cleanup Parent')
+        user, child = self.make_person(
+            'cleanup_child',
+            'Cleanup Child',
+            is_minor=True,
+            birthday=date.today() - relativedelta(years=15),
+            parent=parent,
+        )
+        User.objects.filter(pk=user.pk).update(birthday=date.today() - relativedelta(years=20))
+        Person.objects.filter(pk=child.pk).update(is_minor=True, parent=parent)
+        user.refresh_from_db()
+        child.refresh_from_db()
+        return user, child, parent
+
+    def test_dry_run_reports_without_changing_records(self):
+        user, child, parent = self._stale_adult_child()
+        output = StringIO()
+
+        call_command('cleanup_minor_transition_data', '--dry-run', stdout=output)
+
+        user.refresh_from_db()
+        child.refresh_from_db()
+        self.assertIsNotNone(user.birthday)
+        self.assertEqual(child.parent_id, parent.user_id)
+        self.assertTrue(child.is_minor)
+        self.assertIn('Minor transition cleanup dry run', output.getvalue())
+        self.assertIn(f'user_id={child.user_id}', output.getvalue())
+        self.assertIn('No changes were applied', output.getvalue())
+
+    def test_apply_clears_stale_adult_data(self):
+        user, child, _ = self._stale_adult_child()
+
+        call_command('cleanup_minor_transition_data', stdout=StringIO())
+
+        user.refresh_from_db()
+        child.refresh_from_db()
+        self.assertIsNone(user.birthday)
+        self.assertIsNone(child.parent_id)
+        self.assertFalse(child.is_minor)
+
+    def test_dry_run_can_email_report(self):
+        _, child, _ = self._stale_adult_child()
+
+        call_command(
+            'cleanup_minor_transition_data',
+            '--dry-run',
+            '--email-to',
+            'officer@example.com',
+            stdout=StringIO(),
+        )
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['officer@example.com'])
+        self.assertIn('Minor transition cleanup dry run', mail.outbox[0].body)
+        self.assertIn(f'user_id={child.user_id}', mail.outbox[0].body)
 
 
 @override_settings(AUTHZ_TEST_FEATURES=True)
