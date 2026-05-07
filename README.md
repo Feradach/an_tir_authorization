@@ -24,6 +24,11 @@ This project creates an entire application around the authorization database. It
 By creating this new functionality the steps to create an authorization will be reduced, the need for paper documents will be eliminated, and the 
 workload of the authorization officer will be reduced.
 
+## Operations:
+
+- [Backup and restore runbook](backup_and_restore_runbook_an_tir_authorizations.md)
+- [Maintenance runbook](maintenance_runbook.md)
+
 ## Features:
 The primary purpose of this project is to create a database of authorized fighters and marshals.
 

@@ -2860,7 +2860,7 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(authorization.expiration, date(2027, 5, 10))
 
     @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
-    def test_legacy_recovery_junior_marshal_requires_second_marshal(self):
+    def test_legacy_recovery_junior_marshal_renewal_does_not_require_second_marshal(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
@@ -2873,6 +2873,33 @@ class UserAccountViewTests(ViewTestBase):
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_jm_armored)
+        entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
+        self.assertFalse(entry.marshal_promotion)
+        self.assertIsNone(entry.second_marshal)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_junior_marshal_promotion_requires_second_marshal(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Junior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'marshal_promotion': ['1'],
                 'auth_date': ['2025-05-10'],
             },
             follow=True,
@@ -2899,6 +2926,7 @@ class UserAccountViewTests(ViewTestBase):
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
+                'marshal_promotion': ['1'],
                 'auth_date': ['2025-05-10'],
             },
             follow=True,
@@ -2908,11 +2936,39 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_jm_armored)
         entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
+        self.assertTrue(entry.marshal_promotion)
         self.assertEqual(entry.second_marshal, self.other_person)
         self.assertIsNone(entry.concurring_officer)
 
     @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
-    def test_legacy_recovery_senior_marshal_requires_concurring_officer(self):
+    def test_legacy_recovery_senior_marshal_renewal_does_not_require_promotion_signoffs(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
+        entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
+        self.assertFalse(entry.marshal_promotion)
+        self.assertIsNone(entry.second_marshal)
+        self.assertIsNone(entry.concurring_officer)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_senior_marshal_promotion_requires_concurring_officer(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
@@ -2928,6 +2984,7 @@ class UserAccountViewTests(ViewTestBase):
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
+                'marshal_promotion': ['1'],
                 'auth_date': ['2025-05-10'],
             },
             follow=True,
@@ -2958,6 +3015,7 @@ class UserAccountViewTests(ViewTestBase):
                 'concurring_officer_sca_name': [concurring_person.sca_name],
                 'concurring_officer_first_name': [concurring_user.first_name],
                 'concurring_officer_last_name': [concurring_user.last_name],
+                'marshal_promotion': ['1'],
                 'auth_date': ['2025-05-10'],
             },
             follow=True,
@@ -2967,6 +3025,7 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
         entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
+        self.assertTrue(entry.marshal_promotion)
         self.assertEqual(entry.second_marshal, self.other_person)
         self.assertEqual(entry.concurring_officer, concurring_person)
         self.assertEqual(authorization.concurring_fighter, self.ao_person)
@@ -3103,6 +3162,7 @@ class UserAccountViewTests(ViewTestBase):
             concurring_officer=self.ao_person,
             auth_date=date(2025, 5, 10),
             minor_on_paperwork=True,
+            marshal_promotion=True,
             expiration=date(2027, 5, 10),
             authorization=authorization,
             created_by=self.ao_user,
@@ -3119,9 +3179,20 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIn('Processed At,Processed By,Person SCA Name', content)
         self.assertIn('Second Marshal SCA Name,Second Marshal First Name,Second Marshal Last Name', content)
         self.assertIn('Concurring Officer SCA Name,Concurring Officer First Name,Concurring Officer Last Name', content)
+        self.assertIn('Marshal Promotion', content)
         self.assertIn('Owner of Account,Owner,User,Armored - Weapon & Shield', content)
         self.assertIn(f'{self.other_person.sca_name},{self.other_user.first_name},{self.other_user.last_name}', content)
-        self.assertIn('2025-05-10,2027-05-10,Yes', content)
+        self.assertIn('Yes,2025-05-10,2027-05-10,Yes', content)
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_promotion_checkbox_hidden_until_marshal_style_selected(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.get(reverse('legacy_authorization_recovery'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="marshal_promotion_field"')
+        self.assertContains(response, 'd-none" id="marshal_promotion_field"')
 
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_self_set_regional_is_blocked_when_testing_disabled(self):

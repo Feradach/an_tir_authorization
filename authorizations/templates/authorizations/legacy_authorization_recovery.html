@@ -68,6 +68,12 @@
                 {% endfor %}
             </select>
         </div>
+        <div class="col-md-2 align-items-end d-none" id="marshal_promotion_field">
+            <div class="form-check">
+                <input id="editor_marshal_promotion" type="checkbox" class="form-check-input">
+                <label for="editor_marshal_promotion" class="form-check-label"><strong>Promotion</strong></label>
+            </div>
+        </div>
         <div class="col-md-2 d-flex align-items-end">
             <div class="form-check">
                 <input id="editor_is_minor" type="checkbox" class="form-check-input">
@@ -218,6 +224,7 @@
                 <th>Person</th>
                 <th>Style</th>
                 <th>Marshal</th>
+                <th>Promotion</th>
                 <th>Second Marshal</th>
                 <th>Concurring Officer</th>
                 <th>Auth Date</th>
@@ -244,6 +251,7 @@
             <th>Person</th>
             <th>Style</th>
             <th>Marshal</th>
+            <th>Promotion</th>
             <th>Second Marshal</th>
             <th>Concurring Officer</th>
             <th>Auth Date</th>
@@ -257,6 +265,7 @@
                 <td>{{ entry.person.sca_name }} ({{ entry.person.user.first_name }} {{ entry.person.user.last_name }})</td>
                 <td>{{ entry.style.discipline.name }} - {{ entry.style.name }}</td>
                 <td>{{ entry.marshal.sca_name }}</td>
+                <td>{% if entry.marshal_promotion %}Yes{% else %}No{% endif %}</td>
                 <td>{% if entry.second_marshal %}{{ entry.second_marshal.sca_name }}{% else %}-{% endif %}</td>
                 <td>{% if entry.concurring_officer %}{{ entry.concurring_officer.sca_name }}{% else %}-{% endif %}</td>
                 <td>{{ entry.auth_date|date:"Y-m-d" }}</td>
@@ -288,6 +297,7 @@
             'concurring_officer_sca_name',
             'concurring_officer_first_name',
             'concurring_officer_last_name',
+            'marshal_promotion',
             'auth_date',
             'is_minor',
         ];
@@ -305,6 +315,7 @@
             concurring_officer_sca_name: document.getElementById('editor_concurring_officer_sca_name'),
             concurring_officer_first_name: document.getElementById('editor_concurring_officer_first_name'),
             concurring_officer_last_name: document.getElementById('editor_concurring_officer_last_name'),
+            marshal_promotion: document.getElementById('editor_marshal_promotion'),
             auth_date: document.getElementById('editor_auth_date'),
             is_minor: document.getElementById('editor_is_minor'),
         };
@@ -320,6 +331,8 @@
         const secondMarshalLookup = document.getElementById('second_marshal_lookup');
         const concurringOfficerField = document.getElementById('concurring_officer_lookup_field');
         const concurringOfficerLookup = document.getElementById('concurring_officer_lookup');
+        const marshalPromotionField = document.getElementById('marshal_promotion_field');
+        const marshalPromotionCheckbox = document.getElementById('editor_marshal_promotion');
 
         const editorChoicesInstances = [];
         const editorChoicesById = {};
@@ -384,12 +397,19 @@
 
         function updateMarshalSignoffFields() {
             const styleValue = weaponStyleSelect.value;
-            const needsSecondMarshal = isJuniorMarshalStyle(styleValue) || isSeniorMarshalStyle(styleValue);
-            const needsConcurringOfficer = isSeniorMarshalStyle(styleValue);
+            const isMarshalStyle = isJuniorMarshalStyle(styleValue) || isSeniorMarshalStyle(styleValue);
+            const isPromotion = isMarshalStyle && marshalPromotionCheckbox.checked;
+            const needsSecondMarshal = isPromotion;
+            const needsConcurringOfficer = isPromotion && isSeniorMarshalStyle(styleValue);
 
+            marshalPromotionField.classList.toggle('d-none', !isMarshalStyle);
+            marshalPromotionField.classList.toggle('d-flex', isMarshalStyle);
             secondMarshalField.style.display = needsSecondMarshal ? '' : 'none';
             concurringOfficerField.style.display = needsConcurringOfficer ? '' : 'none';
 
+            if (!isMarshalStyle) {
+                marshalPromotionCheckbox.checked = false;
+            }
             if (!needsSecondMarshal) {
                 clearLookup('second_marshal_lookup', 'second_marshal');
             }
@@ -409,11 +429,14 @@
             if (fieldName === 'is_minor') {
                 return false;
             }
+            if (fieldName === 'marshal_promotion') {
+                return false;
+            }
             if (fieldName.startsWith('second_marshal_')) {
-                return isJuniorMarshalStyle(rowStyle) || isSeniorMarshalStyle(rowStyle);
+                return editor.marshal_promotion.checked && (isJuniorMarshalStyle(rowStyle) || isSeniorMarshalStyle(rowStyle));
             }
             if (fieldName.startsWith('concurring_officer_')) {
-                return isSeniorMarshalStyle(rowStyle);
+                return editor.marshal_promotion.checked && isSeniorMarshalStyle(rowStyle);
             }
             return true;
         }
@@ -446,6 +469,7 @@
                     `${row.person_sca_name} (${row.person_first_name} ${row.person_last_name})`,
                     row.weapon_style,
                     `${row.marshal_sca_name} (${row.marshal_first_name} ${row.marshal_last_name})`,
+                    row.marshal_promotion ? 'Yes' : 'No',
                     signoffDisplay(row, 'second_marshal'),
                     signoffDisplay(row, 'concurring_officer'),
                     row.auth_date,
@@ -507,8 +531,8 @@
             );
             const row = {};
             for (const fieldName of fields) {
-                const value = fieldName === 'is_minor' ? (editor[fieldName].checked ? '1' : '') : editor[fieldName].value.trim();
-                if (fieldName === 'is_minor') {
+                const value = ['is_minor', 'marshal_promotion'].includes(fieldName) ? (editor[fieldName].checked ? '1' : '') : editor[fieldName].value.trim();
+                if (['is_minor', 'marshal_promotion'].includes(fieldName)) {
                     row[fieldName] = value;
                     continue;
                 }
@@ -527,7 +551,7 @@
                 instance.setChoiceByValue('');
             });
             fields.forEach(function (fieldName) {
-                if (fieldName === 'is_minor') {
+                if (['is_minor', 'marshal_promotion'].includes(fieldName)) {
                     editor[fieldName].checked = false;
                 } else {
                     editor[fieldName].value = '';
@@ -565,6 +589,7 @@
         wireLookup('second_marshal_lookup', 'editor_second_marshal_sca_name', 'editor_second_marshal_first_name', 'editor_second_marshal_last_name');
         wireLookup('concurring_officer_lookup', 'editor_concurring_officer_sca_name', 'editor_concurring_officer_first_name', 'editor_concurring_officer_last_name');
         weaponStyleSelect.addEventListener('change', updateMarshalSignoffFields);
+        marshalPromotionCheckbox.addEventListener('change', updateMarshalSignoffFields);
         updateMarshalSignoffFields();
 
         const pendingRowsScript = document.getElementById('pending_rows_data');

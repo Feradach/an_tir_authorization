@@ -540,6 +540,7 @@ class LegacyAuthorizationRecoveryEntry(models.Model):
         on_delete=models.PROTECT,
         related_name='legacy_recovery_concurring_officer_entries',
     )
+    marshal_promotion = models.BooleanField(default=False)
     auth_date = models.DateField(db_index=True)
     minor_on_paperwork = models.BooleanField(default=False)
     expiration = models.DateField(null=True, blank=True, db_index=True)

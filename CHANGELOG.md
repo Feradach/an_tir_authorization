@@ -7,6 +7,7 @@
 - Migrated legacy data to new database structure.
 - Changed the registration form so that ParentID and Birthday fields are not visible unless the user is a minor.
 - Updated how minor status is determined in the back end.
+- Legacy marshal authorization recovery now treats marshal entries as renewals by default and only asks for promotion concurrence when the Promotion checkbox is selected.
 
 
 ## [0.1.11] - 2026-05-05

@@ -370,6 +370,7 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
     concurring_officer_sca_name = forms.CharField(max_length=255, required=False)
     concurring_officer_first_name = forms.CharField(max_length=150, required=False)
     concurring_officer_last_name = forms.CharField(max_length=150, required=False)
+    marshal_promotion = forms.BooleanField(required=False)
     auth_date = forms.DateField(
         required=True,
         input_formats=['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'],
@@ -459,6 +460,7 @@ LEGACY_RECOVERY_BATCH_FIELDS = [
     'concurring_officer_sca_name',
     'concurring_officer_first_name',
     'concurring_officer_last_name',
+    'marshal_promotion',
     'auth_date',
     'is_minor',
 ]
@@ -831,12 +833,15 @@ def _legacy_recovery_optional_signoff(cleaned: dict, prefix: str, label: str, *,
     return _resolve_legacy_recovery_person(values[0], values[1], values[2], label)
 
 
-def _legacy_recovery_note_text(style: WeaponStyle, auth_date: date, second_marshal=None, concurring_officer=None):
+def _legacy_recovery_note_text(style: WeaponStyle, auth_date: date, marshal_promotion=False, second_marshal=None, concurring_officer=None):
     note = (
         'Authorization Added through Legacy Authorization Recovery Tool. '
         f'Authorization: {style.discipline.name} - {style.name}. '
         f'Historical authorization date: {auth_date.isoformat()}.'
     )
+    if _legacy_recovery_is_marshal_style(style):
+        action = 'Promotion' if marshal_promotion else 'Renewal'
+        note += f' Marshal recovery action: {action}.'
     if second_marshal:
         note += f' Second Marshal: {second_marshal.sca_name}.'
     if concurring_officer:
@@ -915,17 +920,18 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
     auth_date = cleaned['auth_date']
     is_minor = cleaned.get('is_minor', False)
     is_marshal_style = _legacy_recovery_is_marshal_style(style)
+    marshal_promotion = bool(cleaned.get('marshal_promotion')) and is_marshal_style
     second_marshal = _legacy_recovery_optional_signoff(
         cleaned,
         'second_marshal',
         'Second Marshal',
-        required=is_marshal_style,
+        required=marshal_promotion,
     )
     concurring_officer = _legacy_recovery_optional_signoff(
         cleaned,
         'concurring_officer',
         'Concurring Officer',
-        required=style.name == 'Senior Marshal',
+        required=marshal_promotion and style.name == 'Senior Marshal',
     )
 
     latest_recovery = LegacyAuthorizationRecoveryEntry.objects.filter(
@@ -956,7 +962,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
         )
 
     authorization_officer_person = getattr(actor, 'person', None)
-    recovery_note = _legacy_recovery_note_text(style, auth_date, second_marshal, concurring_officer)
+    recovery_note = _legacy_recovery_note_text(style, auth_date, marshal_promotion, second_marshal, concurring_officer)
 
     try:
         with transaction.atomic():
@@ -993,6 +999,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
                 marshal=marshal,
                 second_marshal=second_marshal,
                 concurring_officer=concurring_officer,
+                marshal_promotion=marshal_promotion,
                 auth_date=auth_date,
                 minor_on_paperwork=is_minor,
                 expiration=expiration,
@@ -1062,6 +1069,7 @@ def _legacy_recovery_audit_csv_response():
         'Concurring Officer SCA Name',
         'Concurring Officer First Name',
         'Concurring Officer Last Name',
+        'Marshal Promotion',
         'Authorization Date',
         'Expiration',
         'Minor On Paperwork',
@@ -1108,6 +1116,7 @@ def _legacy_recovery_audit_csv_response():
             entry.concurring_officer.sca_name if entry.concurring_officer else '',
             entry.concurring_officer.user.first_name if entry.concurring_officer else '',
             entry.concurring_officer.user.last_name if entry.concurring_officer else '',
+            'Yes' if entry.marshal_promotion else 'No',
             entry.auth_date.isoformat() if entry.auth_date else '',
             expiration.isoformat() if expiration else '',
             'Yes' if entry.minor_on_paperwork else 'No',
