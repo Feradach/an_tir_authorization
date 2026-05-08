@@ -1,6 +1,8 @@
 from dateutil.relativedelta import relativedelta
 import csv
 import uuid
+import zipfile
+import xml.etree.ElementTree as ET
 from django.core.mail import send_mail
 from django.conf import settings
 from datetime import date, datetime
@@ -267,6 +269,12 @@ def _parse_membership_expiration(value: str, row_number: int) -> date:
             return datetime.strptime(raw, fmt).date()
         except ValueError:
             continue
+    try:
+        serial = float(raw)
+        if serial > 0:
+            return date(1899, 12, 30) + timedelta(days=int(serial))
+    except ValueError:
+        pass
     raise ValueError(f'Row {row_number}: Invalid membership expiration date "{raw}".')
 
 
@@ -275,7 +283,8 @@ def _csv_value(row: dict, row_number: int, field_names: list[str], *, required: 
     for field_name in field_names:
         if field_name in row:
             value = (row.get(field_name) or '').strip()
-            break
+            if value:
+                break
     if required and not value:
         raise ValueError(f'Row {row_number}: Missing required field ({field_names[0]}).')
     if digits_only and value and not value.isdigit():
@@ -283,16 +292,11 @@ def _csv_value(row: dict, row_number: int, field_names: list[str], *, required: 
     return value
 
 
-def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRosterEntry], int]:
-    decoded = uploaded_file.read().decode('utf-8-sig', errors='replace')
-    reader = csv.DictReader(decoded.splitlines())
-    if not reader.fieldnames:
-        raise ValueError('The uploaded file does not contain a header row.')
-
+def _membership_entries_from_dict_rows(rows) -> tuple[list[MembershipRosterEntry], int]:
     entries = []
     seen_memberships = set()
     skipped_rows = 0
-    for row_number, row in enumerate(reader, start=2):
+    for row_number, row in rows:
         membership_number = _csv_value(
             row,
             row_number,
@@ -305,7 +309,7 @@ def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRos
         expiration_value = _csv_value(
             row,
             row_number,
-            ['Membership Expiration Date', 'Expiration'],
+            ['Membership Expiration Date', 'Exp Date - Custom (C)', 'Expiration'],
             required=False,
         )
         waiver_value = _csv_value(
@@ -346,6 +350,113 @@ def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRos
     if not entries:
         raise ValueError('The uploaded file has no member rows.')
     return entries, skipped_rows
+
+
+def _load_membership_csv_rows(uploaded_file):
+    decoded = uploaded_file.read().decode('utf-8-sig', errors='replace')
+    reader = csv.DictReader(decoded.splitlines())
+    if not reader.fieldnames:
+        raise ValueError('The uploaded file does not contain a header row.')
+    return enumerate(reader, start=2)
+
+
+def _xlsx_cell_text(cell, shared_strings: list[str]) -> str:
+    cell_type = cell.attrib.get('t')
+    if cell_type == 'inlineStr':
+        return ''.join((node.text or '') for node in cell.findall('.//m:t', REPORT_XLSX_NS))
+
+    value_node = cell.find('m:v', REPORT_XLSX_NS)
+    if value_node is None or value_node.text is None:
+        return ''
+    value = value_node.text
+    if cell_type == 's':
+        try:
+            return shared_strings[int(value)]
+        except (ValueError, IndexError):
+            return ''
+    return value
+
+
+def _xlsx_column_to_index(cell_reference: str) -> int:
+    match = re.match(r'([A-Z]+)', cell_reference or '')
+    if not match:
+        return 0
+    total = 0
+    for char in match.group(1):
+        total = (total * 26) + (ord(char) - 64)
+    return total
+
+
+REPORT_XLSX_NS = {
+    'm': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+    'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+    'pkg': 'http://schemas.openxmlformats.org/package/2006/relationships',
+}
+
+
+def _load_membership_xlsx_rows(uploaded_file):
+    try:
+        with zipfile.ZipFile(uploaded_file) as archive:
+            shared_strings = []
+            if 'xl/sharedStrings.xml' in archive.namelist():
+                shared_root = ET.fromstring(archive.read('xl/sharedStrings.xml'))
+                for si in shared_root.findall('m:si', REPORT_XLSX_NS):
+                    shared_strings.append(''.join((t.text or '') for t in si.findall('.//m:t', REPORT_XLSX_NS)))
+
+            workbook = ET.fromstring(archive.read('xl/workbook.xml'))
+            rels = ET.fromstring(archive.read('xl/_rels/workbook.xml.rels'))
+            rid_to_target = {
+                rel.attrib['Id']: rel.attrib['Target']
+                for rel in rels.findall('pkg:Relationship', REPORT_XLSX_NS)
+            }
+            first_sheet = workbook.find('m:sheets/m:sheet', REPORT_XLSX_NS)
+            if first_sheet is None:
+                raise ValueError('The uploaded workbook does not contain a worksheet.')
+            rid = first_sheet.attrib['{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id']
+            target = rid_to_target[rid]
+            if not target.startswith('xl/'):
+                target = f'xl/{target}'
+            worksheet = ET.fromstring(archive.read(target))
+
+            rows = []
+            for row_node in worksheet.findall('.//m:sheetData/m:row', REPORT_XLSX_NS):
+                values = {}
+                row_number = int(row_node.attrib.get('r') or len(rows) + 1)
+                for cell in row_node.findall('m:c', REPORT_XLSX_NS):
+                    column_index = _xlsx_column_to_index(cell.attrib.get('r', ''))
+                    if column_index:
+                        values[column_index] = _xlsx_cell_text(cell, shared_strings).strip()
+                if values:
+                    rows.append((row_number, values))
+    except (KeyError, ET.ParseError, zipfile.BadZipFile):
+        raise ValueError('The uploaded .xlsx file could not be read.')
+
+    if not rows:
+        raise ValueError('The uploaded workbook does not contain a header row.')
+
+    header_row_number, header_values = rows[0]
+    headers = [header_values.get(index, '') for index in range(1, max(header_values) + 1)]
+    if not any(headers):
+        raise ValueError('The uploaded workbook does not contain a header row.')
+
+    dict_rows = []
+    for row_number, values in rows[1:]:
+        row = {
+            header: values.get(index, '')
+            for index, header in enumerate(headers, start=1)
+            if header
+        }
+        dict_rows.append((row_number or header_row_number + len(dict_rows) + 1, row))
+    return dict_rows
+
+
+def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRosterEntry], int]:
+    filename = (uploaded_file.name or '').casefold()
+    if filename.endswith('.xlsx'):
+        rows = _load_membership_xlsx_rows(uploaded_file)
+    else:
+        rows = _load_membership_csv_rows(uploaded_file)
+    return _membership_entries_from_dict_rows(rows)
 
 
 class MembershipRosterUploadForm(forms.Form):
@@ -3578,16 +3689,13 @@ def fighter(request, person_id):
                 _throttle_request(ip_key, fighter_login_ip_limit, fighter_login_window_seconds)
 
             if not throttled:
-                login_path = reverse('login')
-                login_url = f"{settings.SITE_URL}{login_path}"
                 reset_link = _build_password_reset_link(user)
                 try:
                     send_mail(
                         'An Tir Authorization: Login Instructions',
                         f'Login instructions were requested for your fighter record.\n\n'
                         f'Username: {user.username}\n'
-                        f'Password Reset Link: {reset_link}\n'
-                        f'Login URL: {login_url}\n\n'
+                        f'Password Reset Link: {reset_link}\n\n'
                         f'If you did not request this, you can ignore this email.\n\n'
                         f'{_email_sender_notice()}',
                         sender_email,

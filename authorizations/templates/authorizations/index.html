@@ -32,7 +32,7 @@
         <form method="post" action="{% url 'upload_membership_roster' %}" enctype="multipart/form-data" class="mb-3">
             {% csrf_token %}
             <input type="hidden" name="next" value="{{ request.path }}">
-            <label for="id_index_membership_csv"><strong>Upload Society Membership CSV</strong></label>
+            <label for="id_index_membership_csv"><strong>Upload Society Membership CSV or Excel File</strong></label>
             {% if membership_roster_import %}
                 <p class="mb-1">
                     <small>
@@ -45,7 +45,7 @@
                 <p class="mb-1"><small><strong>Last upload:</strong> None</small></p>
             {% endif %}
             <div class="d-flex align-items-center gap-2 mt-1">
-                <input type="file" id="id_index_membership_csv" name="membership_csv" class="form-control" accept=".csv" style="max-width: 380px;" required>
+                <input type="file" id="id_index_membership_csv" name="membership_csv" class="form-control" accept=".csv,.xlsx" style="max-width: 380px;" required>
                 <button type="submit" class="btn btn-primary">Upload</button>
             </div>
         </form>

@@ -1,5 +1,6 @@
-
+import zipfile
 from datetime import date, timedelta
+from io import BytesIO
 from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
@@ -381,6 +382,7 @@ class IndexViewTests(ViewTestBase):
         response = self.client.get(reverse('index'))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{reverse("index")}"')
         self.assertContains(response, '/static/AnTirWebLogo.png')
         self.assertNotContains(response, '/static/AnTirWebLogo_Proto.png')
 
@@ -389,6 +391,7 @@ class IndexViewTests(ViewTestBase):
         response = self.client.get(reverse('index'))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{reverse("index")}"')
         self.assertContains(response, '/static/AnTirWebLogo_Proto.png')
         self.assertNotContains(response, '/static/AnTirWebLogo.png')
 
@@ -430,7 +433,7 @@ class IndexViewTests(ViewTestBase):
         response = self.client.get(reverse('index'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Upload Society Membership CSV')
+        self.assertContains(response, 'Upload Society Membership CSV or Excel File')
         self.assertContains(response, 'name="membership_csv"')
         self.assertContains(response, 'Last upload:')
 
@@ -441,7 +444,7 @@ class IndexViewTests(ViewTestBase):
         response = self.client.get(reverse('index'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, 'Upload Society Membership CSV')
+        self.assertNotContains(response, 'Upload Society Membership CSV or Excel File')
         self.assertNotContains(response, 'name="membership_csv"')
 
     def test_index_excludes_system_admin_from_people_dropdown_and_name_lookup(self):
@@ -1486,6 +1489,9 @@ class TombstoneBehaviorTests(ViewTestBase):
         self.assertEqual(mock_send_mail.call_count, 1)
         email_body = mock_send_mail.call_args[0][1]
         self.assertIn(target_user.username, email_body)
+        self.assertIn('Password Reset Link:', email_body)
+        self.assertNotIn('Login URL:', email_body)
+        self.assertNotIn(reverse('login'), email_body)
         response_messages = self.messages_for(response)
         self.assertTrue(any('Login instructions have been sent to the email on file.' in message for message in response_messages))
         self.assertTrue(any(settings.DEFAULT_FROM_EMAIL in message for message in response_messages))
@@ -1655,6 +1661,79 @@ class TombstoneBehaviorTests(ViewTestBase):
 
 @override_settings(AUTHZ_TEST_FEATURES=False)
 class UserAccountViewTests(ViewTestBase):
+    def _build_xlsx(self, rows):
+        def column_name(index):
+            name = ''
+            while index:
+                index, remainder = divmod(index - 1, 26)
+                name = chr(65 + remainder) + name
+            return name
+
+        def escape_xml(value):
+            return (
+                str(value)
+                .replace('&', '&amp;')
+                .replace('<', '&lt;')
+                .replace('>', '&gt;')
+                .replace('"', '&quot;')
+            )
+
+        sheet_rows = []
+        for row_index, row in enumerate(rows, start=1):
+            cells = []
+            for column_index, value in enumerate(row, start=1):
+                reference = f'{column_name(column_index)}{row_index}'
+                if isinstance(value, (int, float)):
+                    cells.append(f'<c r="{reference}"><v>{value}</v></c>')
+                else:
+                    cells.append(
+                        f'<c r="{reference}" t="inlineStr"><is><t>{escape_xml(value)}</t></is></c>'
+                    )
+            sheet_rows.append(f'<row r="{row_index}">{"".join(cells)}</row>')
+
+        workbook = BytesIO()
+        with zipfile.ZipFile(workbook, 'w') as archive:
+            archive.writestr(
+                '[Content_Types].xml',
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                '</Types>',
+            )
+            archive.writestr(
+                '_rels/.rels',
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+                '</Relationships>',
+            )
+            archive.writestr(
+                'xl/workbook.xml',
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+                'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+                '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>'
+                '</workbook>',
+            )
+            archive.writestr(
+                'xl/_rels/workbook.xml.rels',
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+                '</Relationships>',
+            )
+            archive.writestr(
+                'xl/worksheets/sheet1.xml',
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+                f'<sheetData>{"".join(sheet_rows)}</sheetData>'
+                '</worksheet>',
+            )
+        return workbook.getvalue()
+
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
@@ -2403,6 +2482,80 @@ class UserAccountViewTests(ViewTestBase):
         metadata = MembershipRosterImport.objects.get(pk=1)
         self.assertEqual(metadata.row_count, 2)
         self.assertEqual(metadata.source_filename, 'members.csv')
+
+    def test_ao_upload_membership_roster_accepts_current_society_headers(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'current_society_members.csv',
+            (
+                'Legacy ID (C),Waiver (C),Membership Level,Society Name (C),First Name,Last Name,Zip Code,'
+                'Membership Expiration Date,Exp Date - Custom (C),Auto Renew? (C),Kingdom ID (C)\n'
+                '777777,Yes,Associate,Current Society,Current,Member,97201,,4/4/2033,No,An Tir\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entry = MembershipRosterEntry.objects.get(membership_number='777777')
+        self.assertEqual(entry.first_name, 'Current')
+        self.assertEqual(entry.last_name, 'Member')
+        self.assertEqual(entry.membership_expiration, date(2033, 4, 4))
+        self.assertTrue(entry.has_society_waiver)
+
+    def test_ao_upload_membership_roster_accepts_xlsx(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        rows = [
+            [
+                'Legacy ID (C)',
+                'Waiver (C)',
+                'Membership Level',
+                'Society Name (C)',
+                'First Name',
+                'Last Name',
+                'Zip Code',
+                'Membership Expiration Date',
+                'Exp Date - Custom (C)',
+                'Auto Renew? (C)',
+                'Kingdom ID (C)',
+            ],
+            [
+                '888888',
+                'Yes',
+                'Associate',
+                'Excel Society',
+                'Excel',
+                'Member',
+                '97201',
+                '',
+                (date(2034, 5, 5) - date(1899, 12, 30)).days,
+                'No',
+                'An Tir',
+            ],
+        ]
+        upload = SimpleUploadedFile(
+            'society_members.xlsx',
+            self._build_xlsx(rows),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entry = MembershipRosterEntry.objects.get(membership_number='888888')
+        self.assertEqual(entry.first_name, 'Excel')
+        self.assertEqual(entry.last_name, 'Member')
+        self.assertEqual(entry.membership_expiration, date(2034, 5, 5))
+        self.assertTrue(entry.has_society_waiver)
 
     def test_ao_upload_membership_roster_skips_rows_with_blank_membership_number(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')

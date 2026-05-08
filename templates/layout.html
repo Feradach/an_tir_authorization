@@ -15,7 +15,7 @@
     <!-- Navbar -->
 <div class="sticky-header">
     <header class="navbar navbar-dark bg-dark">
-        <a class="navbar-brand ms-3" href="https://antir.org/">
+        <a class="navbar-brand ms-3" href="{% url 'index' %}">
             {% if TEST_FEATURES_ENABLED %}
                 <img src="{% static 'AnTirWebLogo_Proto.png' %}" alt="Kingdom of An Tir" class="logo">
             {% else %}
