@@ -5,14 +5,14 @@
             type="button"
             data-bs-toggle="collapse"
             data-bs-target="#launchNotice"
-            aria-expanded="true"
+            aria-expanded="{% if request.user.is_authenticated %}false{% else %}true{% endif %}"
             aria-controls="launchNotice"
         >
             <span class="launch-notice-caret" aria-hidden="true"></span>
             <strong>Welcome to the New An Tir Authorization Portal</strong>
         </button>
     </div>
-    <div id="launchNotice" class="collapse show">
+    <div id="launchNotice" class="collapse{% if not request.user.is_authenticated %} show{% endif %}">
         <div class="card-body">
             <p>
                 Welcome to the new online portal for An Tir martial authorizations!

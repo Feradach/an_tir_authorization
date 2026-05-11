@@ -11,6 +11,50 @@
     {% if welcome_name %}
         <h3>Welcome {{ welcome_name }}</h3>
     {% endif %}
+    {% if maintenance_lock_enabled %}
+        <div class="alert alert-warning" role="alert">
+            {{ maintenance_lock_message }}
+        </div>
+    {% endif %}
+    {% if can_manage_maintenance_lock %}
+        <form method="post" class="mb-3">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="set_maintenance_lock">
+            <label for="maintenance_lock"><strong>Database Maintenance Lock</strong></label>
+            <div class="d-flex align-items-center gap-2 mt-1 flex-wrap">
+                <select
+                    id="maintenance_lock"
+                    name="maintenance_lock"
+                    class="form-control"
+                    style="max-width: 220px;"
+                >
+                    <option value="on"{% if maintenance_lock_enabled %} selected{% endif %}>On</option>
+                    <option value="off"{% if not maintenance_lock_enabled %} selected{% endif %}>Off</option>
+                </select>
+                <input
+                    type="text"
+                    name="maintenance_lock_message"
+                    class="form-control"
+                    value="{{ maintenance_lock_message }}"
+                    style="max-width: 620px;"
+                    aria-label="Maintenance lock message"
+                >
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+            <p class="mb-1 mt-2">
+                <small>
+                    <strong>Active logged-in sessions:</strong> {{ active_logged_in_users|length }}
+                    {% if active_logged_in_users %}
+                        (
+                        {% for active_user in active_logged_in_users %}
+                            {% if active_user.person %}{{ active_user.person.sca_name }}{% else %}{{ active_user.username }}{% endif %}{% if not forloop.last %}, {% endif %}
+                        {% endfor %}
+                        )
+                    {% endif %}
+                </small>
+            </p>
+        </form>
+    {% endif %}
     {% if can_set_authorization_officer_sign_off %}
         <form method="post" class="mb-3">
             {% csrf_token %}

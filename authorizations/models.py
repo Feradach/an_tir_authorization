@@ -153,6 +153,12 @@ class User(AbstractUser):
 class AuthorizationPortalSetting(models.Model):
     """Persisted portal-level configuration toggles."""
     require_kao_verification = models.BooleanField(default=False)
+    maintenance_lock_enabled = models.BooleanField(default=False)
+    maintenance_lock_message = models.CharField(
+        max_length=255,
+        blank=True,
+        default='The authorization portal is temporarily locked for maintenance. Please try again shortly.',
+    )
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         User,

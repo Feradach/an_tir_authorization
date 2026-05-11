@@ -1,10 +1,18 @@
 ﻿
+## [0.1.14] - 2026-05-11
+### Added
+- Added the ability to temporarily lock the site for maintenance or updates.
+
+### Fixed
+- The welcome message on the authorization portal homepage now starts collapsed for logged-in users and expanded for visitors who are not logged in.
+
 ## [0.1.13] - 2026-05-07
 ### Fixed
 - Fixed account edit dropdowns so imported state/province and country abbreviations show the correct selected values.
 - Removed the extra login link from account setup emails so recipients are directed only to the password setup link.
 - Updated the Society Membership upload to accept the current Society CSV and Excel export formats.
 - Changed the header logo link to return to the authorization portal home page.
+
 
 
 ## [0.1.12] - 2026-05-06

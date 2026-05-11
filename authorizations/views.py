@@ -28,6 +28,7 @@ from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS
+from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
 from collections import defaultdict
 from operator import attrgetter
@@ -2382,6 +2383,14 @@ def index(request):
     ).order_by('sca_name')
     all_people = all_people_qs.values_list('sca_name', flat=True).distinct()
     sign_off_required = authorization_officer_sign_off_enabled()
+    portal_setting = get_portal_setting()
+    maintenance_locked = maintenance_lock_enabled()
+    maintenance_message = maintenance_lock_message()
+    maintenance_context = {
+        'maintenance_lock_enabled': maintenance_locked,
+        'maintenance_lock_message': maintenance_message,
+        'can_manage_maintenance_lock': False,
+    }
     fighter_name = request.GET.get('sca_name')
 
     # If a fighter name is selected, handle potential duplicates gracefully
@@ -2406,6 +2415,7 @@ def index(request):
                 'name_matches': matches.order_by('user_id'),
                 'authorization_officer_sign_off_required': sign_off_required,
                 'can_set_authorization_officer_sign_off': False,
+                **maintenance_context,
             }
             # If anonymous, we don't populate marshal-related context
             if request.user.is_anonymous:
@@ -2425,6 +2435,7 @@ def index(request):
             'all_people_people': all_people_qs,
             'authorization_officer_sign_off_required': sign_off_required,
             'can_set_authorization_officer_sign_off': False,
+            **maintenance_context,
         }
         if 'name_matches' in locals() and name_matches:
             anon_context['name_matches'] = name_matches
@@ -2441,6 +2452,7 @@ def index(request):
     auth_officer = is_kingdom_authorization_officer(request.user)
     can_manage_sanctions = _can_access_sanctions(request.user)
     can_view_supporting_documents = _can_view_supporting_documents(request.user)
+    can_manage_lock = can_manage_maintenance_lock(request.user)
 
     # Are they in the branch marshal table at all?
     try:
@@ -2492,6 +2504,27 @@ def index(request):
             return redirect('login')
 
         action = request.POST.get('action')
+        if action == 'set_maintenance_lock':
+            if not can_manage_lock:
+                messages.error(request, 'Only a site administrator can change the maintenance lock.')
+                return redirect('index')
+            value = (request.POST.get('maintenance_lock') or '').strip().lower()
+            if value not in {'on', 'off'}:
+                messages.error(request, 'Invalid maintenance lock value.')
+                return redirect('index')
+            message = (request.POST.get('maintenance_lock_message') or '').strip()
+            setting = portal_setting or get_portal_setting(create=True)
+            setting.maintenance_lock_enabled = value == 'on'
+            if message:
+                setting.maintenance_lock_message = message
+            setting.updated_by = request.user
+            setting.save()
+            messages.success(
+                request,
+                f'Database maintenance lock is now {"On" if setting.maintenance_lock_enabled else "Off"}.',
+            )
+            return redirect('index')
+
         if action == 'set_authorization_officer_sign_off':
             if not auth_officer:
                 messages.error(request, 'Only the Kingdom Authorization Officer can change this setting.')
@@ -2678,6 +2711,10 @@ def index(request):
         'all_people_people': all_people_qs,
         'authorization_officer_sign_off_required': sign_off_required,
         'can_set_authorization_officer_sign_off': auth_officer,
+        'maintenance_lock_enabled': maintenance_locked,
+        'maintenance_lock_message': maintenance_message,
+        'can_manage_maintenance_lock': can_manage_lock,
+        'active_logged_in_users': active_logged_in_users() if can_manage_lock else [],
         'membership_roster_import': MembershipRosterImport.objects.first() if auth_officer else None,
         'legacy_authorization_import_enabled': auth_officer and legacy_authorization_import_enabled(),
         'pending_authorization_action': pending_authorization_action,

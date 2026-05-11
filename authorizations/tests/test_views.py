@@ -402,6 +402,35 @@ class IndexViewTests(ViewTestBase):
         self.assertNotContains(response, 'Require Kingdom Authorization Officer Verification')
         self.assertNotContains(response, 'Kingdom Authorization Officer Verification Is Enabled')
 
+    def test_index_launch_notice_defaults_expanded_for_logged_out_users(self):
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            '<button class="btn btn-light w-100 text-start px-3 py-2 launch-notice-toggle" '
+            'type="button" data-bs-toggle="collapse" data-bs-target="#launchNotice" '
+            'aria-expanded="true" aria-controls="launchNotice">',
+            html=True,
+        )
+        self.assertContains(response, '<div id="launchNotice" class="collapse show">', html=True)
+
+    def test_index_launch_notice_defaults_collapsed_for_logged_in_users(self):
+        user, person = self.make_person('index_notice_user', 'Index Notice User')
+        self.client.login(username=user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            '<button class="btn btn-light w-100 text-start px-3 py-2 launch-notice-toggle" '
+            'type="button" data-bs-toggle="collapse" data-bs-target="#launchNotice" '
+            'aria-expanded="false" aria-controls="launchNotice">',
+            html=True,
+        )
+        self.assertContains(response, '<div id="launchNotice" class="collapse">', html=True)
+
     def test_index_shows_enabled_notice_for_non_kao_when_enabled(self):
         AuthorizationPortalSetting.objects.create(require_kao_verification=True)
         response = self.client.get(reverse('index'))
@@ -518,6 +547,88 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(off_response, 'Require Kingdom Authorization Officer Verification is now Off.')
         setting.refresh_from_db()
         self.assertFalse(setting.require_kao_verification)
+
+    def test_index_superuser_can_manage_maintenance_lock_and_see_active_sessions(self):
+        admin_user, _ = self.make_person('index_maintenance_admin', 'Index Maintenance Admin')
+        admin_user.is_superuser = True
+        admin_user.save()
+        self.client.login(username=admin_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Database Maintenance Lock')
+        self.assertContains(response, 'Active logged-in sessions:')
+        self.assertContains(response, 'Index Maintenance Admin')
+
+    def test_non_superuser_cannot_change_maintenance_lock(self):
+        user, _ = self.make_person('index_maintenance_non_admin', 'Index Maintenance Non Admin')
+        self.client.login(username=user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_maintenance_lock',
+                'maintenance_lock': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Only a site administrator can change the maintenance lock.')
+        self.assertFalse(AuthorizationPortalSetting.objects.exists())
+
+    def test_superuser_can_turn_maintenance_lock_on_and_off(self):
+        admin_user, _ = self.make_person('index_maintenance_toggle_admin', 'Index Maintenance Toggle Admin')
+        admin_user.is_superuser = True
+        admin_user.save()
+        self.client.login(username=admin_user.username, password='StrongPass!123')
+
+        on_response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_maintenance_lock',
+                'maintenance_lock': 'on',
+                'maintenance_lock_message': 'Maintenance is in progress.',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(on_response.status_code, 200)
+        self.assertContains(on_response, 'Database maintenance lock is now On.')
+        setting = AuthorizationPortalSetting.objects.get(pk=1)
+        self.assertTrue(setting.maintenance_lock_enabled)
+        self.assertEqual(setting.maintenance_lock_message, 'Maintenance is in progress.')
+
+        off_response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_maintenance_lock',
+                'maintenance_lock': 'off',
+                'maintenance_lock_message': 'Maintenance is in progress.',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(off_response.status_code, 200)
+        self.assertContains(off_response, 'Database maintenance lock is now Off.')
+        setting.refresh_from_db()
+        self.assertFalse(setting.maintenance_lock_enabled)
+
+    def test_maintenance_lock_blocks_write_requests(self):
+        AuthorizationPortalSetting.objects.update_or_create(
+            pk=1,
+            defaults={
+                'maintenance_lock_enabled': True,
+                'maintenance_lock_message': 'Maintenance is in progress.',
+            },
+        )
+
+        response = self.client.post(reverse('register'), follow=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertRedirects(response, reverse('index'))
+        self.assertContains(response, 'Maintenance is in progress.')
 
     def test_bulk_approve_button_only_shows_for_kao_when_sign_off_enabled(self):
         kao_user, kao_person = self.make_person('index_bulk_btn_kao', 'Index Bulk Button KAO')
