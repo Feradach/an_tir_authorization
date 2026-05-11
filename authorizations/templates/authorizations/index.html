@@ -44,15 +44,18 @@
             <p class="mb-1 mt-2">
                 <small>
                     <strong>Active logged-in sessions:</strong> {{ active_logged_in_users|length }}
-                    {% if active_logged_in_users %}
-                        (
+                </small>
+            </p>
+            {% if active_logged_in_users %}
+                <details class="mb-1">
+                    <summary><small>Show active session users</small></summary>
+                    <small>
                         {% for active_user in active_logged_in_users %}
                             {% if active_user.person %}{{ active_user.person.sca_name }}{% else %}{{ active_user.username }}{% endif %}{% if not forloop.last %}, {% endif %}
                         {% endfor %}
-                        )
-                    {% endif %}
-                </small>
-            </p>
+                    </small>
+                </details>
+            {% endif %}
         </form>
     {% endif %}
     {% if can_set_authorization_officer_sign_off %}

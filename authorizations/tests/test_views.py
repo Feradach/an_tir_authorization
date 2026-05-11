@@ -559,6 +559,7 @@ class IndexViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Database Maintenance Lock')
         self.assertContains(response, 'Active logged-in sessions:')
+        self.assertContains(response, 'Show active session users')
         self.assertContains(response, 'Index Maintenance Admin')
 
     def test_non_superuser_cannot_change_maintenance_lock(self):
