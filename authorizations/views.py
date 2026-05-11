@@ -2586,6 +2586,13 @@ def index(request):
                 return redirect('index')
             message = (request.POST.get('maintenance_lock_message') or '').strip()
             setting = portal_setting or get_portal_setting(create=True)
+            if setting is None:
+                messages.error(
+                    request,
+                    'The maintenance lock could not be changed because the portal settings table is not ready. '
+                    'Run database migrations and try again.',
+                )
+                return redirect('index')
             setting.maintenance_lock_enabled = value == 'on'
             if message:
                 setting.maintenance_lock_message = message
