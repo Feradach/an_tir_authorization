@@ -4104,6 +4104,23 @@ class SupportingDocumentsViewTests(ViewTestBase):
         )
 
 
+class RoadmapViewTests(ViewTestBase):
+    def test_roadmap_includes_changelog_grouped_by_major_version(self):
+        response = self.client.get(reverse('roadmap'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<h2>Current Roadmap:</h2>', html=True)
+        self.assertContains(response, '<h2>Future Roadmap:</h2>', html=True)
+        self.assertContains(response, '<h2>Changelog</h2>', html=True)
+        self.assertContains(response, 'Version 1')
+        self.assertContains(response, 'Version 0')
+
+    def test_changelog_standalone_route_is_removed(self):
+        response = self.client.get('/changelog/')
+
+        self.assertRedirects(response, reverse('homepage'))
+
+
 class NotFoundRedirectTests(ViewTestBase):
     def test_unknown_inner_route_redirects_to_authorizations_homepage(self):
         response = self.client.get('/authorizations/does-not-exist', follow=True)

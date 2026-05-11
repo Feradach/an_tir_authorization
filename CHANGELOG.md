@@ -6,6 +6,10 @@
 - Added the ability to temporarily lock the site for maintenance or updates.
 - Accounts for children now require either an attached parent account or the name of the parent/guardian.
 
+### Changed
+- Moved the changelog onto the Roadmap page and grouped it into collapsible sections by major version.
+- Updated the test-mode administrator contact email.
+
 ### Fixed
 - The welcome message on the authorization portal homepage now starts collapsed for logged-in users and expanded for visitors who are not logged in.
 

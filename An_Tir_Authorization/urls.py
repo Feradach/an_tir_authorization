@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 from django.views.generic import TemplateView
-from authorizations.views import changelog_view, contact_view, reports_view
+from authorizations.views import contact_view, reports_view, roadmap_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -27,9 +27,8 @@ urlpatterns = [
     path('contact/', contact_view, name='contact'),
     path('privacy/', TemplateView.as_view(template_name='privacy.html'), name='privacy'),
     path('terms/', TemplateView.as_view(template_name='terms.html'), name='terms'),
-    path('changelog/', changelog_view, name='changelog'),
     path('faq/', TemplateView.as_view(template_name='faq.html'), name='faq'),
-    path('roadmap/', TemplateView.as_view(template_name='roadmap.html'), name='roadmap'),
+    path('roadmap/', roadmap_view, name='roadmap'),
     # URLs for the inner shell (authorizations app)
     path('authorizations/', include('authorizations.urls')),
 ]

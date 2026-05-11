@@ -7295,35 +7295,83 @@ def contact_view(request):
     return render(request, 'contact.html', {'email_change_form': form})
 
 
-def changelog_view(request):
-    """Render the local CHANGELOG.md as HTML on the changelog page.
-
-    Reads from settings.BASE_DIR so it uses the project root regardless of module location.
-    """
-    base_dir = settings.BASE_DIR  # Path object
+def _load_changelog_text():
+    """Read CHANGELOG.md from the project root."""
+    base_dir = settings.BASE_DIR
     candidates = ['CHANGELOG.md', 'Changelog.md', 'changelog.md']
 
+    for name in candidates:
+        path = base_dir / name
+        if path.exists():
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    return f.read()
+            except Exception:
+                logger.exception('Unable to read changelog file.')
+                return None
+    return None
+
+
+def _render_changelog_markdown(text):
     md = mistune.create_markdown()
     allowed_tags = [
         'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'em', 'i', 'li', 'ol',
         'p', 'pre', 'strong', 'ul', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'
     ]
     allowed_attrs = {'a': ['href', 'title', 'rel', 'target']}
+    html = md(text)
+    return bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
 
-    changelog_html = None
-    for name in candidates:
-        path = base_dir / name
-        if path.exists():
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    text = f.read()
-                html = md(text)
-                changelog_html = bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
-            except Exception:
-                changelog_html = None
-            break
 
-    return render(request, 'changelog.html', {'changelog_html': changelog_html})
+def _build_changelog_major_versions(text):
+    if not text:
+        return []
+
+    version_heading_re = re.compile(r'^##\s+\[?(\d+)(?:\.\d+)*(?:\])?.*$', re.MULTILINE)
+    matches = list(version_heading_re.finditer(text))
+    if not matches:
+        return [SimpleNamespace(major='All', html=_render_changelog_markdown(text))]
+
+    grouped_sections = []
+    current_major = None
+    current_parts = []
+
+    for index, match in enumerate(matches):
+        major = match.group(1)
+        section_start = match.start()
+        section_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        section = text[section_start:section_end].strip()
+
+        if current_major is None:
+            current_major = major
+
+        if major != current_major:
+            grouped_sections.append(
+                SimpleNamespace(
+                    major=current_major,
+                    html=_render_changelog_markdown('\n\n'.join(current_parts)),
+                )
+            )
+            current_major = major
+            current_parts = []
+
+        current_parts.append(section)
+
+    if current_parts:
+        grouped_sections.append(
+            SimpleNamespace(
+                major=current_major,
+                html=_render_changelog_markdown('\n\n'.join(current_parts)),
+            )
+        )
+
+    return grouped_sections
+
+
+def roadmap_view(request):
+    changelog_versions = _build_changelog_major_versions(_load_changelog_text())
+    return render(request, 'roadmap.html', {'changelog_versions': changelog_versions})
+
 
 def get_client_ip(request):
     return request.META.get(

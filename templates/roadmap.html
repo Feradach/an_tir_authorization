@@ -15,9 +15,6 @@
             Report a Bug
         </a>
     </p>
-    <h2>Changelog</h2>
-    <p>A log of the changes that have been made can be found <a href="{% url 'changelog' %}">here</a>.</p>
-
     <h2>Current Roadmap:</h2>
     <ul>
         <li>Launch on the official website.</li>
@@ -31,6 +28,29 @@
         <li>Offline database access.</li>
         <li>Create and run tournaments.</li>
     </ul>
+
+    <h2>Changelog</h2>
+
+    {% if changelog_versions %}
+        {% for version in changelog_versions %}
+            <details class="mb-3" {% if forloop.first %}open{% endif %}>
+                <summary><strong>Version {{ version.major }}</strong></summary>
+                <div class="mt-2">
+                    {{ version.html|safe }}
+                </div>
+            </details>
+        {% endfor %}
+    {% else %}
+        <details class="mb-3" open>
+            <summary><strong>Version 0</strong></summary>
+            <div class="mt-2">
+                <h2>Version 0.0.1</h2>
+                <ul>
+                    <li>Initial test deployment</li>
+                </ul>
+            </div>
+        </details>
+    {% endif %}
 {% endblock %}
 
 {% block script %}
