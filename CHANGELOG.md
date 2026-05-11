@@ -9,8 +9,7 @@
 ### Changed
 - Moved the changelog onto the Roadmap page and grouped it into collapsible sections by major version.
 - Updated the test-mode administrator contact email.
-- Superuser accounts are hidden from authorization search results.
-- Superuser accounts now have the same portal permissions as Kingdom Authorization Officers.
+- Staff accounts are hidden from authorization search results.
 
 ### Fixed
 - The welcome message on the authorization portal homepage now starts collapsed for logged-in users and expanded for visitors who are not logged in.

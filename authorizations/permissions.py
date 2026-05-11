@@ -286,7 +286,7 @@ def is_kingdom_authorization_officer(user):
     # when this helper is called from public views.
     if not user or not getattr(user, 'is_authenticated', False):
         return False
-    if user.is_superuser:
+    if user.is_staff:
         return True
 
     query = BranchMarshal.objects.filter(

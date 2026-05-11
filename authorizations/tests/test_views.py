@@ -661,6 +661,25 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Only a site administrator can change the maintenance lock.')
         self.assertFalse(AuthorizationPortalSetting.objects.exists())
 
+    def test_staff_user_cannot_change_maintenance_lock(self):
+        user, _ = self.make_person('index_maintenance_staff', 'Index Maintenance Staff')
+        user.is_staff = True
+        user.save()
+        self.client.login(username=user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'set_maintenance_lock',
+                'maintenance_lock': 'on',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Only a site administrator can change the maintenance lock.')
+        self.assertFalse(AuthorizationPortalSetting.objects.exists())
+
     def test_superuser_can_turn_maintenance_lock_on_and_off(self):
         admin_user, _ = self.make_person('index_maintenance_toggle_admin', 'Index Maintenance Toggle Admin')
         admin_user.is_superuser = True
@@ -1250,13 +1269,13 @@ class SearchViewTests(ViewTestBase):
         self.assertTrue(hasattr(people[0], 'filtered_authorizations'))
         self.assertEqual(len(people[0].filtered_authorizations), 1)
 
-    def test_search_excludes_superuser_from_options_and_results(self):
+    def test_search_excludes_staff_user_from_options_and_results(self):
         admin_user, system_person = self.make_person(
-            'search_superuser_admin',
+            'search_staff_admin',
             'Administrator',
             membership='150501',
         )
-        admin_user.is_superuser = True
+        admin_user.is_staff = True
         admin_user.save()
         _, visible_person = self.make_person('search_visible_fighter', 'Search Visible Fighter')
         system_auth = self.grant_authorization(system_person, self.style_weapon_armored, status=self.status_active)
@@ -2595,12 +2614,11 @@ class UserAccountViewTests(ViewTestBase):
         bypass_note = UserNote.objects.filter(person=self.owner_person, note__icontains='Membership validation bypass applied').first()
         self.assertIsNotNone(bypass_note)
 
-    def test_superuser_bypass_with_note_saves_and_records_officer_note(self):
-        superuser, _ = self.make_person('account_superuser_admin', 'Account Superuser Admin')
-        superuser.is_staff = True
-        superuser.is_superuser = True
-        superuser.save()
-        self.client.login(username=superuser.username, password='StrongPass!123')
+    def test_staff_user_bypass_with_note_saves_and_records_officer_note(self):
+        staff_user, _ = self.make_person('account_staff_admin', 'Account Staff Admin')
+        staff_user.is_staff = True
+        staff_user.save()
+        self.client.login(username=staff_user.username, password='StrongPass!123')
         new_membership = '4234234234'
         new_expiration = date.today() + relativedelta(years=2)
         payload = self.account_update_payload(
@@ -2624,7 +2642,7 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(self.owner_user.membership_expiration, new_expiration)
         bypass_note = UserNote.objects.filter(
             person=self.owner_person,
-            created_by=superuser,
+            created_by=staff_user,
             note__icontains='Membership validation bypass applied',
         ).first()
         self.assertIsNotNone(bypass_note)
