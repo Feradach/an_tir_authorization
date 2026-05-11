@@ -74,19 +74,27 @@ class Command(BaseCommand):
             inferred_minor = person.is_current_minor
             clear_birthday = bool(birthday and today >= birthday + relativedelta(years=20))
             clear_parent = bool(person.parent_id and not inferred_minor)
+            clear_parent_names = bool(
+                not inferred_minor
+                and (person.parent_sca_name or person.parent_first_name or person.parent_last_name)
+            )
             stored_minor_mismatch = person.is_minor != inferred_minor
 
             if clear_birthday:
                 inferred_minor = False
                 stored_minor_mismatch = person.is_minor is not False
                 clear_parent = bool(person.parent_id)
+                clear_parent_names = bool(
+                    person.parent_sca_name or person.parent_first_name or person.parent_last_name
+                )
 
-            if clear_birthday or clear_parent or stored_minor_mismatch:
+            if clear_birthday or clear_parent or clear_parent_names or stored_minor_mismatch:
                 actions.append(
                     {
                         "person": person,
                         "clear_birthday": clear_birthday,
                         "clear_parent": clear_parent,
+                        "clear_parent_names": clear_parent_names,
                         "old_is_minor": person.is_minor,
                         "new_is_minor": inferred_minor,
                         "stored_minor_mismatch": person.is_minor != inferred_minor,
@@ -109,6 +117,12 @@ class Command(BaseCommand):
                     person.parent = None
                     person_changed = True
 
+                if action["clear_parent_names"]:
+                    person.parent_sca_name = ""
+                    person.parent_first_name = ""
+                    person.parent_last_name = ""
+                    person_changed = True
+
                 if person.is_minor != action["new_is_minor"]:
                     person.is_minor = action["new_is_minor"]
                     person_changed = True
@@ -116,11 +130,19 @@ class Command(BaseCommand):
                 if user_changed:
                     person.user.save(update_fields=["birthday", "updated_at"])
                 if person_changed:
-                    person.save(update_fields=["is_minor", "parent", "updated_at"])
+                    person.save(update_fields=[
+                        "is_minor",
+                        "parent",
+                        "parent_sca_name",
+                        "parent_first_name",
+                        "parent_last_name",
+                        "updated_at",
+                    ])
 
     def _build_report(self, actions, *, dry_run, applied=False):
         clear_birthday_count = sum(1 for action in actions if action["clear_birthday"])
         clear_parent_count = sum(1 for action in actions if action["clear_parent"])
+        clear_parent_names_count = sum(1 for action in actions if action["clear_parent_names"])
         minor_true_count = sum(1 for action in actions if not action["old_is_minor"] and action["new_is_minor"])
         minor_false_count = sum(1 for action in actions if action["old_is_minor"] and not action["new_is_minor"])
 
@@ -140,6 +162,7 @@ class Command(BaseCommand):
             f"People to inspect/change: {len(actions)}",
             f"Birthdays to clear for people age 20+: {clear_birthday_count}",
             f"Adult parent links to clear: {clear_parent_count}",
+            f"Adult parent names to clear: {clear_parent_names_count}",
             f"Stored is_minor false -> true: {minor_true_count}",
             f"Stored is_minor true -> false: {minor_false_count}",
         ]
@@ -154,6 +177,8 @@ class Command(BaseCommand):
                     changes.append("clear birthday")
                 if action["clear_parent"]:
                     changes.append(f"clear parent_id={person.parent_id}")
+                if action["clear_parent_names"]:
+                    changes.append("clear parent names")
                 if action["stored_minor_mismatch"]:
                     changes.append(f"is_minor {action['old_is_minor']} -> {action['new_is_minor']}")
                 lines.append(

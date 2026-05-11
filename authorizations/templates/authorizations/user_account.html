@@ -31,7 +31,15 @@
                 <p><strong>SCA Name:</strong> {{ user.person.sca_name }}</p>
                 <p><strong>Branch:</strong> {{ user.person.branch.name }}</p>
                 <p><strong>Minor Status:</strong> {{ user.person.minor_status }}</p>
-                <p><strong>Parent:</strong> {{ user.person.parent_id.name }}</p>
+                {% if user.person.parent %}
+                    <p><strong>Parent:</strong> {{ user.person.parent.sca_name }}</p>
+                {% elif user.person.parent_first_name or user.person.parent_last_name %}
+                    <p>
+                        <strong>Parent:</strong>
+                        {{ user.person.parent_first_name }} {{ user.person.parent_last_name }}
+                        {% if user.person.parent_sca_name %}({{ user.person.parent_sca_name }}){% endif %}
+                    </p>
+                {% endif %}
                 {% if waiver_signed %}
                     <p><strong>Waiver Expiration:</strong> {{ max_expiration }}</p>
                 {% endif %}
@@ -464,20 +472,57 @@
         const accountMinorCheckbox = document.getElementById('id_is_minor');
         const accountBirthdayInput = document.getElementById('id_birthday');
         const accountParentSelect = document.getElementById('id_parent_id');
+        const accountParentScaNameInput = document.getElementById('id_parent_sca_name');
+        const accountParentFirstNameInput = document.getElementById('id_parent_first_name');
+        const accountParentLastNameInput = document.getElementById('id_parent_last_name');
         function accountFieldContainer(element) {
             return element ? element.closest('.form-group') : null;
         }
+        function selectedAccountParentOption() {
+            return accountParentSelect && accountParentSelect.selectedOptions.length ? accountParentSelect.selectedOptions[0] : null;
+        }
+        function syncAccountParentNameFields() {
+            const option = selectedAccountParentOption();
+            const hasParent = Boolean(accountParentSelect && accountParentSelect.value);
+            if (hasParent && option) {
+                if (accountParentScaNameInput) {
+                    accountParentScaNameInput.value = option.dataset.parentScaName || '';
+                }
+                if (accountParentFirstNameInput) {
+                    accountParentFirstNameInput.value = option.dataset.parentFirstName || '';
+                }
+                if (accountParentLastNameInput) {
+                    accountParentLastNameInput.value = option.dataset.parentLastName || '';
+                }
+            }
+            [accountParentScaNameInput, accountParentFirstNameInput, accountParentLastNameInput].forEach(function (input) {
+                if (input) {
+                    input.readOnly = hasParent;
+                }
+            });
+        }
         function syncAccountMinorDependentFields() {
             const showMinorFields = Boolean(accountMinorCheckbox && accountMinorCheckbox.checked);
-            [accountFieldContainer(accountBirthdayInput), accountFieldContainer(accountParentSelect)].forEach(function (container) {
+            [
+                accountFieldContainer(accountBirthdayInput),
+                accountFieldContainer(accountParentSelect),
+                accountFieldContainer(accountParentScaNameInput),
+                accountFieldContainer(accountParentFirstNameInput),
+                accountFieldContainer(accountParentLastNameInput)
+            ].forEach(function (container) {
                 if (container) {
                     container.style.display = showMinorFields ? '' : 'none';
                 }
             });
+            syncAccountParentNameFields();
         }
         if (accountMinorCheckbox) {
             accountMinorCheckbox.addEventListener('change', syncAccountMinorDependentFields);
             syncAccountMinorDependentFields();
+        }
+        if (accountParentSelect) {
+            accountParentSelect.addEventListener('change', syncAccountParentNameFields);
+            syncAccountParentNameFields();
         }
 
         const supportingDocumentForm = document.getElementById('supporting_document_form');

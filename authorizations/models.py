@@ -400,6 +400,9 @@ class Person(models.Model):
     title = models.ForeignKey(Title, on_delete=models.SET_NULL, null=True, blank=True)
     is_minor = models.BooleanField(default=False)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
+    parent_sca_name = models.CharField(max_length=255, blank=True, default='')
+    parent_first_name = models.CharField(max_length=150, blank=True, default='')
+    parent_last_name = models.CharField(max_length=150, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, null=True, blank=True,
@@ -441,11 +444,17 @@ class Person(models.Model):
         self.is_minor = inferred_minor
         if not inferred_minor:
             self.parent = None
+            self.parent_sca_name = ''
+            self.parent_first_name = ''
+            self.parent_last_name = ''
 
         birthday = self.user.birthday
         if birthday and date.today() >= birthday + relativedelta(years=20):
             self.user.birthday = None
             self.parent = None
+            self.parent_sca_name = ''
+            self.parent_first_name = ''
+            self.parent_last_name = ''
             self.is_minor = False
             self.user.save(update_fields=['birthday', 'updated_at'])
 
@@ -457,6 +466,9 @@ class Person(models.Model):
         # Automatically set sca_name to user first name if not provided
         if not self.sca_name:
             self.sca_name = self.user.first_name
+        self.parent_sca_name = (self.parent_sca_name or '').strip()
+        self.parent_first_name = (self.parent_first_name or '').strip()
+        self.parent_last_name = (self.parent_last_name or '').strip()
         self.sync_transitional_minor_fields()
 
         self.full_clean()
@@ -468,6 +480,12 @@ class Person(models.Model):
     def clean(self):
         if self.parent and not self.is_current_minor:
             raise ValidationError('A non-minor must not have a parent ID.')
+        parent_name_fields = [self.parent_sca_name, self.parent_first_name, self.parent_last_name]
+        if self.parent and any(parent_name_fields):
+            raise ValidationError('Parent name information must be blank when a parent ID is selected.')
+        if not self.parent and (self.parent_sca_name or self.parent_first_name or self.parent_last_name):
+            if not self.parent_first_name or not self.parent_last_name:
+                raise ValidationError('Parent first and last name are required when parent name information is used.')
         super().clean()
 
 

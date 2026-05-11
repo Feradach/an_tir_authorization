@@ -33,7 +33,7 @@ python manage.py cleanup_minor_transition_data --email-to antir.authorization.da
 The command may:
 
 - Clear birthdays for people age 20 or older.
-- Clear parent links for people who are no longer inferred minors.
+- Clear parent links and stored parent names for people who are no longer inferred minors.
 - Resync the transitional `Person.is_minor` column to the inferred value.
 
 The command is idempotent and safe to run repeatedly. A clean production run should normally report zero records.
@@ -74,11 +74,30 @@ The report includes summary counts and one line per affected person:
 People to inspect/change: 0
 Birthdays to clear for people age 20+: 0
 Adult parent links to clear: 0
+Adult parent names to clear: 0
 Stored is_minor false -> true: 0
 Stored is_minor true -> false: 0
 ```
 
 If records are found, review the listed `user_id`, SCA name, birthday, country/state, and planned changes before allowing the apply job to run.
+
+## Missing Parent Information Report
+
+To find current minors who have neither a parent ID nor stored parent name information:
+
+```bash
+python manage.py report_minors_missing_parent
+```
+
+By default, this prints the report and emails `viperzka@gmail.com` with a CSV attachment.
+
+To print only without sending email:
+
+```bash
+python manage.py report_minors_missing_parent --no-email
+```
+
+The report includes user ID, SCA name, legal first/last name, birthday, and branch.
 
 ### Pausing The Job
 

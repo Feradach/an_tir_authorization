@@ -1434,6 +1434,25 @@ class CleanupMinorTransitionDataCommandTests(AdditionalCoverageBase):
         self.assertIsNone(child.parent_id)
         self.assertFalse(child.is_minor)
 
+    def test_apply_clears_stale_adult_parent_names(self):
+        user, child, _ = self._stale_adult_child()
+        Person.objects.filter(pk=child.pk).update(
+            parent=None,
+            parent_sca_name='Parent SCA',
+            parent_first_name='Parent',
+            parent_last_name='Name',
+        )
+
+        call_command('cleanup_minor_transition_data', stdout=StringIO())
+
+        user.refresh_from_db()
+        child.refresh_from_db()
+        self.assertIsNone(user.birthday)
+        self.assertEqual(child.parent_sca_name, '')
+        self.assertEqual(child.parent_first_name, '')
+        self.assertEqual(child.parent_last_name, '')
+        self.assertFalse(child.is_minor)
+
     def test_dry_run_can_email_report(self):
         _, child, _ = self._stale_adult_child()
 

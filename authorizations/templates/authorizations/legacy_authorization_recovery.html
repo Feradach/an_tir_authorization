@@ -14,11 +14,23 @@
             <select id="person_lookup" class="choices-dropdown form-control" data-editor-choice="1">
                 <option value=""></option>
                 {% for person in people %}
-                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                    <option
+                        value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}"
+                        data-membership="{{ person.user.membership|default_if_none:'' }}"
+                        data-membership-expiration="{{ person.user.membership_expiration|date:'Y-m-d' }}"
+                    >
                         {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
                     </option>
                 {% endfor %}
             </select>
+        </div>
+        <div class="col-md-2">
+            <label for="editor_person_membership" class="form-label"><strong>Member Number</strong></label>
+            <input id="editor_person_membership" class="form-control">
+        </div>
+        <div class="col-md-2">
+            <label for="editor_person_membership_expiration" class="form-label"><strong>Member Exp</strong></label>
+            <input id="editor_person_membership_expiration" type="date" class="form-control">
         </div>
 
         <div class="col-md-5">
@@ -193,6 +205,10 @@
                     {% endfor %}
                 </select>
             </div>
+            <div class="col-md-4">
+                <label for="id_background_check_expiration" class="form-label">Background Check Expiration</label>
+                <input id="id_background_check_expiration" name="background_check_expiration" type="date" class="form-control" value="{{ new_fighter_form.background_check_expiration.value|default_if_none:'' }}">
+            </div>
             <div class="col-md-4 d-flex align-items-end">
                 <div class="form-check">
                     <input id="id_is_minor" name="is_minor" type="checkbox" class="form-check-input"{% if new_fighter_form.is_minor.value %} checked{% endif %}>
@@ -203,9 +219,32 @@
                 <label for="id_birthday" class="form-label">Birthday</label>
                 <input id="id_birthday" name="birthday" type="date" class="form-control" value="{{ new_fighter_form.birthday.value|default_if_none:'' }}">
             </div>
-            <div class="col-md-4">
-                <label for="id_background_check_expiration" class="form-label">Background Check Expiration</label>
-                <input id="id_background_check_expiration" name="background_check_expiration" type="date" class="form-control" value="{{ new_fighter_form.background_check_expiration.value|default_if_none:'' }}">
+            <div class="col-md-4 new-fighter-parent-field">
+                <label for="id_parent_id" class="form-label">Parent ID</label>
+                <select id="id_parent_id" name="parent_id" class="choices-dropdown form-control">
+                    <option value=""></option>
+                    {% for parent in new_fighter_form.fields.parent_id.queryset %}
+                        <option
+                            value="{{ parent.user_id }}"
+                            data-parent-sca-name="{{ parent.sca_name|default_if_none:'' }}"
+                            data-parent-first-name="{{ parent.user.first_name|default_if_none:'' }}"
+                            data-parent-last-name="{{ parent.user.last_name|default_if_none:'' }}"
+                            {% if new_fighter_form.parent_id.value|stringformat:"s" == parent.user_id|stringformat:"s" %} selected{% endif %}
+                        >{{ parent.sca_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 new-fighter-parent-field">
+                <label for="id_parent_sca_name" class="form-label">Parent SCA Name</label>
+                <input id="id_parent_sca_name" name="parent_sca_name" class="form-control" value="{{ new_fighter_form.parent_sca_name.value|default_if_none:'' }}">
+            </div>
+            <div class="col-md-4 new-fighter-parent-field">
+                <label for="id_parent_first_name" class="form-label">Parent First Name</label>
+                <input id="id_parent_first_name" name="parent_first_name" class="form-control" value="{{ new_fighter_form.parent_first_name.value|default_if_none:'' }}">
+            </div>
+            <div class="col-md-4 new-fighter-parent-field">
+                <label for="id_parent_last_name" class="form-label">Parent Last Name</label>
+                <input id="id_parent_last_name" name="parent_last_name" class="form-control" value="{{ new_fighter_form.parent_last_name.value|default_if_none:'' }}">
             </div>
         </div>
         <div class="mt-3">
@@ -222,6 +261,8 @@
         <thead>
             <tr>
                 <th>Person</th>
+                <th>Member Number</th>
+                <th>Member Exp</th>
                 <th>Style</th>
                 <th>Marshal</th>
                 <th>Promotion</th>
@@ -287,6 +328,8 @@
             'person_sca_name',
             'person_first_name',
             'person_last_name',
+            'person_membership',
+            'person_membership_expiration',
             'weapon_style',
             'marshal_sca_name',
             'marshal_first_name',
@@ -305,6 +348,8 @@
             person_sca_name: document.getElementById('editor_person_sca_name'),
             person_first_name: document.getElementById('editor_person_first_name'),
             person_last_name: document.getElementById('editor_person_last_name'),
+            person_membership: document.getElementById('editor_person_membership'),
+            person_membership_expiration: document.getElementById('editor_person_membership_expiration'),
             weapon_style: document.getElementById('editor_weapon_style'),
             marshal_sca_name: document.getElementById('editor_marshal_sca_name'),
             marshal_first_name: document.getElementById('editor_marshal_first_name'),
@@ -326,6 +371,11 @@
         const newFighterBatchWarning = document.getElementById('new_fighter_batch_warning');
         const newFighterMinorCheckbox = document.getElementById('id_is_minor');
         const newFighterBirthdayField = document.getElementById('new_fighter_birthday_field');
+        const newFighterParentFields = document.querySelectorAll('.new-fighter-parent-field');
+        const newFighterParentSelect = document.getElementById('id_parent_id');
+        const newFighterParentScaName = document.getElementById('id_parent_sca_name');
+        const newFighterParentFirstName = document.getElementById('id_parent_first_name');
+        const newFighterParentLastName = document.getElementById('id_parent_last_name');
         const weaponStyleSelect = document.getElementById('editor_weapon_style');
         const secondMarshalField = document.getElementById('second_marshal_lookup_field');
         const secondMarshalLookup = document.getElementById('second_marshal_lookup');
@@ -366,10 +416,20 @@
             }
         }
 
+        function syncPersonMembershipFields() {
+            const lookup = document.getElementById('person_lookup');
+            const option = lookup && lookup.selectedOptions.length ? lookup.selectedOptions[0] : null;
+            editor.person_membership.value = option ? (option.dataset.membership || '') : '';
+            editor.person_membership_expiration.value = option ? (option.dataset.membershipExpiration || '') : '';
+        }
+
         function wireLookup(lookupId, scaId, firstId, lastId) {
             const lookup = document.getElementById(lookupId);
             lookup.addEventListener('change', function () {
                 parsePersonLookup(lookup, scaId, firstId, lastId);
+                if (lookupId === 'person_lookup') {
+                    syncPersonMembershipFields();
+                }
             });
         }
 
@@ -432,6 +492,9 @@
             if (fieldName === 'marshal_promotion') {
                 return false;
             }
+            if (fieldName === 'person_membership' || fieldName === 'person_membership_expiration') {
+                return false;
+            }
             if (fieldName.startsWith('second_marshal_')) {
                 return editor.marshal_promotion.checked && (isJuniorMarshalStyle(rowStyle) || isSeniorMarshalStyle(rowStyle));
             }
@@ -467,6 +530,8 @@
                 const tr = document.createElement('tr');
                 [
                     `${row.person_sca_name} (${row.person_first_name} ${row.person_last_name})`,
+                    row.person_membership || '-',
+                    row.person_membership_expiration || '-',
                     row.weapon_style,
                     `${row.marshal_sca_name} (${row.marshal_first_name} ${row.marshal_last_name})`,
                     row.marshal_promotion ? 'Yes' : 'No',
@@ -502,6 +567,35 @@
             if (newFighterBirthdayField && newFighterMinorCheckbox) {
                 newFighterBirthdayField.style.display = newFighterMinorCheckbox.checked ? '' : 'none';
             }
+            newFighterParentFields.forEach(function (field) {
+                field.style.display = newFighterMinorCheckbox && newFighterMinorCheckbox.checked ? '' : 'none';
+            });
+            syncNewFighterParentNameFields();
+        }
+
+        function selectedNewFighterParentOption() {
+            return newFighterParentSelect && newFighterParentSelect.selectedOptions.length ? newFighterParentSelect.selectedOptions[0] : null;
+        }
+
+        function syncNewFighterParentNameFields() {
+            const option = selectedNewFighterParentOption();
+            const hasParent = Boolean(newFighterParentSelect && newFighterParentSelect.value);
+            if (hasParent && option) {
+                if (newFighterParentScaName) {
+                    newFighterParentScaName.value = option.dataset.parentScaName || '';
+                }
+                if (newFighterParentFirstName) {
+                    newFighterParentFirstName.value = option.dataset.parentFirstName || '';
+                }
+                if (newFighterParentLastName) {
+                    newFighterParentLastName.value = option.dataset.parentLastName || '';
+                }
+            }
+            [newFighterParentScaName, newFighterParentFirstName, newFighterParentLastName].forEach(function (input) {
+                if (input) {
+                    input.readOnly = hasParent;
+                }
+            });
         }
 
         function addEditorRow() {
@@ -582,6 +676,10 @@
         if (newFighterMinorCheckbox) {
             newFighterMinorCheckbox.addEventListener('change', syncNewFighterMinorDependentFields);
             syncNewFighterMinorDependentFields();
+        }
+        if (newFighterParentSelect) {
+            newFighterParentSelect.addEventListener('change', syncNewFighterParentNameFields);
+            syncNewFighterParentNameFields();
         }
 
         wireLookup('person_lookup', 'editor_person_sca_name', 'editor_person_first_name', 'editor_person_last_name');

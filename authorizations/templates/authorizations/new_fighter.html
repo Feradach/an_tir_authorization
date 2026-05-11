@@ -29,3 +29,70 @@
     </form>
 
 {% endblock %}
+
+{% block script %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const minorCheckbox = document.getElementById('id_is_minor');
+        const birthdayInput = document.getElementById('id_birthday');
+        const parentSelect = document.getElementById('id_parent_id');
+        const parentScaNameInput = document.getElementById('id_parent_sca_name');
+        const parentFirstNameInput = document.getElementById('id_parent_first_name');
+        const parentLastNameInput = document.getElementById('id_parent_last_name');
+
+        function fieldContainer(element) {
+            return element ? element.closest('.form-group') : null;
+        }
+
+        function selectedParentOption() {
+            return parentSelect && parentSelect.selectedOptions.length ? parentSelect.selectedOptions[0] : null;
+        }
+
+        function syncParentNameFields() {
+            const option = selectedParentOption();
+            const hasParent = Boolean(parentSelect && parentSelect.value);
+            if (hasParent && option) {
+                if (parentScaNameInput) {
+                    parentScaNameInput.value = option.dataset.parentScaName || '';
+                }
+                if (parentFirstNameInput) {
+                    parentFirstNameInput.value = option.dataset.parentFirstName || '';
+                }
+                if (parentLastNameInput) {
+                    parentLastNameInput.value = option.dataset.parentLastName || '';
+                }
+            }
+            [parentScaNameInput, parentFirstNameInput, parentLastNameInput].forEach(function (input) {
+                if (input) {
+                    input.readOnly = hasParent;
+                }
+            });
+        }
+
+        function syncMinorDependentFields() {
+            const showMinorFields = Boolean(minorCheckbox && minorCheckbox.checked);
+            [
+                fieldContainer(birthdayInput),
+                fieldContainer(parentSelect),
+                fieldContainer(parentScaNameInput),
+                fieldContainer(parentFirstNameInput),
+                fieldContainer(parentLastNameInput)
+            ].forEach(function (container) {
+                if (container) {
+                    container.style.display = showMinorFields ? '' : 'none';
+                }
+            });
+            syncParentNameFields();
+        }
+
+        if (minorCheckbox) {
+            minorCheckbox.addEventListener('change', syncMinorDependentFields);
+            syncMinorDependentFields();
+        }
+        if (parentSelect) {
+            parentSelect.addEventListener('change', syncParentNameFields);
+            syncParentNameFields();
+        }
+    });
+</script>
+{% endblock %}

@@ -87,9 +87,16 @@ def _sync_form_minor_fields(cleaned_data):
         cleaned_data.get('state_province'),
     )
     cleaned_data['is_minor'] = inferred_minor
+    if cleaned_data.get('parent_id'):
+        cleaned_data['parent_sca_name'] = ''
+        cleaned_data['parent_first_name'] = ''
+        cleaned_data['parent_last_name'] = ''
     if not inferred_minor:
         cleaned_data['parent_id'] = None
         cleaned_data['parent'] = None
+        cleaned_data['parent_sca_name'] = ''
+        cleaned_data['parent_first_name'] = ''
+        cleaned_data['parent_last_name'] = ''
         birthday = cleaned_data.get('birthday')
         if birthday and date.today() >= birthday + relativedelta(years=20):
             cleaned_data['birthday'] = None
@@ -472,6 +479,16 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
     person_sca_name = forms.CharField(max_length=255, required=True)
     person_first_name = forms.CharField(max_length=150, required=True)
     person_last_name = forms.CharField(max_length=150, required=True)
+    person_membership = forms.CharField(
+        max_length=20,
+        required=False,
+        validators=[RegexValidator(r'^\d{1,20}$', 'Enter 1-20 digits.')],
+    )
+    person_membership_expiration = forms.DateField(
+        required=False,
+        input_formats=['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'],
+        widget=forms.DateInput(attrs={'type': 'date'}),
+    )
     weapon_style = forms.CharField(max_length=255, required=True)
     marshal_sca_name = forms.CharField(max_length=255, required=True)
     marshal_first_name = forms.CharField(max_length=150, required=True)
@@ -489,6 +506,26 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
         widget=forms.DateInput(attrs={'type': 'date'}),
     )
     is_minor = forms.BooleanField(required=False)
+
+    def clean(self):
+        cleaned = super().clean()
+        membership = (cleaned.get('person_membership') or '').strip()
+        membership_expiration = cleaned.get('person_membership_expiration')
+        cleaned['person_membership'] = membership
+        if bool(membership) != bool(membership_expiration):
+            raise forms.ValidationError('Member Number and Member Exp must be provided together.')
+        return cleaned
+
+
+class ParentSelect(forms.Select):
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        if value and hasattr(value, 'instance'):
+            parent = value.instance
+            option['attrs']['data-parent-sca-name'] = parent.sca_name or ''
+            option['attrs']['data-parent-first-name'] = parent.user.first_name or ''
+            option['attrs']['data-parent-last-name'] = parent.user.last_name or ''
+        return option
 
 
 class LegacyRecoveryNewFighterForm(forms.Form):
@@ -511,12 +548,21 @@ class LegacyRecoveryNewFighterForm(forms.Form):
     phone_number = forms.CharField(max_length=20, required=True)
     birthday = forms.DateField(required=False, widget=forms.DateInput(attrs={'type': 'date'}))
     branch = forms.ModelChoiceField(queryset=Branch.objects.none(), required=True)
+    parent_id = forms.ModelChoiceField(
+        queryset=Person.objects.none(),
+        required=False,
+        widget=ParentSelect,
+    )
     is_minor = forms.BooleanField(required=False)
+    parent_sca_name = forms.CharField(max_length=255, required=False)
+    parent_first_name = forms.CharField(max_length=150, required=False)
+    parent_last_name = forms.CharField(max_length=150, required=False)
     background_check_expiration = forms.DateField(required=False, widget=forms.DateInput(attrs={'type': 'date'}))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['branch'].queryset = Branch.objects.non_regions().order_by('name')
+        self.fields['parent_id'].queryset = Person.objects.exclude(user_id__in=SYSTEM_USER_IDS).select_related('user')
         self.fields['state_province'].choices = [('', '-- select one --')] + state_province_choices
         self.order_fields([
             'sca_name',
@@ -533,9 +579,13 @@ class LegacyRecoveryNewFighterForm(forms.Form):
             'country',
             'phone_number',
             'branch',
+            'background_check_expiration',
             'is_minor',
             'birthday',
-            'background_check_expiration',
+            'parent_id',
+            'parent_sca_name',
+            'parent_first_name',
+            'parent_last_name',
         ])
 
     def clean_phone_number(self):
@@ -552,9 +602,20 @@ class LegacyRecoveryNewFighterForm(forms.Form):
         if bool(membership) != bool(membership_expiration):
             raise forms.ValidationError('Membership number and membership expiration must be provided together.')
         checked_minor = cleaned.get('is_minor')
+        submitted_parent = cleaned.get('parent_id')
+        parent_sca_name = (cleaned.get('parent_sca_name') or '').strip()
+        parent_first_name = (cleaned.get('parent_first_name') or '').strip()
+        parent_last_name = (cleaned.get('parent_last_name') or '').strip()
+        cleaned['parent_sca_name'] = parent_sca_name
+        cleaned['parent_first_name'] = parent_first_name
+        cleaned['parent_last_name'] = parent_last_name
         if checked_minor and not cleaned.get('birthday'):
             raise forms.ValidationError('Birthday is required when adding a minor fighter.')
-        _sync_form_minor_fields(cleaned)
+        inferred_minor = _sync_form_minor_fields(cleaned)
+        if inferred_minor and not submitted_parent and not (parent_first_name and parent_last_name):
+            raise forms.ValidationError('A minor must have either a parent ID or parent first and last name.')
+        if not inferred_minor and submitted_parent:
+            raise forms.ValidationError('A non-minor must not have a parent ID.')
         return cleaned
 
 
@@ -562,6 +623,8 @@ LEGACY_RECOVERY_BATCH_FIELDS = [
     'person_sca_name',
     'person_first_name',
     'person_last_name',
+    'person_membership',
+    'person_membership_expiration',
     'weapon_style',
     'marshal_sca_name',
     'marshal_first_name',
@@ -1001,6 +1064,10 @@ def _create_legacy_recovery_fighter(form: LegacyRecoveryNewFighterForm, actor: U
                 sca_name=cleaned['sca_name'],
                 branch=cleaned['branch'],
                 is_minor=cleaned.get('is_minor', False),
+                parent=cleaned.get('parent_id'),
+                parent_sca_name=cleaned.get('parent_sca_name', ''),
+                parent_first_name=cleaned.get('parent_first_name', ''),
+                parent_last_name=cleaned.get('parent_last_name', ''),
                 created_by=actor,
                 updated_by=actor,
             )
@@ -1078,6 +1145,11 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
 
     try:
         with transaction.atomic():
+            person.user.membership = cleaned.get('person_membership') or None
+            person.user.membership_expiration = cleaned.get('person_membership_expiration')
+            person.user.updated_by = actor
+            person.user.save(update_fields=['membership', 'membership_expiration', 'updated_by', 'updated_at'])
+
             previous_status = None
             previous_marshal = None
             previous_concurring_fighter = None
@@ -2881,6 +2953,9 @@ def register(request):
                         branch=person_form.cleaned_data['branch'],
                         is_minor=person_form.cleaned_data['is_minor'],
                         parent=person_form.cleaned_data.get('parent_id', None),
+                        parent_sca_name=person_form.cleaned_data.get('parent_sca_name', ''),
+                        parent_first_name=person_form.cleaned_data.get('parent_first_name', ''),
+                        parent_last_name=person_form.cleaned_data.get('parent_last_name', ''),
                     )
 
             except Exception:
@@ -4506,6 +4581,9 @@ def add_fighter(request):
                         branch=person_form.cleaned_data['branch'],
                         is_minor=person_form.cleaned_data['is_minor'],
                         parent=person_form.cleaned_data.get('parent_id', None),
+                        parent_sca_name=person_form.cleaned_data.get('parent_sca_name', ''),
+                        parent_first_name=person_form.cleaned_data.get('parent_first_name', ''),
+                        parent_last_name=person_form.cleaned_data.get('parent_last_name', ''),
                     )
 
             except Exception:
@@ -5045,6 +5123,9 @@ def user_account(request, user_id):
         'branch': person.branch,
         'is_minor': person.is_current_minor,
         'parent_id': person.parent,
+        'parent_sca_name': person.parent_sca_name,
+        'parent_first_name': person.parent_first_name,
+        'parent_last_name': person.parent_last_name,
     }
 
     if request.method == 'POST':
@@ -5291,6 +5372,9 @@ def user_account(request, user_id):
             person.branch = form.cleaned_data['branch']
             person.is_minor = form.cleaned_data['is_minor']
             person.parent = form.cleaned_data.get('parent_id')
+            person.parent_sca_name = form.cleaned_data.get('parent_sca_name', '')
+            person.parent_first_name = form.cleaned_data.get('parent_first_name', '')
+            person.parent_last_name = form.cleaned_data.get('parent_last_name', '')
             person.save()
 
             if form.membership_mismatch_bypass_used:
@@ -6141,6 +6225,9 @@ def _build_merge_profile_initial(survivor_user: User, source_user: User, survivo
         'branch': newer_person.branch_id or survivor_person.branch_id or '',
         'is_minor': is_minor,
         'parent_id': parent_id or '',
+        'parent_sca_name': _first_non_empty(newer_person.parent_sca_name, survivor_person.parent_sca_name),
+        'parent_first_name': _first_non_empty(newer_person.parent_first_name, survivor_person.parent_first_name),
+        'parent_last_name': _first_non_empty(newer_person.parent_last_name, survivor_person.parent_last_name),
         'background_check_expiration': _first_non_empty(
             newer_user.background_check_expiration,
             survivor_user.background_check_expiration
@@ -6253,6 +6340,9 @@ def _apply_profile_form_to_user_and_person(profile_form, user: User, person: Per
     person.branch = cleaned.get('branch')
     person.is_minor = cleaned.get('is_minor', False)
     person.parent = cleaned.get('parent_id')
+    person.parent_sca_name = cleaned.get('parent_sca_name', '')
+    person.parent_first_name = cleaned.get('parent_first_name', '')
+    person.parent_last_name = cleaned.get('parent_last_name', '')
     person.updated_by = acting_user
     person.save()
 
@@ -7319,7 +7409,15 @@ class CreatePersonForm(forms.Form):
     )
     branch = forms.ModelChoiceField(label='Branch', queryset=Branch.objects.non_regions(), required=True)
     is_minor = forms.BooleanField(label='Is Minor', required=False)
-    parent_id = forms.ModelChoiceField(label='Parent ID', queryset=Person.objects.exclude(user_id__in=SYSTEM_USER_IDS), required=False)
+    parent_id = forms.ModelChoiceField(
+        label='Parent ID',
+        queryset=Person.objects.exclude(user_id__in=SYSTEM_USER_IDS).select_related('user'),
+        required=False,
+        widget=ParentSelect,
+    )
+    parent_sca_name = forms.CharField(label='Parent SCA Name', required=False, max_length=255)
+    parent_first_name = forms.CharField(label='Parent First Name', required=False, max_length=150)
+    parent_last_name = forms.CharField(label='Parent Last Name', required=False, max_length=150)
     background_check_expiration = forms.DateField(
         label='Background Check Expiration',
         required=False,
@@ -7364,6 +7462,9 @@ class CreatePersonForm(forms.Form):
             'is_minor',
             'birthday',
             'parent_id',
+            'parent_sca_name',
+            'parent_first_name',
+            'parent_last_name',
             'background_check_expiration',
         ])
 
@@ -7440,11 +7541,21 @@ class CreatePersonForm(forms.Form):
 
         checked_minor = cleaned_data.get('is_minor')
         submitted_parent = cleaned_data.get('parent_id')
+        submitted_parent_first_name = (cleaned_data.get('parent_first_name') or '').strip()
+        submitted_parent_last_name = (cleaned_data.get('parent_last_name') or '').strip()
+        submitted_parent_sca_name = (cleaned_data.get('parent_sca_name') or '').strip()
+        cleaned_data['parent_first_name'] = submitted_parent_first_name
+        cleaned_data['parent_last_name'] = submitted_parent_last_name
+        cleaned_data['parent_sca_name'] = submitted_parent_sca_name
         if checked_minor and not cleaned_data.get('birthday'):
             raise forms.ValidationError('A birthday must be provided for minors.')
         inferred_minor = _sync_form_minor_fields(cleaned_data)
         if not inferred_minor and submitted_parent:
             raise forms.ValidationError('A non-minor must not have a parent ID.')
+        if inferred_minor and not submitted_parent and not (
+            submitted_parent_first_name and submitted_parent_last_name
+        ):
+            raise forms.ValidationError('A minor must have either a parent ID or parent first and last name.')
 
         username = cleaned_data.get('username')
         if username and User.objects.filter(

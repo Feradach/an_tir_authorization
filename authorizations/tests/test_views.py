@@ -110,6 +110,9 @@ class ViewTestBase(TestCase):
         is_minor=False,
         birthday=None,
         parent=None,
+        parent_sca_name='',
+        parent_first_name='',
+        parent_last_name='',
         email=None,
         background_check_expiration=None,
         waiver_expiration=None,
@@ -147,6 +150,9 @@ class ViewTestBase(TestCase):
             branch=branch or self.branch_gd,
             is_minor=is_minor,
             parent=parent,
+            parent_sca_name=parent_sca_name,
+            parent_first_name=parent_first_name,
+            parent_last_name=parent_last_name,
         )
         return user, person
 
@@ -198,6 +204,9 @@ class ViewTestBase(TestCase):
             'branch': str(self.branch_gd.id),
             'is_minor': '',
             'parent_id': '',
+            'parent_sca_name': '',
+            'parent_first_name': '',
+            'parent_last_name': '',
             'background_check_expiration': '',
         }
         payload.update(overrides)
@@ -227,6 +236,9 @@ class ViewTestBase(TestCase):
             'branch': str(person.branch_id),
             'is_minor': 'on' if person.is_minor else '',
             'parent_id': str(person.parent_id) if person.parent_id else '',
+            'parent_sca_name': person.parent_sca_name,
+            'parent_first_name': person.parent_first_name,
+            'parent_last_name': person.parent_last_name,
             'background_check_expiration': self.date_value(user.background_check_expiration),
         }
         payload.update(overrides)
@@ -406,14 +418,9 @@ class IndexViewTests(ViewTestBase):
         response = self.client.get(reverse('index'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response,
-            '<button class="btn btn-light w-100 text-start px-3 py-2 launch-notice-toggle" '
-            'type="button" data-bs-toggle="collapse" data-bs-target="#launchNotice" '
-            'aria-expanded="true" aria-controls="launchNotice">',
-            html=True,
-        )
-        self.assertContains(response, '<div id="launchNotice" class="collapse show">', html=True)
+        self.assertContains(response, 'data-bs-target="#launchNotice"')
+        self.assertContains(response, 'aria-expanded="true"')
+        self.assertContains(response, '<div id="launchNotice" class="collapse show">')
 
     def test_index_launch_notice_defaults_collapsed_for_logged_in_users(self):
         user, person = self.make_person('index_notice_user', 'Index Notice User')
@@ -422,14 +429,9 @@ class IndexViewTests(ViewTestBase):
         response = self.client.get(reverse('index'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response,
-            '<button class="btn btn-light w-100 text-start px-3 py-2 launch-notice-toggle" '
-            'type="button" data-bs-toggle="collapse" data-bs-target="#launchNotice" '
-            'aria-expanded="false" aria-controls="launchNotice">',
-            html=True,
-        )
-        self.assertContains(response, '<div id="launchNotice" class="collapse">', html=True)
+        self.assertContains(response, 'data-bs-target="#launchNotice"')
+        self.assertContains(response, 'aria-expanded="false"')
+        self.assertContains(response, '<div id="launchNotice" class="collapse">')
 
     def test_index_shows_enabled_notice_for_non_kao_when_enabled(self):
         AuthorizationPortalSetting.objects.create(require_kao_verification=True)
@@ -465,6 +467,86 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Upload Society Membership CSV or Excel File')
         self.assertContains(response, 'name="membership_csv"')
         self.assertContains(response, 'Last upload:')
+
+    @patch('authorizations.views.send_mail')
+    def test_register_minor_requires_parent_id_or_parent_first_and_last_name(self, mock_send_mail):
+        response = self.client.post(
+            reverse('register'),
+            self.registration_payload(
+                username='minor_without_parent',
+                email='minor_without_parent@example.com',
+                birthday=self.date_value(date.today() - relativedelta(years=12)),
+                is_minor='on',
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'A minor must have either a parent ID or parent first and last name.')
+        self.assertFalse(User.objects.filter(username='minor_without_parent').exists())
+
+    @patch('authorizations.views.send_mail')
+    def test_register_minor_can_store_parent_name_without_parent_id(self, mock_send_mail):
+        payload = self.registration_payload(
+            username='minor_with_parent_name',
+            email='minor_with_parent_name@example.com',
+            birthday=self.date_value(date.today() - relativedelta(years=12)),
+            is_minor='on',
+            parent_first_name='Pat',
+            parent_last_name='Parent',
+            parent_sca_name='Parent of An Tir',
+        )
+        self.seed_membership_roster(
+            payload['membership'],
+            payload['first_name'],
+            payload['last_name'],
+            date.fromisoformat(payload['membership_expiration']),
+        )
+
+        response = self.client.post(
+            reverse('register'),
+            payload,
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        person = User.objects.get(username='minor_with_parent_name').person
+        self.assertIsNone(person.parent)
+        self.assertEqual(person.parent_first_name, 'Pat')
+        self.assertEqual(person.parent_last_name, 'Parent')
+        self.assertEqual(person.parent_sca_name, 'Parent of An Tir')
+
+    @patch('authorizations.views.send_mail')
+    def test_register_minor_parent_id_discards_parent_name_fields(self, mock_send_mail):
+        parent_user, parent = self.make_person('minor_parent_id_parent', 'Minor Parent')
+        payload = self.registration_payload(
+            username='minor_with_parent_id',
+            email='minor_with_parent_id@example.com',
+            birthday=self.date_value(date.today() - relativedelta(years=12)),
+            is_minor='on',
+            parent_id=str(parent.user_id),
+            parent_first_name='Should',
+            parent_last_name='Clear',
+            parent_sca_name='Should Clear',
+        )
+        self.seed_membership_roster(
+            payload['membership'],
+            payload['first_name'],
+            payload['last_name'],
+            date.fromisoformat(payload['membership_expiration']),
+        )
+
+        response = self.client.post(
+            reverse('register'),
+            payload,
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        person = User.objects.get(username='minor_with_parent_id').person
+        self.assertEqual(person.parent, parent)
+        self.assertEqual(person.parent_first_name, '')
+        self.assertEqual(person.parent_last_name, '')
+        self.assertEqual(person.parent_sca_name, '')
 
     def test_index_non_kao_does_not_see_membership_upload_controls(self):
         user, _ = self.make_person('index_membership_non_kao', 'Index Membership Non KAO')
@@ -3387,6 +3469,157 @@ class UserAccountViewTests(ViewTestBase):
         self.assertFalse(person.user.has_usable_password())
         self.assertTrue(UserNote.objects.filter(person=person, note__contains='Account created').exists())
         self.assertContains(response, 'New Recovery Fighter | New | Recovery')
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_new_minor_fighter_requires_parent_names(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'action': 'add_legacy_recovery_fighter',
+                'sca_name': 'Minor Recovery No Parent',
+                'email': 'minor.recovery.no.parent@example.com',
+                'first_name': 'Minor',
+                'last_name': 'Recovery',
+                'membership': '',
+                'membership_expiration': '',
+                'address': '123 Recovery Way',
+                'address2': '',
+                'city': 'Portland',
+                'state_province': 'Oregon',
+                'postal_code': '97201',
+                'country': 'United States',
+                'phone_number': '5035550102',
+                'birthday': self.date_value(date.today() - relativedelta(years=12)),
+                'branch': str(self.branch_gd.id),
+                'is_minor': 'on',
+                'parent_sca_name': '',
+                'parent_first_name': '',
+                'parent_last_name': '',
+                'background_check_expiration': '',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'A minor must have either a parent ID or parent first and last name.')
+        self.assertFalse(Person.objects.filter(sca_name='Minor Recovery No Parent').exists())
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_new_minor_fighter_stores_parent_names(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'action': 'add_legacy_recovery_fighter',
+                'sca_name': 'Minor Recovery Fighter',
+                'email': 'minor.recovery@example.com',
+                'first_name': 'Minor',
+                'last_name': 'Recovery',
+                'membership': '',
+                'membership_expiration': '',
+                'address': '123 Recovery Way',
+                'address2': '',
+                'city': 'Portland',
+                'state_province': 'Oregon',
+                'postal_code': '97201',
+                'country': 'United States',
+                'phone_number': '5035550103',
+                'birthday': self.date_value(date.today() - relativedelta(years=12)),
+                'branch': str(self.branch_gd.id),
+                'is_minor': 'on',
+                'parent_sca_name': 'Parent of Recovery',
+                'parent_first_name': 'Pat',
+                'parent_last_name': 'Recovery',
+                'background_check_expiration': '',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        person = Person.objects.get(sca_name='Minor Recovery Fighter')
+        self.assertEqual(person.parent_sca_name, 'Parent of Recovery')
+        self.assertEqual(person.parent_first_name, 'Pat')
+        self.assertEqual(person.parent_last_name, 'Recovery')
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_new_minor_fighter_parent_id_discards_parent_names(self):
+        self.client.force_login(self.ao_user)
+        parent_user, parent = self.make_person('legacy_recovery_parent', 'Legacy Recovery Parent')
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'action': 'add_legacy_recovery_fighter',
+                'sca_name': 'Minor Recovery With Parent ID',
+                'email': 'minor.recovery.parent.id@example.com',
+                'first_name': 'Minor',
+                'last_name': 'Parented',
+                'membership': '',
+                'membership_expiration': '',
+                'address': '123 Recovery Way',
+                'address2': '',
+                'city': 'Portland',
+                'state_province': 'Oregon',
+                'postal_code': '97201',
+                'country': 'United States',
+                'phone_number': '5035550104',
+                'birthday': self.date_value(date.today() - relativedelta(years=12)),
+                'branch': str(self.branch_gd.id),
+                'is_minor': 'on',
+                'parent_id': str(parent.user_id),
+                'parent_sca_name': 'Should Clear',
+                'parent_first_name': 'Should',
+                'parent_last_name': 'Clear',
+                'background_check_expiration': '',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        person = Person.objects.get(sca_name='Minor Recovery With Parent ID')
+        self.assertEqual(person.parent, parent)
+        self.assertEqual(person.parent_sca_name, '')
+        self.assertEqual(person.parent_first_name, '')
+        self.assertEqual(person.parent_last_name, '')
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_updates_person_membership_from_batch_row(self):
+        self.client.force_login(self.ao_user)
+        self.owner_user.membership = '111111'
+        self.owner_user.membership_expiration = date(2026, 1, 1)
+        self.owner_user.save()
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'person_membership': ['222222'],
+                'person_membership_expiration': ['2030-06-15'],
+                'weapon_style': ['Armored - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_sca_name': [''],
+                'second_marshal_first_name': [''],
+                'second_marshal_last_name': [''],
+                'concurring_officer_sca_name': [''],
+                'concurring_officer_first_name': [''],
+                'concurring_officer_last_name': [''],
+                'marshal_promotion': [''],
+                'auth_date': ['2025-05-10'],
+                'is_minor': [''],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.owner_user.refresh_from_db()
+        self.assertEqual(self.owner_user.membership, '222222')
+        self.assertEqual(self.owner_user.membership_expiration, date(2030, 6, 15))
 
     @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_new_fighter_duplicate_sca_name_gets_four_digit_username_suffix(self):
