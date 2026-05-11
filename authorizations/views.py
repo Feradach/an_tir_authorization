@@ -124,7 +124,7 @@ def _email_sent_message(message):
 
 
 def _exclude_system_people(queryset):
-    return queryset.exclude(user_id__in=SYSTEM_USER_IDS)
+    return queryset.exclude(user__is_superuser=True)
 
 
 def not_found_redirect_view(request, exception):
@@ -3658,7 +3658,7 @@ def search(request):
     ).filter(
         dynamic_filter,
         has_active_sanction=False,
-    ).exclude(person__user_id__in=SYSTEM_USER_IDS)
+    ).exclude(person__user__is_superuser=True)
     if minor_filter_value is not None:
         matching_authorizations = matching_authorizations.filter(inferred_minor=minor_filter_value)
     download_format = (request.GET.get('download') or '').strip().lower()

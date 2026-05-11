@@ -1250,13 +1250,14 @@ class SearchViewTests(ViewTestBase):
         self.assertTrue(hasattr(people[0], 'filtered_authorizations'))
         self.assertEqual(len(people[0].filtered_authorizations), 1)
 
-    def test_search_excludes_system_admin_from_options_and_results(self):
-        _, system_person = self.make_person(
-            'search_system_admin',
+    def test_search_excludes_superuser_from_options_and_results(self):
+        admin_user, system_person = self.make_person(
+            'search_superuser_admin',
             'Administrator',
-            user_id=SYSTEM_USER_IDS[0],
             membership='150501',
         )
+        admin_user.is_superuser = True
+        admin_user.save()
         _, visible_person = self.make_person('search_visible_fighter', 'Search Visible Fighter')
         system_auth = self.grant_authorization(system_person, self.style_weapon_armored, status=self.status_active)
         visible_auth = self.grant_authorization(visible_person, self.style_weapon_armored, status=self.status_active)
@@ -2592,6 +2593,40 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(self.owner_user.membership, new_membership)
         self.assertEqual(self.owner_user.membership_expiration, new_expiration)
         bypass_note = UserNote.objects.filter(person=self.owner_person, note__icontains='Membership validation bypass applied').first()
+        self.assertIsNotNone(bypass_note)
+
+    def test_superuser_bypass_with_note_saves_and_records_officer_note(self):
+        superuser, _ = self.make_person('account_superuser_admin', 'Account Superuser Admin')
+        superuser.is_staff = True
+        superuser.is_superuser = True
+        superuser.save()
+        self.client.login(username=superuser.username, password='StrongPass!123')
+        new_membership = '4234234234'
+        new_expiration = date.today() + relativedelta(years=2)
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership=new_membership,
+            membership_expiration=new_expiration.isoformat(),
+            membership_validation_bypass='on',
+            membership_validation_note='Manual verification by administrator.',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.membership, new_membership)
+        self.assertEqual(self.owner_user.membership_expiration, new_expiration)
+        bypass_note = UserNote.objects.filter(
+            person=self.owner_person,
+            created_by=superuser,
+            note__icontains='Membership validation bypass applied',
+        ).first()
         self.assertIsNotNone(bypass_note)
 
     def test_account_update_surfaces_explicit_state_and_postal_errors(self):

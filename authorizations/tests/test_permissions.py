@@ -357,6 +357,13 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
 
         self.assertFalse(is_kingdom_authorization_officer(user))
 
+    def test_superuser_counts_as_kingdom_authorization_officer_without_appointment(self):
+        user, _ = self.make_person('superuser_ao', 'Superuser AO')
+        user.is_superuser = True
+        user.save()
+
+        self.assertTrue(is_kingdom_authorization_officer(user))
+
     def test_earl_marshal_office_does_not_grant_senior_marshal_status(self):
         user, marshal = self.make_person('earl_no_sm', 'Earl No SM')
         self.appoint(marshal, self.branch_an_tir, self.discipline_earl_marshal)
