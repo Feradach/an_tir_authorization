@@ -1,6 +1,8 @@
 ﻿
-## [0.1.14] - 2026-05-11
+## [1.0.0] - 2026-05-11
 ### Added
+- Official launch of the new authorization portal!
+- Added contact page to the inner loop navigation.
 - Added the ability to temporarily lock the site for maintenance or updates.
 - Accounts for children now require either an attached parent account or the name of the parent/guardian.
 
