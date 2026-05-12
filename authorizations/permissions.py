@@ -299,6 +299,11 @@ def is_kingdom_authorization_officer(user):
     return _has_active_office(query)
 
 
+def can_authorize_in_discipline(user, discipline) -> bool:
+    discipline_name = discipline.name if hasattr(discipline, 'name') else discipline
+    return is_kingdom_authorization_officer(user) or is_senior_marshal(user, discipline_name)
+
+
 def is_kingdom_earl_marshal(user):
     """
     Checks if the user is a current Earl Marshal.
@@ -343,8 +348,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     else:
         age = 30
 
-    # Rule 1: A senior marshal in a discipline can authorize any person in a weapon style for that discipline
-    if not is_senior_marshal(marshal, style.discipline.name):
+    # Rule 1: A senior marshal in a discipline, or a Kingdom Authorization Officer, can authorize.
+    if not can_authorize_in_discipline(marshal, style.discipline):
         return False, f'Must have a current {style.discipline.name} senior marshal.'
 
     # Rule 2: A junior marshal must be at least 16 years old

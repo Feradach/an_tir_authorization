@@ -1,4 +1,9 @@
 ﻿
+## [1.0.1] - 2026-05-20
+### Changed
+- Tweaked how admin accounts display information.
+
+
 ## [1.0.0] - 2026-05-11
 ### Added
 - Official launch of the new authorization portal!

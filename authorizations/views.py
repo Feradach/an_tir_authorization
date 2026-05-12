@@ -27,7 +27,7 @@ from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
 from collections import defaultdict
@@ -2560,14 +2560,14 @@ def index(request):
             pending_authorizations = Authorization.objects.with_effective_expiration().filter(
                 status__name='Needs Regional Approval'
             ).order_by('effective_expiration_date')
-        if auth_officer:
-            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                status__name__in=[
-                    KINGDOM_APPROVAL_STATUS,
-                    'Pending Background Check',
-                    KINGDOM_EQUESTRIAN_WAIVER_STATUS,
-                ]
-            ).order_by('effective_expiration_date')
+    if auth_officer:
+        pending_authorizations = Authorization.objects.with_effective_expiration().filter(
+            status__name__in=[
+                KINGDOM_APPROVAL_STATUS,
+                'Pending Background Check',
+                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            ]
+        ).order_by('effective_expiration_date')
     pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
 
     if request.method == 'POST':
@@ -4664,7 +4664,7 @@ def add_authorization(request, person_id):
     discipline_id = request.POST.get('discipline')
     if discipline_id:
         discipline = Discipline.objects.get(id=discipline_id)
-        if not is_senior_marshal(authorizing_marshal, discipline.name):
+        if not can_authorize_in_discipline(authorizing_marshal, discipline):
             messages.error(request, f"Error: {authorizing_marshal.person.sca_name} is not a senior marshal in {discipline.name} and cannot authorize authorizations.")
             return redirect('fighter', person_id=person_id)
 
@@ -7715,7 +7715,7 @@ class CreateAuthorizationForm(forms.Form):
             self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
         elif user:
             # Filter disciplines based on the user's senior marshal authorizations
-            if BranchMarshal.objects.filter(person=user.person, end_date__gte=date.today(), branch__name='An Tir', discipline__name='Authorization Officer').exists():
+            if is_kingdom_authorization_officer(user):
                 self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
             else:
                 senior_authorizations = Authorization.objects.effectively_active().filter(

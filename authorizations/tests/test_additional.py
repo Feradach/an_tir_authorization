@@ -221,6 +221,44 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         self.assertEqual(created.status, self.status_active)
         self.assertEqual(response.status_code, 200)
 
+    def test_staff_authorization_officer_can_authorize_without_senior_marshal_status(self):
+        staff_user, staff_person = self.make_person('addauth_staff_ao', 'AddAuth Staff AO')
+        staff_user.is_staff = True
+        staff_user.save()
+        target_user, target_person = self.make_person(
+            'addauth_staff_ao_target',
+            'AddAuth Staff AO Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        # Keep concurrence from kicking in by giving target an existing active auth in the same discipline.
+        self.grant_authorization(target_person, self.style_polearm_armored, status=self.status_active, marshal=staff_person)
+
+        self.login(staff_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        created = Authorization.objects.get(person=target_person, style=self.style_weapon_armored)
+        self.assertEqual(created.marshal, staff_person)
+        self.assertEqual(created.status, self.status_active)
+        self.assertEqual(response.status_code, 200)
+
+    def test_staff_authorization_officer_form_shows_all_authorization_disciplines(self):
+        staff_user, _ = self.make_person('addauth_staff_form_ao', 'AddAuth Staff Form AO')
+        staff_user.is_staff = True
+        staff_user.save()
+
+        form = CreateAuthorizationForm(user=staff_user)
+
+        self.assertIn(self.discipline_armored, form.fields['discipline'].queryset)
+        self.assertNotIn(self.discipline_auth_officer, form.fields['discipline'].queryset)
+
     def test_marshal_authorization_requires_current_membership(self):
         acting_user, acting_person = self.make_person('addauth_membership_actor', 'Membership Actor')
         self.grant_authorization(acting_person, self.style_sm_armored)

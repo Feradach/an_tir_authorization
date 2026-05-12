@@ -201,6 +201,17 @@ class EffectiveExpirationTests(AuthorizationTestBase):
 
         self.assertEqual(auth.effective_expiration, user.membership_expiration)
 
+    def test_junior_marshal_effective_expiration_is_limited_by_membership(self):
+        user, fighter = self.make_person(
+            'fighter_junior_marshal',
+            'Fighter Junior Marshal',
+            membership_expiration=date.today() + timedelta(days=90),
+        )
+        base_exp = date.today() + relativedelta(years=2)
+        auth = self.grant_authorization(fighter, self.style_jm_armored, expiration=base_exp)
+
+        self.assertEqual(auth.effective_expiration, user.membership_expiration)
+
     def test_youth_marshal_effective_expiration_is_limited_by_background_check(self):
         user, fighter = self.make_person(
             'fighter_youth_marshal',

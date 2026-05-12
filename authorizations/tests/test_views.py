@@ -468,6 +468,27 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'name="membership_csv"')
         self.assertContains(response, 'Last upload:')
 
+    def test_index_staff_sees_kingdom_authorization_notifications_without_office(self):
+        staff_user, _ = self.make_person('index_staff_kao_view', 'Index Staff KAO View')
+        staff_user.is_staff = True
+        staff_user.save()
+        _, proposer_person = self.make_person('index_staff_kao_prop', 'Index Staff KAO Proposer')
+        _, target_person = self.make_person('index_staff_kao_target', 'Index Staff KAO Target')
+        self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=proposer_person,
+        )
+        self.client.login(username=staff_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Authorizations Needing Approval')
+        self.assertContains(response, 'Index Staff KAO Target')
+        self.assertContains(response, 'Needs Kingdom Approval')
+
     @patch('authorizations.views.send_mail')
     def test_register_minor_requires_parent_id_or_parent_first_and_last_name(self, mock_send_mail):
         response = self.client.post(

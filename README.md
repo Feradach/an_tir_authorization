@@ -26,6 +26,7 @@ workload of the authorization officer will be reduced.
 
 ## Operations:
 
+- [Deployment workflow](deployment_workflow.md)
 - [Backup and restore runbook](backup_and_restore_runbook_an_tir_authorizations.md)
 - [Maintenance runbook](maintenance_runbook.md)
 - [Secret rotation policy](secret_rotation_policy.md)
