@@ -1423,6 +1423,14 @@ class SearchViewTests(ViewTestBase):
 
 @override_settings(AUTHZ_TEST_FEATURES=False)
 class RegisterViewTests(ViewTestBase):
+    def test_faq_includes_membership_update_guidance(self):
+        response = self.client.get(reverse('faq'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="membership-update"')
+        self.assertContains(response, 'Why was my membership update rejected?')
+        self.assertContains(response, 'middle initial')
+
     def test_register_get_renders_template(self):
         response = self.client.get(reverse('register'))
 
@@ -1463,8 +1471,9 @@ class RegisterViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            'Invalid membership information. If you believe this is an error, please contact the Kingdom Authorization Officer.',
+            'Invalid membership information. Please review the',
         )
+        self.assertContains(response, '<a href="/faq/#membership-update">membership FAQ</a> for information on how membership validation works.', html=True)
 
     @override_settings(AUTHZ_TEST_FEATURES=True)
     @patch('authorizations.views.send_mail')
@@ -2469,7 +2478,7 @@ class UserAccountViewTests(ViewTestBase):
         self.owner_user.refresh_from_db()
         messages = self.messages_for(response)
         self.assertIn(
-            'Invalid membership information. If you believe this is an error, please contact the Kingdom Authorization Officer.',
+            'Invalid membership information. Please review the <a href="/faq/#membership-update">membership FAQ</a> for information on how membership validation works.',
             messages,
         )
         self.assertNotEqual(self.owner_user.membership, '1231231231')

@@ -2,6 +2,7 @@
 ## [1.0.1] - 2026-05-20
 ### Changed
 - Tweaked how admin accounts display information.
+- Added FAQ guidance for membership update problems and linked membership validation errors to that help section.
 
 
 ## [1.0.0] - 2026-05-11

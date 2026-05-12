@@ -23,6 +23,7 @@ from django.core.paginator import Paginator
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.urls import reverse
+from django.utils.html import format_html
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
@@ -246,8 +247,12 @@ def _resolve_submit_as_user(request, field_name='submit_as_user_id'):
 
 
 MEMBERSHIP_INVALID_MESSAGE = (
-    'Invalid membership information. '
-    'If you believe this is an error, please contact the Kingdom Authorization Officer.'
+    format_html(
+        'Invalid membership information. '
+        'Please review the '
+        '<a href="{}">membership FAQ</a> for information on how membership validation works.',
+        '/faq/#membership-update',
+    )
 )
 
 
