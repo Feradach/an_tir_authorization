@@ -1,6 +1,7 @@
 ﻿
 ## [1.0.1] - 2026-05-13
 ### Changed
+- When a roster is uploaded, all membership expiration dates are automatically updated to the latest date found in the roster.
 - Society membership uploads now use the later expiration date when the roster provides more than one date, extend matching account membership expiration dates when the roster has a later date, and record an officer note for each updated account.
 - Tweaked how admin accounts display information.
 - Added FAQ guidance for membership update problems and linked membership validation errors to that help section.
