@@ -1713,6 +1713,12 @@ class CreatePersonFormEdgeTests(AdditionalCoverageBase):
         self.assertEqual(created_title.rank, 'Grant of Arms')
         self.assertTrue(Title.objects.filter(name='Custom Herald', rank='Grant of Arms').exists())
 
+    def test_990_zip_code_is_within_an_tir(self):
+        form = CreatePersonForm(data=self.form_payload(postal_code='99004'))
+
+        self.assertTrue(form.is_valid(), msg=form.errors.as_text())
+        self.assertEqual(form.cleaned_data['postal_code'], '99004')
+
     def test_blank_membership_normalizes_to_none(self):
         form = CreatePersonForm(
             data=self.form_payload(

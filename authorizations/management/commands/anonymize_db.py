@@ -22,8 +22,8 @@ def _format_phone(digits: str) -> str:
 
 def _an_tir_postal(rand: random.Random) -> str:
     # Generate a postal/ZIP code that fits the app's validation rules
-    # Allowed: starts with 'V' (Canada) or US ZIPs starting with 97/98/991-994/838/835
-    choice = rand.choice(["CA_V", "US_97", "US_98", "US_991_994", "US_838", "US_835"])
+    # Allowed: starts with 'V' (Canada) or US ZIPs starting with 97/98/990-994/838/835
+    choice = rand.choice(["CA_V", "US_97", "US_98", "US_990_994", "US_838", "US_835"])
     if choice == "CA_V":
         # Simple Canadian-like format: V1A 1A1 (not fully realistic but passes rule: starts with V)
         return f"V{rand.randint(10,99)}{rand.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')} {rand.randint(1,9)}{rand.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ')}{rand.randint(1,9)}"
@@ -31,8 +31,8 @@ def _an_tir_postal(rand: random.Random) -> str:
         return f"97{rand.randint(000,999):03d}"
     if choice == "US_98":
         return f"98{rand.randint(000,999):03d}"
-    if choice == "US_991_994":
-        return f"{rand.randint(991,994)}{rand.randint(0,9)}"
+    if choice == "US_990_994":
+        return f"{rand.randint(990,994)}{rand.randint(0,9)}"
     if choice == "US_838":
         return f"838{rand.randint(0,9)}{rand.randint(0,9)}"
     if choice == "US_835":

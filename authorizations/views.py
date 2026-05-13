@@ -7626,7 +7626,7 @@ class CreatePersonForm(forms.Form):
             postal_code.startswith('V') or  # Starts with V
             postal_code.startswith('97') or  # Starts with 97
             postal_code.startswith('98') or  # Starts with 98
-            any(postal_code.startswith(prefix) for prefix in ['991', '992', '993', '994']) or  # Starts with 991-994
+            any(postal_code.startswith(prefix) for prefix in ['990', '991', '992', '993', '994']) or  # Starts with 990-994
             any(postal_code.startswith(prefix) for prefix in ['838', '835'])  # Starts with 838 or 835
         )
         
