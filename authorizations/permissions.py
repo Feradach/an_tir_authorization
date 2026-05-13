@@ -15,26 +15,26 @@ KINGDOM_APPROVAL_STATUS = 'Needs Kingdom Approval'
 KINGDOM_EQUESTRIAN_WAIVER_STATUS = 'Needs Kingdom Equestrian Waiver'
 
 EQUESTRIAN_STYLE_ALIASES = {
-    'Junior Ground Crew': {'Junior Ground Crew', 'Ground Crew - Junior'},
-    'Senior Ground Crew': {'Senior Ground Crew', 'Ground Crew - Senior'},
+    'Ground Crew - Junior': {'Ground Crew - Junior', 'Junior Ground Crew'},
+    'Ground Crew - Senior': {'Ground Crew - Senior', 'Senior Ground Crew'},
     'General Riding': {'General Riding'},
     'Mounted Gaming': {'Mounted Gaming'},
     'Mounted Archery': {'Mounted Archery'},
-    'Mounted Crest Combat': {'Mounted Crest Combat', 'Crest Combat'},
-    'Mounted Combat': {'Mounted Combat', 'Mounted Heavy Combat'},
+    'Crest Combat': {'Crest Combat', 'Mounted Crest Combat'},
+    'Mounted Heavy Combat': {'Mounted Heavy Combat', 'Mounted Combat'},
     'Driving': {'Driving', 'Ground Driving'},
-    'Foam-Tipped Jousting': {'Foam-Tipped Jousting', 'Jousting'},
+    'Jousting': {'Jousting', 'Foam-Tipped Jousting'},
 }
 
-_JUNIOR_GROUND_CREW_STYLES = EQUESTRIAN_STYLE_ALIASES['Junior Ground Crew']
-_SENIOR_GROUND_CREW_STYLES = EQUESTRIAN_STYLE_ALIASES['Senior Ground Crew']
+_JUNIOR_GROUND_CREW_STYLES = EQUESTRIAN_STYLE_ALIASES['Ground Crew - Junior']
+_SENIOR_GROUND_CREW_STYLES = EQUESTRIAN_STYLE_ALIASES['Ground Crew - Senior']
 _GENERAL_RIDING_STYLES = EQUESTRIAN_STYLE_ALIASES['General Riding']
 _MOUNTED_GAMING_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Gaming']
 _MOUNTED_ARCHERY_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Archery']
-_MOUNTED_CREST_COMBAT_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Crest Combat']
-_MOUNTED_COMBAT_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Combat']
+_MOUNTED_CREST_COMBAT_STYLES = EQUESTRIAN_STYLE_ALIASES['Crest Combat']
+_MOUNTED_COMBAT_STYLES = EQUESTRIAN_STYLE_ALIASES['Mounted Heavy Combat']
 _DRIVING_STYLES = EQUESTRIAN_STYLE_ALIASES['Driving']
-_FOAM_TIPPED_JOUSTING_STYLES = EQUESTRIAN_STYLE_ALIASES['Foam-Tipped Jousting']
+_FOAM_TIPPED_JOUSTING_STYLES = EQUESTRIAN_STYLE_ALIASES['Jousting']
 _MOUNTED_SPECIAL_STYLES = (
     _MOUNTED_ARCHERY_STYLES
     | _MOUNTED_CREST_COMBAT_STYLES
@@ -55,6 +55,24 @@ def _equestrian_aliases_for_style_name(style_name: str) -> set[str]:
         if style_name in aliases:
             return aliases
     return {style_name}
+
+
+def _is_equestrian_junior_ground_crew_style(style: WeaponStyle) -> bool:
+    return (
+        style
+        and getattr(style, 'discipline', None)
+        and style.discipline.name == 'Equestrian'
+        and style.name in _JUNIOR_GROUND_CREW_STYLES
+    )
+
+
+def _is_equestrian_senior_ground_crew_style(style: WeaponStyle) -> bool:
+    return (
+        style
+        and getattr(style, 'discipline', None)
+        and style.discipline.name == 'Equestrian'
+        and style.name in _SENIOR_GROUND_CREW_STYLES
+    )
 
 
 def kingdom_review_status_name_for_style(style: WeaponStyle) -> str:
@@ -354,8 +372,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
 
     # Rule 2: A junior marshal must be at least 16 years old
     if style.name == 'Junior Marshal':
-        # Rule 2a: Archery and Thrown junior marshals must be adults
-        if style.discipline.name in ['Archery', 'Thrown']:
+        # Rule 2a: Archery and thrown weapons junior marshals must be adults.
+        if style.discipline.name in ['Target Archery', 'Thrown Weapons']:
             if fighter_is_minor:
                 return False, 'Must be an adult to become an archery or thrown weapon junior marshal.'
         if age < 16:
@@ -386,20 +404,31 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         if age < 14:
             return False, 'Must be at least 14 years old to become a rapier fighter.'
 
-    # Rule 7: Armored and Cut & Thrust fighters must be at least 16 years old
-    if style.discipline.name in ['Armored', 'Cut & Thrust']:
+    # Rule 7: Armored Combat and Cut & Thrust fighters must be at least 16 years old.
+    if style.discipline.name in ['Armored Combat', 'Cut & Thrust']:
         if age < 16:
-            return False, f'Must be at least 16 years old to become authorized in {style.discipline.name} combat.'
+            return False, f'Must be at least 16 years old to become authorized in {style.discipline.name}.'
 
-    # Rule 8: Senior Equestrian Ground Crew requires Junior Ground Crew and age 16+
+    # Rule 8: Ground Crew - Senior requires Ground Crew - Junior and age 16+.
     if style.name in _SENIOR_GROUND_CREW_STYLES:
+        if all_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_JUNIOR_GROUND_CREW_STYLES,
+            status__name__in=[
+                'Pending',
+                'Needs Regional Approval',
+                KINGDOM_APPROVAL_STATUS,
+                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+            ],
+        ).exists():
+            return False, 'Cannot have a new Ground Crew - Senior if Ground Crew - Junior is pending.'
         if not active_authorizations.filter(
             style__discipline__name='Equestrian',
             style__name__in=_JUNIOR_GROUND_CREW_STYLES,
         ).exists():
-            return False, 'Senior Ground Crew requires an active Junior Ground Crew authorization.'
+            return False, 'Ground Crew - Senior requires an active Ground Crew - Junior authorization.'
         if age < 16:
-            return False, f'Must be at least 16 years old to become authorized as Senior Ground Crew.'
+            return False, 'Must be at least 16 years old to become authorized as Ground Crew - Senior.'
 
     # Rule 9: Youth combatants must be at least 6 years old and minors.
     if style.discipline.name in ['Youth Armored', 'Youth Rapier']:
@@ -441,23 +470,32 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         ).exists():
             return False, f'{style.name} requires an active Mounted Gaming authorization.'
 
-    # Rule 11c: Mounted Combat additionally requires General Riding.
+    # Rule 11c: Mounted Heavy Combat additionally requires General Riding.
     if style.name in _MOUNTED_COMBAT_STYLES:
         if not active_authorizations.filter(
             style__discipline__name='Equestrian',
             style__name__in=_GENERAL_RIDING_STYLES,
         ).exists():
-            return False, 'Mounted Combat requires an active General Riding authorization.'
+            return False, 'Mounted Heavy Combat requires an active General Riding authorization.'
 
     # Rule 12: Youth rapier marshals must already be Senior Rapier marshals
     if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
         if style.name == 'Junior Marshal' or style.name == 'Senior Marshal':
             return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
 
-    # Rule 13: An Equestrian Junior marshal must already have Senior Ground Crew and General Riding Authorizations.
+    # Rule 13: An Equestrian Junior marshal must already have Ground Crew - Senior and General Riding Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':
-        if not (active_authorizations.filter(style__name='Senior Ground Crew').exists() and active_authorizations.filter(style__name='General Riding').exists()):
-            return False, 'Junior Equestrian marshal must have Senior Ground Crew and General Riding authorization.'
+        if not (
+            active_authorizations.filter(
+                style__discipline__name='Equestrian',
+                style__name__in=_SENIOR_GROUND_CREW_STYLES,
+            ).exists()
+            and active_authorizations.filter(
+                style__discipline__name='Equestrian',
+                style__name__in=_GENERAL_RIDING_STYLES,
+            ).exists()
+        ):
+            return False, 'Junior Equestrian marshal must have Ground Crew - Senior and General Riding authorization.'
 
     # Rule 14: An Equestrian Senior marshal must already have Junior Marshal and Mounted Gaming Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Senior Marshal':
@@ -501,6 +539,29 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     ).exists():
         return False, 'Cannot renew a pending authorization.'
 
+    # Rule 18a: Ground Crew - Junior cannot be issued when Ground Crew - Senior is active or pending.
+    if _is_equestrian_junior_ground_crew_style(style):
+        if active_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_SENIOR_GROUND_CREW_STYLES,
+        ).exists():
+            return False, 'Cannot make someone Ground Crew - Junior if they are already Ground Crew - Senior.'
+        if not active_authorizations.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_JUNIOR_GROUND_CREW_STYLES,
+        ).exists():
+            if all_authorizations.filter(
+                style__discipline__name='Equestrian',
+                style__name__in=_SENIOR_GROUND_CREW_STYLES,
+                status__name__in=[
+                    'Pending',
+                    'Needs Regional Approval',
+                    KINGDOM_APPROVAL_STATUS,
+                    KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+                ],
+            ).exists():
+                return False, 'Cannot have a new Ground Crew - Junior if Ground Crew - Senior is pending.'
+
     # Rule 19: Cannot make someone a junior marshal if they are already a senior marshal.
     if style.name == 'Junior Marshal':
         # If they already have an active senior marshal, they cannot be a junior marshal.
@@ -540,10 +601,10 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
     if existing_fighter.user == marshal:
         return False, 'Cannot make an authorization for yourself.'
 
-    # Rule 22: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored combat, they can only be authorized by a regional marshal.
-    if fighter_is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored']:
+    # Rule 22: If the fighter is a minor, and authorizing in Rapier, Cut & Thrust, or Armored Combat, they can only be authorized by a regional marshal.
+    if fighter_is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored Combat']:
         if not is_regional_marshal(marshal):
-            return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored combat unless you are a regional marshal.'
+            return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored Combat unless you are a regional marshal.'
 
     # Rule 23: Adults cannot be authorized as youth armored or youth rapier fighters. They can be authorized as youth marshals.
     if not fighter_is_minor and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
@@ -585,7 +646,7 @@ def authorization_requires_concurrence(person: Person, style: WeaponStyle, today
     if style.name in ['Junior Marshal', 'Senior Marshal']:
         return False
     discipline_name = getattr(getattr(style, 'discipline', None), 'name', '')
-    if discipline_name in ['Equestrian', 'Siege', 'Seige', 'Youth Armored', 'Youth Rapier']:
+    if discipline_name in ['Equestrian', 'Siege', 'Youth Armored', 'Youth Rapier']:
         return False
     cutoff = today - relativedelta(years=1)
     max_effective = Authorization.objects.with_effective_expiration().with_sanction_flag(today=today).filter(
@@ -849,12 +910,28 @@ def approve_authorization(request):
 
     def remove_junior_marshal(authorization):
         discipline = authorization.style.discipline.name
-        try:
-            junior_marshal = Authorization.objects.get(person=authorization.person, style__name='Junior Marshal', style__discipline__name=discipline)
-            junior_marshal.delete()
+        Authorization.objects.filter(
+            person=authorization.person,
+            style__name='Junior Marshal',
+            style__discipline__name=discipline,
+        ).exclude(id=authorization.id).delete()
+        return True
+
+    def remove_junior_ground_crew(authorization):
+        if not _is_equestrian_senior_ground_crew_style(authorization.style):
             return True
-        except Authorization.DoesNotExist:
-            return True
+        Authorization.objects.filter(
+            person=authorization.person,
+            style__discipline__name='Equestrian',
+            style__name__in=_JUNIOR_GROUND_CREW_STYLES,
+        ).exclude(id=authorization.id).delete()
+        return True
+
+    def remove_superseded_junior_authorization(authorization):
+        if authorization.style.name == 'Senior Marshal':
+            remove_junior_marshal(authorization)
+        remove_junior_ground_crew(authorization)
+        return True
 
     request_user = request.user
     marshal, submit_as_error = _resolve_submit_as_user()
@@ -959,7 +1036,7 @@ def approve_authorization(request):
                     return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending background check.'
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
-    # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored can approve Missile).
+    # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored Combat can approve Missile Combat).
     elif authorization.status.name == 'Needs Regional Approval':
         if is_kao and marshal.id == request_user.id:
             return False, 'Kingdom Authorization Officer must use "Approve As" to approve this authorization.'
@@ -968,8 +1045,8 @@ def approve_authorization(request):
             return False, 'Could not determine the fighter region for regional approval.'
         if not is_regional_marshal(marshal, region=auth_region):
             return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
-        if authorization.style.discipline.name == 'Missile':
-            if not is_regional_marshal(marshal, 'Missile', auth_region) and not is_regional_marshal(marshal, 'Armored', auth_region):
+        if authorization.style.discipline.name == 'Missile Combat':
+            if not is_regional_marshal(marshal, 'Missile Combat', auth_region) and not is_regional_marshal(marshal, 'Armored Combat', auth_region):
                 return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
         else:
             if not is_regional_marshal(marshal, discipline, auth_region):
@@ -997,8 +1074,8 @@ def approve_authorization(request):
                 save_authorization(authorization)
                 record_note(authorization, 'marshal_approved', note)
                 if authorization.status == active_status:
-                    # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-                    remove_junior_marshal(authorization)
+                    # Rule 5a: If a senior-level authorization gets full approval, delete no longer relevant junior authorization.
+                    remove_superseded_junior_authorization(authorization)
                     # Ensure waiver does not trail authorization expiration
                     user = authorization.person.user
                     if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
@@ -1011,8 +1088,8 @@ def approve_authorization(request):
                     authorization.status = active_status
                     authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
                     save_authorization(authorization)
-                    # Rule 5a: If Senior marshal gets full approval, delete no longer relevant Junior marshal.
-                    remove_junior_marshal(authorization)
+                    # Rule 5a: If a senior-level authorization gets full approval, delete no longer relevant junior authorization.
+                    remove_superseded_junior_authorization(authorization)
                     # Ensure waiver does not trail authorization expiration
                     user = authorization.person.user
                     if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
@@ -1054,8 +1131,8 @@ def approve_authorization(request):
                 user.waiver_expiration = authorization.expiration
                 user.save()
 
-        if authorization.style.name == 'Senior Marshal' and authorization.status == active_status:
-            remove_junior_marshal(authorization)
+        if authorization.status == active_status:
+            remove_superseded_junior_authorization(authorization)
 
         if authorization.status == active_status:
             record_note(authorization, 'marshal_approved', note)
@@ -1123,8 +1200,8 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
             return False, 'Could not determine the fighter region for regional approval.'
         if not is_regional_marshal(marshal, region=auth_region):
             return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
-        if authorization.style.discipline.name == 'Missile':
-            if not is_regional_marshal(marshal, 'Missile', auth_region) and not is_regional_marshal(marshal, 'Armored', auth_region):
+        if authorization.style.discipline.name == 'Missile Combat':
+            if not is_regional_marshal(marshal, 'Missile Combat', auth_region) and not is_regional_marshal(marshal, 'Armored Combat', auth_region):
                 return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
         else:
             if not is_regional_marshal(marshal, discipline, auth_region):
@@ -1164,8 +1241,8 @@ def validate_reject_authorization(marshal: User, authorization: Authorization):
         return False, 'Could not determine the fighter region for regional rejection.'
     if not is_regional_marshal(marshal, region=auth_region):
         return False, 'You must be a regional marshal in the same region as the fighter to reject this authorization.'
-    if auth_discipline == 'Missile':
-        if not is_regional_marshal(marshal, 'Missile', auth_region) and not is_regional_marshal(marshal, 'Armored', auth_region):
+    if auth_discipline == 'Missile Combat':
+        if not is_regional_marshal(marshal, 'Missile Combat', auth_region) and not is_regional_marshal(marshal, 'Armored Combat', auth_region):
             return False, 'You must be a regional missile marshal or the regional armored marshal to reject this authorization.'
     elif not is_regional_marshal(marshal, auth_discipline, auth_region):
         return False, 'You must be a regional marshal in this discipline to reject this authorization.'
@@ -1329,5 +1406,3 @@ def appoint_branch_marshal(request):
     )
 
     return True, 'Branch marshal appointed.'
-
-

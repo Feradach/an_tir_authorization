@@ -28,7 +28,7 @@ from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
 from collections import defaultdict
@@ -727,16 +727,19 @@ LEGACY_AUTH_IMPORT_BACKGROUND_CHECK_EXPIRATION_FIELDS = [
 LEGACY_AUTH_IMPORT_BIRTHDAY_FIELDS = ['birthday', 'Birth Date', 'Date of Birth']
 LEGACY_AUTH_IMPORT_MINOR_FIELDS = ['is_minor', 'Minor']
 LEGACY_AUTH_IMPORT_DISCIPLINE_ALIASES = {
-    'armored': 'Armored',
-    'heavy': 'Armored',
+    'armored': 'Armored Combat',
+    'heavy': 'Armored Combat',
     'rapier': 'Rapier Combat',
     'rapier combat': 'Rapier Combat',
     'c&t': 'Cut & Thrust',
     'cut and thrust': 'Cut & Thrust',
     'cut & thrust': 'Cut & Thrust',
-    'archery': 'Archery',
-    'thrown': 'Thrown',
-    'missile': 'Missile',
+    'archery': 'Target Archery',
+    'target archery': 'Target Archery',
+    'thrown': 'Thrown Weapons',
+    'thrown weapons': 'Thrown Weapons',
+    'missile': 'Missile Combat',
+    'missile combat': 'Missile Combat',
     'siege': 'Siege',
     'seige': 'Siege',
     'equestrian': 'Equestrian',
@@ -3347,11 +3350,21 @@ def _finalize_waiver_signed(request_user: User, target_user: User):
     pending_qs = Authorization.objects.filter(person__user=target_user, status__name='Pending Waiver')
     if pending_qs.exists():
         max_exp = pending_qs.aggregate(latest=Max('expiration'))['latest']
+        activates_senior_ground_crew = pending_qs.filter(
+            style__discipline__name='Equestrian',
+            style__name__in=_SENIOR_GROUND_CREW_STYLES,
+        ).exists()
         try:
             active_status = AuthorizationStatus.objects.get(name='Active')
         except AuthorizationStatus.DoesNotExist:
             return False, 'System error: Active status not found.'
         pending_qs.update(status=active_status)
+        if activates_senior_ground_crew:
+            Authorization.objects.filter(
+                person__user=target_user,
+                style__discipline__name='Equestrian',
+                style__name__in=_JUNIOR_GROUND_CREW_STYLES,
+            ).delete()
         target_user.waiver_expiration = max_exp
         target_user.save()
         return True, 'Waiver signed and authorizations activated.'
@@ -4184,10 +4197,20 @@ def fighter(request, person_id):
     equestrian = False
     youth = False
     fighter = False
+    hide_junior_ground_crew = authorization_list.filter(
+        style__discipline__name='Equestrian',
+        style__name__in=_SENIOR_GROUND_CREW_STYLES,
+    ).exists()
 
     grouped_authorizations = {}
     for auth in authorization_list:
         discipline_name = auth.style.discipline.name
+        if (
+            hide_junior_ground_crew
+            and discipline_name == 'Equestrian'
+            and auth.style.name in _JUNIOR_GROUND_CREW_STYLES
+        ):
+            continue
         marshal_renewal = None
         marshal_renewal_requires_bg = False
         if auth.style.name in ['Junior Marshal', 'Senior Marshal'] and auth.effective_expiration < auth.expiration:

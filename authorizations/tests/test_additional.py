@@ -50,7 +50,7 @@ class AdditionalCoverageBase(TestCase):
         cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
         cls.branch_other = Branch.objects.create(name='Nowhere Other', type='Other', region=cls.region_summits)
 
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
+        cls.discipline_armored = Discipline.objects.create(name='Armored Combat')
         cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
@@ -188,7 +188,7 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         )
 
         messages = self.messages_for(response)
-        self.assertTrue(any('is not a senior marshal in Armored' in m for m in messages))
+        self.assertTrue(any('is not a senior marshal in Armored Combat' in m for m in messages))
         self.assertFalse(
             Authorization.objects.filter(person=target_person, style=self.style_weapon_armored).exists()
         )
@@ -414,7 +414,7 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         )
 
         messages = self.messages_for(response)
-        self.assertTrue(any('is not a senior marshal in Armored' in m for m in messages))
+        self.assertTrue(any('is not a senior marshal in Armored Combat' in m for m in messages))
         self.assertFalse(
             Authorization.objects.filter(person=target_person, style=self.style_weapon_armored).exists()
         )
@@ -655,7 +655,7 @@ class AuthorizationFormDisciplineTests(AdditionalCoverageBase):
 
         form = CreateAuthorizationForm(user=earl_user)
         discipline_names = list(form.fields['discipline'].queryset.values_list('name', flat=True))
-        self.assertNotIn('Armored', discipline_names)
+        self.assertNotIn('Armored Combat', discipline_names)
 
     def test_earl_marshal_form_includes_disciplines_where_user_is_senior(self):
         earl_user, earl_person = self.make_person('form_earl_senior', 'Form Earl Senior')
@@ -664,7 +664,7 @@ class AuthorizationFormDisciplineTests(AdditionalCoverageBase):
 
         form = CreateAuthorizationForm(user=earl_user)
         discipline_names = list(form.fields['discipline'].queryset.values_list('name', flat=True))
-        self.assertIn('Armored', discipline_names)
+        self.assertIn('Armored Combat', discipline_names)
 
 class PendingNoteFlowTests(AdditionalCoverageBase):
     def test_marshal_proposal_two_step_flow_sets_and_clears_pending_session(self):

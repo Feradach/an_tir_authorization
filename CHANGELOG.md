@@ -6,6 +6,10 @@
 - Tweaked how admin accounts display information.
 - Added FAQ guidance for membership update problems and linked membership validation errors to that help section.
 
+### Fixed
+- Authorization rules and reports now use the current production names for weapon styles and disciplines.
+- Ground Crew - Senior now supersedes Ground Crew - Junior in the same way Senior Marshal supersedes Junior Marshal.
+
 
 ## [1.0.0] - 2026-05-11
 ### Added
@@ -75,7 +79,7 @@
   - `Needs Kingdom Equestrian Waiver` can now be rejected (with a required note).
   - `Pending Background Check` now shows both `Go To Page` and `Reject` (reject also requires a note).
 - Updated the FAQ page so it reflects current account, document upload, approval queue, sanctions, and reporting workflows.
-- Equestrian authorization checks now enforce key prerequisites more clearly: Senior Ground Crew requires Junior Ground Crew, Mounted Gaming requires General Riding, and mounted weapon-game special authorizations require Mounted Gaming (with Mounted Combat also requiring General Riding).
+- Equestrian authorization checks now enforce key prerequisites more clearly: Ground Crew - Senior requires Ground Crew - Junior, Mounted Gaming requires General Riding, and mounted weapon-game special authorizations require Mounted Gaming (with Mounted Heavy Combat also requiring General Riding).
 - Added a dedicated FAQ quick-reference section summarizing An Tir equestrian authorization rules and age limits.
 - Rearranged the menu and improved behavior when switching window size.
 - Users who are not logged in are now redirected to the Authorizations Homepage when they open Supporting Documents.

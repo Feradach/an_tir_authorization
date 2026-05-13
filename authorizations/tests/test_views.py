@@ -69,7 +69,7 @@ class ViewTestBase(TestCase):
         cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
         cls.branch_other = Branch.objects.create(name='Special Other', type='Other', region=cls.region_summits)
 
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
+        cls.discipline_armored = Discipline.objects.create(name='Armored Combat')
         cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
@@ -2997,7 +2997,7 @@ class UserAccountViewTests(ViewTestBase):
         self.client.force_login(self.ao_user)
         upload = SimpleUploadedFile(
             'legacy_authorizations.csv',
-            b'SCA Name,Discipline,Weapon Style,Start Date\nTest,Armored,Weapon & Shield,2025-01-01\n',
+            b'SCA Name,Discipline,Weapon Style,Start Date\nTest,Armored Combat,Weapon & Shield,2025-01-01\n',
             content_type='text/csv',
         )
 
@@ -3018,7 +3018,7 @@ class UserAccountViewTests(ViewTestBase):
             'legacy_authorizations.csv',
             (
                 'Person ID,Discipline,Weapon Style,Start Date,Marshal SCA Name\n'
-                f'{self.owner_person.user_id},Armored,Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
+                f'{self.owner_person.user_id},Armored Combat,Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
             ).encode('utf-8'),
             content_type='text/csv',
         )
@@ -3071,7 +3071,7 @@ class UserAccountViewTests(ViewTestBase):
             'legacy_authorizations_combined_style.csv',
             (
                 'Person ID,Weapon Style,Start Date,Marshal SCA Name\n'
-                f'{self.owner_person.user_id},Armored - Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
+                f'{self.owner_person.user_id},Armored Combat - Weapon & Shield,2025-01-15,{self.ao_person.sca_name}\n'
             ).encode('utf-8'),
             content_type='text/csv',
         )
@@ -3143,7 +3143,7 @@ class UserAccountViewTests(ViewTestBase):
                 'SCA Name,First Name,Last Name,Email,Branch,City,State,Country,Phone,Waiver Expiration,'
                 'Discipline,Weapon Style,Start Date,Marshal SCA Name\n'
                 'New Legacy Fighter,New,Legacy,new.legacy@example.com,Barony of Glyn Dwfn,Portland,Oregon,'
-                'United States,555-0100,2028-02-01,Armored,Weapon & Shield,2025-02-01,Authorization Officer\n'
+                'United States,555-0100,2028-02-01,Armored Combat,Weapon & Shield,2025-02-01,Authorization Officer\n'
             ).encode('utf-8'),
             content_type='text/csv',
         )
@@ -3177,7 +3177,7 @@ class UserAccountViewTests(ViewTestBase):
         self.client.force_login(self.owner_user)
         upload = SimpleUploadedFile(
             'legacy_authorizations.csv',
-            b'SCA Name,Discipline,Weapon Style,Start Date\nTest,Armored,Weapon & Shield,2025-01-01\n',
+            b'SCA Name,Discipline,Weapon Style,Start Date\nTest,Armored Combat,Weapon & Shield,2025-01-01\n',
             content_type='text/csv',
         )
 
@@ -3191,7 +3191,7 @@ class UserAccountViewTests(ViewTestBase):
     @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_process_legacy_recovery_batch(self):
         self.client.force_login(self.ao_user)
-        other_style = WeaponStyle.objects.create(name='Two-Handed Sword', discipline=self.discipline_armored)
+        other_style = WeaponStyle.objects.create(name='Two-Handed', discipline=self.discipline_armored)
 
         response = self.client.post(
             reverse('legacy_authorization_recovery'),
@@ -3199,7 +3199,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name, self.other_person.sca_name],
                 'person_first_name': [self.owner_user.first_name, self.other_user.first_name],
                 'person_last_name': [self.owner_user.last_name, self.other_user.last_name],
-                'weapon_style': ['Armored - Weapon & Shield', 'Armored - Two-Handed Sword'],
+                'weapon_style': ['Armored Combat - Weapon & Shield', 'Armored Combat - Two-Handed'],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -3251,7 +3251,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
-                'weapon_style': ['Armored - Weapon & Shield', 'Armored - Weapon & Shield'],
+                'weapon_style': ['Armored Combat - Weapon & Shield', 'Armored Combat - Weapon & Shield'],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -3291,7 +3291,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Weapon & Shield'],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3328,7 +3328,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Weapon & Shield'],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3354,7 +3354,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Weapon & Shield'],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3411,7 +3411,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Junior Marshal'],
+                'weapon_style': ['Armored Combat - Junior Marshal'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3437,7 +3437,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Junior Marshal'],
+                'weapon_style': ['Armored Combat - Junior Marshal'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3461,7 +3461,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Junior Marshal'],
+                'weapon_style': ['Armored Combat - Junior Marshal'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3492,7 +3492,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Senior Marshal'],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3519,7 +3519,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Senior Marshal'],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3547,7 +3547,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
-                'weapon_style': ['Armored - Senior Marshal'],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3596,7 +3596,7 @@ class UserAccountViewTests(ViewTestBase):
                 person=self.ao_person,
                 created_by=self.ao_user,
                 note__contains=note_text,
-            ).filter(note__contains='Armored - Senior Marshal').count(),
+            ).filter(note__contains='Armored Combat - Senior Marshal').count(),
             1,
         )
         self.assertTrue(
@@ -3782,7 +3782,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_last_name': [self.owner_user.last_name],
                 'person_membership': ['222222'],
                 'person_membership_expiration': ['2030-06-15'],
-                'weapon_style': ['Armored - Weapon & Shield'],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -3873,7 +3873,7 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIn('Second Marshal SCA Name,Second Marshal First Name,Second Marshal Last Name', content)
         self.assertIn('Concurring Officer SCA Name,Concurring Officer First Name,Concurring Officer Last Name', content)
         self.assertIn('Marshal Promotion', content)
-        self.assertIn('Owner of Account,Owner,User,Armored - Weapon & Shield', content)
+        self.assertIn('Owner of Account,Owner,User,Armored Combat - Weapon & Shield', content)
         self.assertIn(f'{self.other_person.sca_name},{self.other_user.first_name},{self.other_user.last_name}', content)
         self.assertIn('Yes,2025-05-10,2027-05-10,Yes', content)
 
@@ -3982,7 +3982,7 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         messages = self.messages_for(response)
-        self.assertIn('You must hold an active Senior Marshal in Armored.', messages)
+        self.assertIn('You must hold an active Senior Marshal in Armored Combat.', messages)
         self.assertFalse(
             BranchMarshal.objects.filter(
                 person=self.owner_person,
@@ -4451,7 +4451,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             password='StrongPass!123',
             email='office_candidate_armored@example.com',
             first_name='Candidate',
-            last_name='Armored',
+            last_name='Armored Combat',
             membership='6060606060',
             membership_expiration=date.today() + relativedelta(years=1),
             state_province='Oregon',
@@ -4534,11 +4534,11 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             discipline=discipline_equestrian,
         )
         style_junior_ground_crew, _ = WeaponStyle.objects.get_or_create(
-            name='Junior Ground Crew',
+            name='Ground Crew - Junior',
             discipline=discipline_equestrian,
         )
         style_senior_ground_crew, _ = WeaponStyle.objects.get_or_create(
-            name='Senior Ground Crew',
+            name='Ground Crew - Senior',
             discipline=discipline_equestrian,
         )
         proposer_user, proposer_person = self.make_person(
@@ -4558,7 +4558,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             status=self.status_active,
             marshal=proposer_person,
         )
-        # Senior Ground Crew requires an active Junior Ground Crew authorization.
+        # Ground Crew - Senior requires an active Ground Crew - Junior authorization.
         self.grant_authorization(
             self.candidate_armored_person,
             style_junior_ground_crew,
@@ -4566,6 +4566,37 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             marshal=proposer_person,
         )
         return proposer_user, discipline_equestrian, style_senior_ground_crew
+
+    def test_fighter_page_hides_junior_ground_crew_when_senior_ground_crew_is_active(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_junior_ground_crew, _ = WeaponStyle.objects.get_or_create(
+            name='Ground Crew - Junior',
+            discipline=discipline_equestrian,
+        )
+        style_senior_ground_crew, _ = WeaponStyle.objects.get_or_create(
+            name='Ground Crew - Senior',
+            discipline=discipline_equestrian,
+        )
+        self.grant_authorization(
+            self.candidate_armored_person,
+            style_junior_ground_crew,
+            status=self.status_active,
+            marshal=self.kao_person,
+        )
+        self.grant_authorization(
+            self.candidate_armored_person,
+            style_senior_ground_crew,
+            status=self.status_active,
+            marshal=self.kao_person,
+        )
+
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        styles = response.context['authorization_list']['Equestrian']['styles']
+        self.assertIn('Ground Crew - Senior', styles)
+        self.assertNotIn('Ground Crew - Junior', styles)
 
     def test_kingdom_discipline_marshal_can_appoint_regional_same_discipline(self):
         self.client.login(username=self.krapier_user.username, password='StrongPass!123')
@@ -4757,7 +4788,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        pending = response.context['pending_authorization_list']['Armored']
+        pending = response.context['pending_authorization_list']['Armored Combat']
         self.assertFalse(pending['can_approve'])
         self.assertFalse(pending['can_reject'])
 
@@ -4774,7 +4805,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        pending = response.context['pending_authorization_list']['Armored']
+        pending = response.context['pending_authorization_list']['Armored Combat']
         self.assertFalse(pending['can_approve'])
 
     def test_kingdom_earl_marshal_pending_buttons_follow_stipulations(self):
@@ -4805,7 +4836,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         pending = response.context['pending_authorization_list']
-        self.assertTrue(pending['Armored']['can_approve'])
+        self.assertTrue(pending['Armored Combat']['can_approve'])
         self.assertTrue(pending['Rapier Combat']['can_approve'])
 
     def test_kingdom_earl_marshal_does_not_see_approve_for_needs_kingdom(self):
@@ -4837,7 +4868,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         get_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
         self.assertEqual(get_response.status_code, 200)
-        pending = get_response.context['pending_authorization_list']['Armored']
+        pending = get_response.context['pending_authorization_list']['Armored Combat']
         self.assertTrue(pending['can_approve'])
 
         pending_auth = Authorization.objects.get(
@@ -4934,7 +4965,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        pending_card = response.context['pending_authorization_list']['Armored']
+        pending_card = response.context['pending_authorization_list']['Armored Combat']
         self.assertTrue(pending_card['can_approve'])
         self.assertContains(response, f'name="authorization_id" value="{pending.id}"')
         self.assertContains(response, 'name="action" value="approve_authorization"')
@@ -5086,7 +5117,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         get_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
         self.assertEqual(get_response.status_code, 200)
-        pending = get_response.context['pending_authorization_list']['Armored']
+        pending = get_response.context['pending_authorization_list']['Armored Combat']
         self.assertTrue(pending['can_reject'])
 
         first = self.client.post(
@@ -5256,7 +5287,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        pending = response.context['pending_authorization_list']['Armored']
+        pending = response.context['pending_authorization_list']['Armored Combat']
         self.assertFalse(pending['can_reject'])
 
     def test_kingdom_discipline_marshal_can_end_lower_same_discipline_office(self):
@@ -5619,7 +5650,7 @@ class SanctionsWorkflowTests(ViewTestBase):
             password='StrongPass!123',
             email='sanction_kingdom_armored@example.com',
             first_name='Kingdom',
-            last_name='Armored',
+            last_name='Armored Combat',
             membership='5454545454',
             membership_expiration=date.today() + relativedelta(years=1),
             state_province='Oregon',
@@ -6282,3 +6313,4 @@ class ReportsViewTests(TestCase):
         content = response.content.decode('utf-8-sig').splitlines()
         self.assertEqual(content[0], 'Discipline,Authorization Detail,Q4 2025')
         self.assertIn('Armored Combat,Total Participants,595', content)
+

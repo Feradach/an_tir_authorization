@@ -54,7 +54,7 @@ class AuthorizationTestBase(TestCase):
         cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
 
         # Disciplines
-        cls.discipline_armored = Discipline.objects.create(name='Armored')
+        cls.discipline_armored = Discipline.objects.create(name='Armored Combat')
         cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
         cls.discipline_youth_rapier = Discipline.objects.create(name='Youth Rapier')
@@ -73,8 +73,9 @@ class AuthorizationTestBase(TestCase):
         cls.style_sword_youth_armored = WeaponStyle.objects.create(name='Sword', discipline=cls.discipline_youth_armored)
         cls.style_sword_youth_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=cls.discipline_youth_rapier)
         cls.style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_equestrian)
-        cls.style_junior_ground_crew = WeaponStyle.objects.create(name='Junior Ground Crew', discipline=cls.discipline_equestrian)
-        cls.style_senior_ground_crew = WeaponStyle.objects.create(name='Senior Ground Crew', discipline=cls.discipline_equestrian)
+        cls.style_jm_equestrian = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_equestrian)
+        cls.style_junior_ground_crew = WeaponStyle.objects.create(name='Ground Crew - Junior', discipline=cls.discipline_equestrian)
+        cls.style_senior_ground_crew = WeaponStyle.objects.create(name='Ground Crew - Senior', discipline=cls.discipline_equestrian)
         cls.style_general_riding = WeaponStyle.objects.create(name='General Riding', discipline=cls.discipline_equestrian)
         cls.style_siege_engine = WeaponStyle.objects.create(name='Siege Engine', discipline=cls.discipline_siege)
         cls.style_mounted_gaming = WeaponStyle.objects.create(name='Mounted Gaming', discipline=cls.discipline_equestrian)
@@ -82,7 +83,7 @@ class AuthorizationTestBase(TestCase):
         cls.style_crest_combat = WeaponStyle.objects.create(name='Crest Combat', discipline=cls.discipline_equestrian)
         cls.style_mounted_heavy_combat = WeaponStyle.objects.create(name='Mounted Heavy Combat', discipline=cls.discipline_equestrian)
         cls.style_driving = WeaponStyle.objects.create(name='Driving', discipline=cls.discipline_equestrian)
-        cls.style_foam_tipped_jousting = WeaponStyle.objects.create(name='Foam-Tipped Jousting', discipline=cls.discipline_equestrian)
+        cls.style_foam_tipped_jousting = WeaponStyle.objects.create(name='Jousting', discipline=cls.discipline_equestrian)
 
     def setUp(self):
         self.factory = RequestFactory()
@@ -330,7 +331,7 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
         user, marshal = self.make_person('sm_true', 'Senior Marshal True')
         self.grant_authorization(marshal, self.style_sm_armored)
 
-        self.assertTrue(is_senior_marshal(user, 'Armored'))
+        self.assertTrue(is_senior_marshal(user, 'Armored Combat'))
         self.assertFalse(is_senior_marshal(user, 'Rapier Combat'))
 
     def test_is_senior_marshal_false_when_membership_expired(self):
@@ -339,22 +340,22 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
         user.membership_expiration = date.today() - timedelta(days=1)
         user.save()
 
-        self.assertFalse(is_senior_marshal(user, 'Armored'))
+        self.assertFalse(is_senior_marshal(user, 'Armored Combat'))
 
     def test_is_regional_marshal_checks_region_and_discipline(self):
         user, marshal = self.make_person('regional_user', 'Regional User')
         self.grant_authorization(marshal, self.style_sm_armored)
         self.appoint(marshal, self.region_summits, self.discipline_armored)
 
-        self.assertTrue(is_regional_marshal(user, 'Armored', 'Summits'))
-        self.assertFalse(is_regional_marshal(user, 'Armored', 'Tir Righ'))
+        self.assertTrue(is_regional_marshal(user, 'Armored Combat', 'Summits'))
+        self.assertFalse(is_regional_marshal(user, 'Armored Combat', 'Tir Righ'))
 
     def test_is_kingdom_marshal_by_branch_assignment(self):
         user, marshal = self.make_person('kingdom_user', 'Kingdom User')
         self.grant_authorization(marshal, self.style_sm_armored)
         self.appoint(marshal, self.branch_an_tir, self.discipline_armored)
 
-        self.assertTrue(is_kingdom_marshal(user, 'Armored'))
+        self.assertTrue(is_kingdom_marshal(user, 'Armored Combat'))
         self.assertFalse(is_kingdom_marshal(user, 'Rapier Combat'))
 
     def test_authorization_officer_requires_current_membership(self):
@@ -379,7 +380,7 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
         user, marshal = self.make_person('earl_no_sm', 'Earl No SM')
         self.appoint(marshal, self.branch_an_tir, self.discipline_earl_marshal)
 
-        self.assertFalse(is_senior_marshal(user, 'Armored'))
+        self.assertFalse(is_senior_marshal(user, 'Armored Combat'))
 
 
 class AuthorizationRuleTests(AuthorizationTestBase):
@@ -419,7 +420,7 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         ok, msg = authorization_follows_rules(marshal_user, minor, self.style_weapon_armored.id)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'Must be at least 16 years old to become authorized in Armored combat.')
+        self.assertEqual(msg, 'Must be at least 16 years old to become authorized in Armored Combat.')
 
     def test_youth_marshal_no_longer_requires_background_check_at_proposal_time(self):
         marshal_user, marshal = self.make_person('youth_marshal', 'Youth Marshal')
@@ -484,7 +485,91 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_senior_ground_crew.id)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'Senior Ground Crew requires an active Junior Ground Crew authorization.')
+        self.assertEqual(msg, 'Ground Crew - Senior requires an active Ground Crew - Junior authorization.')
+
+    def test_junior_ground_crew_blocked_when_senior_ground_crew_is_active(self):
+        marshal_user, marshal = self.make_person('eq_sm_jgc_active', 'Eq SM JGC Active')
+        _, fighter = self.make_person('eq_target_jgc_active', 'Eq Target JGC Active')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_senior_ground_crew)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_junior_ground_crew.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Cannot make someone Ground Crew - Junior if they are already Ground Crew - Senior.')
+
+    def test_junior_ground_crew_blocked_when_senior_ground_crew_is_pending(self):
+        marshal_user, marshal = self.make_person('eq_sm_jgc_pending', 'Eq SM JGC Pending')
+        _, fighter = self.make_person('eq_target_jgc_pending', 'Eq Target JGC Pending')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_senior_ground_crew, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_junior_ground_crew.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Cannot have a new Ground Crew - Junior if Ground Crew - Senior is pending.')
+
+    def test_senior_ground_crew_blocked_when_junior_ground_crew_is_pending(self):
+        marshal_user, marshal = self.make_person('eq_sm_sgc_pending', 'Eq SM SGC Pending')
+        _, fighter = self.make_person('eq_target_sgc_pending', 'Eq Target SGC Pending')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_junior_ground_crew, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_senior_ground_crew.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Cannot have a new Ground Crew - Senior if Ground Crew - Junior is pending.')
+
+    def test_senior_ground_crew_approval_removes_junior_ground_crew(self):
+        kao_user, _ = self.make_person('eq_kao_sgc', 'Eq KAO SGC')
+        kao_user.is_staff = True
+        kao_user.save()
+        _, fighter = self.make_person(
+            'eq_target_sgc_approval',
+            'Eq Target SGC Approval',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(fighter, self.style_junior_ground_crew)
+        review_status, _ = AuthorizationStatus.objects.get_or_create(name='Needs Kingdom Equestrian Waiver')
+        senior_auth = self.grant_authorization(
+            fighter,
+            self.style_senior_ground_crew,
+            status=review_status,
+        )
+        request = self.factory.post(
+            '/authorizations/fighter/',
+            {'authorization_id': str(senior_auth.id)},
+        )
+        request.user = kao_user
+
+        ok, msg = approve_authorization(request)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Equestrian Ground Crew - Senior authorization approved!')
+        self.assertFalse(
+            Authorization.objects.filter(
+                person=fighter,
+                style__name__in=['Ground Crew - Junior', 'Junior Ground Crew'],
+            ).exists()
+        )
+        senior_auth.refresh_from_db()
+        self.assertEqual(senior_auth.status.name, 'Active')
+
+    def test_junior_equestrian_marshal_accepts_current_senior_ground_crew_name(self):
+        current_senior_ground_crew = WeaponStyle.objects.create(
+            name='Ground Crew - Senior',
+            discipline=self.discipline_equestrian,
+        )
+        marshal_user, marshal = self.make_person('eq_sm_current_sgc', 'Eq SM Current SGC')
+        _, fighter = self.make_person('eq_target_current_sgc', 'Eq Target Current SGC')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, current_senior_ground_crew)
+        self.grant_authorization(fighter, self.style_general_riding)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_jm_equestrian.id)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Authorization follows all rules.')
 
     def test_mounted_gaming_requires_general_riding(self):
         marshal_user, marshal = self.make_person('eq_sm_mg', 'Eq SM MG')
@@ -613,7 +698,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         pending_auth.refresh_from_db()
         self.assertTrue(ok)
-        self.assertEqual(msg, 'Armored Junior Marshal authorization approved!')
+        self.assertEqual(msg, 'Armored Combat Junior Marshal authorization approved!')
         self.assertEqual(pending_auth.status, self.status_active)
         self.assertTrue(
             AuthorizationNote.objects.filter(
@@ -753,7 +838,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         pending_auth.refresh_from_db()
         self.assertTrue(ok)
-        self.assertEqual(msg, 'Armored Senior Marshal authorization ready for regional approval!')
+        self.assertEqual(msg, 'Armored Combat Senior Marshal authorization ready for regional approval!')
         self.assertEqual(pending_auth.status, self.status_regional)
 
     def test_kingdom_earl_marshal_cannot_concur_pending_without_senior_marshal(self):
@@ -876,7 +961,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         needs_regional.refresh_from_db()
         self.assertTrue(ok)
-        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        self.assertEqual(msg, 'Armored Combat Senior Marshal authorization approved!')
         self.assertEqual(needs_regional.status, self.status_active)
 
     def test_regional_earl_marshal_cannot_do_regional_confirmation_outside_region(self):
@@ -927,7 +1012,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         needs_regional.refresh_from_db()
         self.assertTrue(ok)
-        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        self.assertEqual(msg, 'Armored Combat Senior Marshal authorization approved!')
         self.assertEqual(needs_regional.status, self.status_active)
 
     def test_kingdom_earl_marshal_cannot_do_kingdom_confirmation(self):
@@ -981,7 +1066,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         pending_senior.refresh_from_db()
         fighter.user.refresh_from_db()
         self.assertTrue(ok)
-        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        self.assertEqual(msg, 'Armored Combat Senior Marshal authorization approved!')
         self.assertEqual(pending_senior.status, self.status_active)
         self.assertFalse(Authorization.objects.filter(id=junior_auth.id).exists())
         self.assertGreaterEqual(fighter.user.waiver_expiration, pending_senior.expiration)
@@ -1021,7 +1106,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         pending_senior.refresh_from_db()
         self.assertTrue(ok)
-        self.assertEqual(msg, 'Armored Senior Marshal authorization approved!')
+        self.assertEqual(msg, 'Armored Combat Senior Marshal authorization approved!')
         self.assertEqual(pending_senior.status, self.status_active)
         self.assertFalse(
             AuthorizationNote.objects.filter(

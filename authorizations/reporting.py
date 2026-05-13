@@ -35,27 +35,27 @@ REGIONAL_DISCIPLINE_MAP = [
 ]
 
 EQUESTRIAN_TYPE_ORDER = [
-    'Junior Ground Crew',
-    'Senior Ground Crew',
+    'Ground Crew - Junior',
+    'Ground Crew - Senior',
     'General Riding',
     'Mounted Gaming',
     'Mounted Archery',
-    'Mounted Crest Combat',
-    'Mounted Combat',
+    'Crest Combat',
+    'Mounted Heavy Combat',
     'Driving',
-    'Foam-Tipped Jousting',
+    'Jousting',
 ]
 
 EQUESTRIAN_TYPE_ALIASES = {
-    'Junior Ground Crew': {'Junior Ground Crew', 'Ground Crew - Junior'},
-    'Senior Ground Crew': {'Senior Ground Crew', 'Ground Crew - Senior'},
+    'Ground Crew - Junior': {'Ground Crew - Junior', 'Junior Ground Crew'},
+    'Ground Crew - Senior': {'Ground Crew - Senior', 'Senior Ground Crew'},
     'General Riding': {'General Riding'},
     'Mounted Gaming': {'Mounted Gaming'},
     'Mounted Archery': {'Mounted Archery'},
-    'Mounted Crest Combat': {'Mounted Crest Combat', 'Crest Combat'},
-    'Mounted Combat': {'Mounted Combat', 'Mounted Heavy Combat'},
+    'Crest Combat': {'Crest Combat', 'Mounted Crest Combat'},
+    'Mounted Heavy Combat': {'Mounted Heavy Combat', 'Mounted Combat'},
     'Driving': {'Driving', 'Ground Driving'},
-    'Foam-Tipped Jousting': {'Foam-Tipped Jousting', 'Jousting'},
+    'Jousting': {'Jousting', 'Foam-Tipped Jousting'},
 }
 
 

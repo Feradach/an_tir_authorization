@@ -2318,7 +2318,7 @@
     "model": "authorizations.discipline",
     "pk": 3,
     "fields": {
-      "name": "Archery",
+      "name": "Target Archery",
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
       "created_by": null,
@@ -2362,7 +2362,7 @@
     "model": "authorizations.discipline",
     "pk": 7,
     "fields": {
-      "name": "Missile",
+      "name": "Missile Combat",
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
       "created_by": null,
@@ -2384,7 +2384,7 @@
     "model": "authorizations.discipline",
     "pk": 9,
     "fields": {
-      "name": "Armored",
+      "name": "Armored Combat",
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
       "created_by": null,
@@ -2680,7 +2680,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 22,
     "fields": {
-      "name": "Sword & Offensive Secondary",
+      "name": "Sword w/Offensive Secondary",
       "discipline": 4,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2704,7 +2704,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 24,
     "fields": {
-      "name": "Two-Handed Sword",
+      "name": "Two Handed Sword",
       "discipline": 4,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2764,7 +2764,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 29,
     "fields": {
-      "name": "Hand Thrown Weapons",
+      "name": "Hand Thrown",
       "discipline": 7,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2788,7 +2788,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 31,
     "fields": {
-      "name": "Sword & Offensive Secondary",
+      "name": "Sword w/Offensive Secondary",
       "discipline": 8,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2800,7 +2800,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 32,
     "fields": {
-      "name": "Sword & Defensive Secondary",
+      "name": "Sword w/Defensive Secondary",
       "discipline": 8,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2812,7 +2812,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 33,
     "fields": {
-      "name": "Two-Handed Sword",
+      "name": "Two Handed Sword",
       "discipline": 8,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2872,7 +2872,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 38,
     "fields": {
-      "name": "Junior Ground Crew",
+      "name": "Ground Crew - Junior",
       "discipline": 10,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2884,7 +2884,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 39,
     "fields": {
-      "name": "Senior Ground Crew",
+      "name": "Ground Crew - Senior",
       "discipline": 10,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -2944,7 +2944,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 44,
     "fields": {
-      "name": "Foam-Tipped Jousting",
+      "name": "Jousting",
       "discipline": 10,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
@@ -3016,7 +3016,7 @@
     "model": "authorizations.weaponstyle",
     "pk": 50,
     "fields": {
-      "name": "Sword & Defensive Secondary",
+      "name": "Sword w/Defensive Secondary",
       "discipline": 12,
       "created_at": "2025-02-10T11:48:56.831Z",
       "updated_at": "2025-02-10T11:48:56.831Z",
