@@ -2843,6 +2843,48 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(entry.membership_expiration, date(2033, 4, 4))
         self.assertTrue(entry.has_society_waiver)
 
+    def test_ao_upload_membership_roster_uses_later_standard_expiration_date(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'members_standard_later.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date,Exp Date - Custom (C)\n'
+                '121212,Standard,Later,5/5/2035,4/4/2034\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entry = MembershipRosterEntry.objects.get(membership_number='121212')
+        self.assertEqual(entry.membership_expiration, date(2035, 5, 5))
+
+    def test_ao_upload_membership_roster_uses_later_custom_expiration_date(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'members_custom_later.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date,Exp Date - Custom (C)\n'
+                '343434,Custom,Later,5/5/2035,6/6/2036\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entry = MembershipRosterEntry.objects.get(membership_number='343434')
+        self.assertEqual(entry.membership_expiration, date(2036, 6, 6))
+
     def test_ao_upload_membership_roster_accepts_xlsx(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
         rows = [

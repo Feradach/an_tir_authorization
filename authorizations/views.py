@@ -291,6 +291,17 @@ def _parse_membership_expiration(value: str, row_number: int) -> date:
     raise ValueError(f'Row {row_number}: Invalid membership expiration date "{raw}".')
 
 
+def _latest_membership_expiration_from_row(row: dict, row_number: int) -> date:
+    expiration_values = []
+    for field_name in ['Membership Expiration Date', 'Exp Date - Custom (C)', 'Expiration']:
+        raw_value = (row.get(field_name) or '').strip()
+        if raw_value:
+            expiration_values.append(_parse_membership_expiration(raw_value, row_number))
+    if not expiration_values:
+        raise ValueError(f'Row {row_number}: Membership expiration date is required.')
+    return max(expiration_values)
+
+
 def _csv_value(row: dict, row_number: int, field_names: list[str], *, required: bool = True, digits_only: bool = False) -> str:
     value = ''
     for field_name in field_names:
@@ -319,12 +330,6 @@ def _membership_entries_from_dict_rows(rows) -> tuple[list[MembershipRosterEntry
         )
         first_name = _csv_value(row, row_number, ['First Name'], required=False)
         last_name = _csv_value(row, row_number, ['Last Name'], required=False)
-        expiration_value = _csv_value(
-            row,
-            row_number,
-            ['Membership Expiration Date', 'Exp Date - Custom (C)', 'Expiration'],
-            required=False,
-        )
         waiver_value = _csv_value(
             row,
             row_number,
@@ -333,14 +338,14 @@ def _membership_entries_from_dict_rows(rows) -> tuple[list[MembershipRosterEntry
         )
         has_society_waiver = waiver_value.strip().casefold() == 'yes'
 
-        if not membership_number or not first_name or not last_name or not expiration_value:
+        if not membership_number or not first_name or not last_name:
             skipped_rows += 1
             continue
         if not membership_number.isdigit():
             skipped_rows += 1
             continue
         try:
-            membership_expiration = _parse_membership_expiration(expiration_value, row_number)
+            membership_expiration = _latest_membership_expiration_from_row(row, row_number)
         except ValueError:
             skipped_rows += 1
             continue
