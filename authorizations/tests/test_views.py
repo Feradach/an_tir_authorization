@@ -2760,6 +2760,64 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(metadata.row_count, 2)
         self.assertEqual(metadata.source_filename, 'members.csv')
 
+    def test_ao_upload_membership_roster_extends_matching_user_expiration_and_records_note(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        self.owner_user.membership = '222222'
+        self.owner_user.membership_expiration = date(2030, 1, 1)
+        self.owner_user.save()
+        upload = SimpleUploadedFile(
+            'members.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date\n'
+                '222222,Owner,User,2/2/2031\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.owner_user.refresh_from_db()
+        self.assertEqual(self.owner_user.membership_expiration, date(2031, 2, 2))
+        self.assertEqual(self.owner_user.updated_by, self.ao_user)
+        note = UserNote.objects.get(person=self.owner_person)
+        self.assertIn('Membership expiration refreshed from Society membership roster upload.', note.note)
+        self.assertIn('Previous expiration: 2030-01-01', note.note)
+        self.assertIn('New expiration: 2031-02-02', note.note)
+        messages = self.messages_for(response)
+        self.assertTrue(any('1 user membership expiration(s) were extended' in message for message in messages))
+
+    def test_ao_upload_membership_roster_does_not_shorten_matching_user_expiration(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        self.owner_user.membership = '222222'
+        self.owner_user.membership_expiration = date(2035, 1, 1)
+        self.owner_user.save()
+        upload = SimpleUploadedFile(
+            'members.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date\n'
+                '222222,Owner,User,2/2/2031\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.owner_user.refresh_from_db()
+        self.assertEqual(self.owner_user.membership_expiration, date(2035, 1, 1))
+        self.assertFalse(UserNote.objects.filter(person=self.owner_person).exists())
+        messages = self.messages_for(response)
+        self.assertFalse(any('user membership expiration(s) were extended' in message for message in messages))
+
     def test_ao_upload_membership_roster_accepts_current_society_headers(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
         upload = SimpleUploadedFile(

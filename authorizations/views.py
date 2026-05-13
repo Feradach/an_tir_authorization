@@ -472,6 +472,46 @@ def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRos
     return _membership_entries_from_dict_rows(rows)
 
 
+def _refresh_user_membership_expirations_from_roster(rows, imported_by, source_filename: str) -> int:
+    roster_by_membership = {
+        row.membership_number: row
+        for row in rows
+    }
+    if not roster_by_membership:
+        return 0
+
+    updated_count = 0
+    users = User.objects.select_related('person').filter(membership__in=roster_by_membership.keys())
+    for user in users:
+        roster_entry = roster_by_membership.get(user.membership)
+        if not roster_entry:
+            continue
+        previous_expiration = user.membership_expiration
+        if previous_expiration and previous_expiration >= roster_entry.membership_expiration:
+            continue
+
+        user.membership_expiration = roster_entry.membership_expiration
+        user.updated_by = imported_by
+        user.save()
+        updated_count += 1
+
+        if hasattr(user, 'person') and user.person:
+            UserNote.objects.create(
+                person=user.person,
+                created_by=imported_by,
+                note_type='officer_note',
+                note=(
+                    'Membership expiration refreshed from Society membership roster upload.\n'
+                    f'Source file: {source_filename or "-"}\n'
+                    f'Membership number: {user.membership or "-"}\n'
+                    f'Previous expiration: {previous_expiration or "-"}\n'
+                    f'New expiration: {user.membership_expiration or "-"}'
+                ),
+            )
+
+    return updated_count
+
+
 class MembershipRosterUploadForm(forms.Form):
     membership_csv = forms.FileField(required=True)
 
@@ -5552,6 +5592,11 @@ def upload_membership_roster(request):
     with transaction.atomic():
         MembershipRosterEntry.objects.all().delete()
         MembershipRosterEntry.objects.bulk_create(rows, batch_size=1000)
+        refreshed_user_count = _refresh_user_membership_expirations_from_roster(
+            rows,
+            request.user,
+            uploaded_file.name,
+        )
         MembershipRosterImport.objects.update_or_create(
             pk=1,
             defaults={
@@ -5562,6 +5607,11 @@ def upload_membership_roster(request):
         )
 
     messages.success(request, f'Membership roster updated successfully ({len(rows)} rows).')
+    if refreshed_user_count:
+        messages.success(
+            request,
+            f'{refreshed_user_count} user membership expiration(s) were extended from matching membership numbers.',
+        )
     if skipped_rows:
         messages.warning(
             request,

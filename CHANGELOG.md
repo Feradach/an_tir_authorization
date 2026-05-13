@@ -1,6 +1,7 @@
 ﻿
-## [1.0.1] - 2026-05-20
+## [1.0.1] - 2026-05-13
 ### Changed
+- Society membership uploads now extend matching account membership expiration dates when the roster has a later date, and record an officer note for each updated account.
 - Tweaked how admin accounts display information.
 - Added FAQ guidance for membership update problems and linked membership validation errors to that help section.
 
