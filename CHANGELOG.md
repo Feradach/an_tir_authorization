@@ -7,8 +7,8 @@
 - Added FAQ guidance for membership update problems and linked membership validation errors to that help section.
 
 ### Fixed
-- Authorization rules and reports now use the current production names for weapon styles and disciplines.
-- Ground Crew - Senior now supersedes Ground Crew - Junior in the same way Senior Marshal supersedes Junior Marshal.
+- Modified how names and junior marshal/ground crew authorizations are handled to prevent conflicts.
+- Updated rules on zip code validation.
 
 
 ## [1.0.0] - 2026-05-11

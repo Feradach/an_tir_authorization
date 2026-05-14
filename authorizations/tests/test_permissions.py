@@ -1,6 +1,8 @@
 from datetime import date, timedelta
+from io import StringIO
 
 from dateutil.relativedelta import relativedelta
+from django.core.management import call_command
 from unittest.mock import patch
 from django.test import RequestFactory, TestCase
 
@@ -45,6 +47,7 @@ class AuthorizationTestBase(TestCase):
         cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
         cls.status_rejected = AuthorizationStatus.objects.create(name='Rejected')
+        cls.status_inactive = AuthorizationStatus.objects.create(name='Inactive')
 
         # Branches
         cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
@@ -520,7 +523,7 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertFalse(ok)
         self.assertEqual(msg, 'Cannot have a new Ground Crew - Senior if Ground Crew - Junior is pending.')
 
-    def test_senior_ground_crew_approval_removes_junior_ground_crew(self):
+    def test_senior_ground_crew_approval_marks_junior_ground_crew_inactive(self):
         kao_user, _ = self.make_person('eq_kao_sgc', 'Eq KAO SGC')
         kao_user.is_staff = True
         kao_user.save()
@@ -529,7 +532,7 @@ class AuthorizationRuleTests(AuthorizationTestBase):
             'Eq Target SGC Approval',
             waiver_expiration=date.today() + relativedelta(years=1),
         )
-        self.grant_authorization(fighter, self.style_junior_ground_crew)
+        junior_auth = self.grant_authorization(fighter, self.style_junior_ground_crew)
         review_status, _ = AuthorizationStatus.objects.get_or_create(name='Needs Kingdom Equestrian Waiver')
         senior_auth = self.grant_authorization(
             fighter,
@@ -546,12 +549,9 @@ class AuthorizationRuleTests(AuthorizationTestBase):
 
         self.assertTrue(ok)
         self.assertEqual(msg, 'Equestrian Ground Crew - Senior authorization approved!')
-        self.assertFalse(
-            Authorization.objects.filter(
-                person=fighter,
-                style__name__in=['Ground Crew - Junior', 'Junior Ground Crew'],
-            ).exists()
-        )
+        junior_auth.refresh_from_db()
+        self.assertEqual(junior_auth.status.name, 'Inactive')
+        self.assertFalse(Authorization.objects.effectively_active().filter(id=junior_auth.id).exists())
         senior_auth.refresh_from_db()
         self.assertEqual(senior_auth.status.name, 'Active')
 
@@ -1039,7 +1039,7 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertFalse(ok)
         self.assertEqual(msg, 'Only the Kingdom Authorization Officer can approve this authorization.')
 
-    def test_authorization_officer_final_approval_sets_active_and_removes_junior(self):
+    def test_authorization_officer_final_approval_sets_active_and_marks_junior_inactive(self):
         ao_user, ao_person = self.make_person('ao_approver', 'AO Approver')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
 
@@ -1068,7 +1068,9 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertTrue(ok)
         self.assertEqual(msg, 'Armored Combat Senior Marshal authorization approved!')
         self.assertEqual(pending_senior.status, self.status_active)
-        self.assertFalse(Authorization.objects.filter(id=junior_auth.id).exists())
+        junior_auth.refresh_from_db()
+        self.assertEqual(junior_auth.status.name, 'Inactive')
+        self.assertFalse(Authorization.objects.effectively_active().filter(id=junior_auth.id).exists())
         self.assertGreaterEqual(fighter.user.waiver_expiration, pending_senior.expiration)
         self.assertFalse(
             AuthorizationNote.objects.filter(
@@ -1370,3 +1372,41 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
 
         self.assertFalse(ok)
         self.assertEqual(msg, 'Must be a current member to be a branch marshal.')
+
+
+class DeactivateSupersededJuniorMarshalsCommandTests(AuthorizationTestBase):
+    def test_dry_run_reports_superseded_junior_marshal_without_changing_status(self):
+        _, fighter = self.make_person('superseded_dry_run', 'Superseded Dry Run')
+        junior_auth = self.grant_authorization(fighter, self.style_jm_armored, status=self.status_active)
+        self.grant_authorization(fighter, self.style_sm_armored, status=self.status_active)
+        out = StringIO()
+
+        call_command('deactivate_superseded_junior_marshals', stdout=out)
+
+        junior_auth.refresh_from_db()
+        self.assertEqual(junior_auth.status, self.status_active)
+        self.assertIn('Found 1 active Junior Marshal authorization', out.getvalue())
+        self.assertIn(f'authorization_id={junior_auth.id} user_id={fighter.user_id}', out.getvalue())
+        self.assertIn('Dry run only.', out.getvalue())
+
+    def test_apply_marks_only_superseded_junior_marshal_inactive(self):
+        _, fighter = self.make_person('superseded_apply', 'Superseded Apply')
+        _, other_fighter = self.make_person('not_superseded_apply', 'Not Superseded Apply')
+        junior_auth = self.grant_authorization(fighter, self.style_jm_armored, status=self.status_active)
+        senior_auth = self.grant_authorization(fighter, self.style_sm_armored, status=self.status_active)
+        unrelated_junior = self.grant_authorization(
+            other_fighter,
+            self.style_jm_armored,
+            status=self.status_active,
+        )
+        out = StringIO()
+
+        call_command('deactivate_superseded_junior_marshals', '--apply', stdout=out)
+
+        junior_auth.refresh_from_db()
+        senior_auth.refresh_from_db()
+        unrelated_junior.refresh_from_db()
+        self.assertEqual(junior_auth.status.name, 'Inactive')
+        self.assertEqual(senior_auth.status, self.status_active)
+        self.assertEqual(unrelated_junior.status, self.status_active)
+        self.assertIn('Marked 1 Junior Marshal authorization', out.getvalue())

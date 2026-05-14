@@ -61,6 +61,7 @@ class ViewTestBase(TestCase):
         cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
         cls.status_rejected = AuthorizationStatus.objects.create(name='Rejected')
+        cls.status_inactive = AuthorizationStatus.objects.create(name='Inactive')
 
         cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
@@ -5570,6 +5571,41 @@ class WaiverWorkflowTests(ViewTestBase):
         self.assertEqual(auth_one.status, self.status_active)
         self.assertEqual(auth_two.status, self.status_active)
         self.assertEqual(self.owner_user.waiver_expiration, exp_two)
+
+    def test_signing_senior_ground_crew_pending_waiver_marks_junior_ground_crew_inactive(self):
+        discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        junior_ground_crew = WeaponStyle.objects.create(
+            name='Ground Crew - Junior',
+            discipline=discipline_equestrian,
+        )
+        senior_ground_crew = WeaponStyle.objects.create(
+            name='Ground Crew - Senior',
+            discipline=discipline_equestrian,
+        )
+        junior_auth = Authorization.objects.create(
+            person=self.owner_person,
+            style=junior_ground_crew,
+            status=self.status_active,
+            expiration=date.today() + timedelta(days=30),
+            marshal=self.ao_person,
+        )
+        senior_auth = Authorization.objects.create(
+            person=self.owner_person,
+            style=senior_ground_crew,
+            status=self.status_pending_waiver,
+            expiration=date.today() + timedelta(days=90),
+            marshal=self.ao_person,
+        )
+
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        response = self.client.post(reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}), follow=True)
+
+        junior_auth.refresh_from_db()
+        senior_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(senior_auth.status, self.status_active)
+        self.assertEqual(junior_auth.status.name, 'Inactive')
+        self.assertFalse(Authorization.objects.effectively_active().filter(id=junior_auth.id).exists())
 
     def test_owner_signing_without_pending_sets_one_year_waiver(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')

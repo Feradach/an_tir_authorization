@@ -3360,11 +3360,12 @@ def _finalize_waiver_signed(request_user: User, target_user: User):
             return False, 'System error: Active status not found.'
         pending_qs.update(status=active_status)
         if activates_senior_ground_crew:
+            inactive_status = _get_or_create_status_by_name('Inactive')
             Authorization.objects.filter(
                 person__user=target_user,
                 style__discipline__name='Equestrian',
                 style__name__in=_JUNIOR_GROUND_CREW_STYLES,
-            ).delete()
+            ).update(status=inactive_status, updated_by=request_user)
         target_user.waiver_expiration = max_exp
         target_user.save()
         return True, 'Waiver signed and authorizations activated.'

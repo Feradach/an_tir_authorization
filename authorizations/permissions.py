@@ -908,13 +908,22 @@ def approve_authorization(request):
         authorization.updated_by = marshal
         authorization.save()
 
+    def inactive_status():
+        status = AuthorizationStatus.objects.filter(name='Inactive').order_by('id').first()
+        if not status:
+            status = AuthorizationStatus.objects.create(name='Inactive')
+        return status
+
     def remove_junior_marshal(authorization):
         discipline = authorization.style.discipline.name
         Authorization.objects.filter(
             person=authorization.person,
             style__name='Junior Marshal',
             style__discipline__name=discipline,
-        ).exclude(id=authorization.id).delete()
+        ).exclude(id=authorization.id).update(
+            status=inactive_status(),
+            updated_by=marshal,
+        )
         return True
 
     def remove_junior_ground_crew(authorization):
@@ -924,7 +933,10 @@ def approve_authorization(request):
             person=authorization.person,
             style__discipline__name='Equestrian',
             style__name__in=_JUNIOR_GROUND_CREW_STYLES,
-        ).exclude(id=authorization.id).delete()
+        ).exclude(id=authorization.id).update(
+            status=inactive_status(),
+            updated_by=marshal,
+        )
         return True
 
     def remove_superseded_junior_authorization(authorization):
