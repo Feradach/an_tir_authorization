@@ -1,32 +1,26 @@
-# ISSUES
+# Bugs
 
-Need to launch the program. The current database has been destroyed by a ransomware attack.
-
+* KAO has a bug where they cannot confirm an authorization as themselves.
 
 
 ## Features
 
-### For Immediate Launch
+### Urgent
 
-* (External) Get membership dump from Seneschal
-* (External) Add post backup authorizations into the system.
-* Create welcome email template.
-* (External) Roll out plan including social media information campaign.
-
+* Authorizations on the fighter page need to be separated by status first and discipline second. Each authorization that is in a status other than "Active" should be separated from all other authorizations so that they can be approved or denied separately.
+* Add a confirmation email to the old address for email changes and password resets with instructions on how to dispute if it is fraudulent.
+* Need to create a separation between Kingdom Authorization Officer and Kingdom Equestrian Authorization Officer Roles.
 
 
-### After Launch
+### Near Term
 
-* ! Add maintenance mode to lock changes to the database.
-* ! Add Parent names to User. Require either parent ID or parent name for youth. (We could make parent ID mandatory and force them to create the parent first)
-* ! Birthday cron checker should remove parent name and parent ID.
 * Remove is_minor status instead relying on birthday.
-* ISSUE-001: Improve fighter page performance for Kingdom Authorization Officer users. The public and normal marshal views are fast, but the auth officer view is slow because it renders full-database person dropdowns for "authorize as", "approve as", and concurrence workflows. This affects only one or two officer accounts and is not a launch blocker. Potential fix: replace those full `<select>` controls with server-backed typeahead/autocomplete lookups that return a small number of matching people as the officer types.
+* Add 2FA to the system. Make it optional for now, possibly mandatory for high access users.
 * Notification when authorization expiration is nearing (with ability to turn them off).
 * Make sure quarterly reports are working and emailing to appropriate people
 * Create chart/report functionality
+* Improve fighter page performance for Kingdom Authorization Officer users. The public and normal marshal views are fast, but the auth officer view is slow because it renders full-database person dropdowns for "authorize as", "approve as", and concurrence workflows. This affects only one or two officer accounts and is not a launch blocker. Potential fix: replace those full `<select>` controls with server-backed typeahead/autocomplete lookups that return a small number of matching people as the officer types.
 * Ability for users to submit reports in the system.
-* Allow the Authorization officer to change an auth start or end date.
 
 
 
@@ -37,7 +31,6 @@ Need to launch the program. The current database has been destroyed by a ransomw
 * Dedicated app
 * Run tournaments through the system
 * Fighter practice check in
-
 
 
 ## Bugs
