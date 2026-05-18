@@ -4917,6 +4917,37 @@ def add_authorization(request, person_id):
                     note=action_note,
                 )
 
+            def deactivate_replaced_youth_authorizations(current_authorization):
+                style = current_authorization.style
+                if (
+                    not style
+                    or style.discipline.name not in ['Youth Armored', 'Youth Rapier']
+                    or style.name in ['Junior Marshal', 'Senior Marshal']
+                ):
+                    return
+                current_category = youth_age_category_for_style_name(style.name)
+                if not current_category:
+                    return
+                inactive_status = _get_or_create_status_by_name('Inactive')
+                base_style_name = youth_base_style_name(style.name)
+                replacement_style_ids = [
+                    candidate.id
+                    for candidate in WeaponStyle.objects.filter(discipline=style.discipline)
+                    if (
+                        candidate.id != style.id
+                        and candidate.name not in ['Junior Marshal', 'Senior Marshal']
+                        and youth_age_category_for_style_name(candidate.name)
+                        and youth_base_style_name(candidate.name) == base_style_name
+                    )
+                ]
+                if not replacement_style_ids:
+                    return
+                Authorization.objects.filter(
+                    person=current_authorization.person,
+                    style_id__in=replacement_style_ids,
+                    status=active_status,
+                ).update(status=inactive_status, updated_by=authorizing_marshal)
+
             clear_pending_on_exit = bool(is_pending_submit and action_note)
             try:
                 with transaction.atomic():
@@ -5041,6 +5072,8 @@ def add_authorization(request, person_id):
                                 update_auth.expiration = calculate_authorization_expiration(person, update_auth.style)
                                 update_auth.updated_by = authorizing_marshal
                                 update_auth.save()
+                                if update_auth.status == active_status:
+                                    deactivate_replaced_youth_authorizations(update_auth)
                                 if update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
                                     record_note(update_auth, 'marshal_proposed')
                                 selected_styles.remove(style_id)
@@ -5096,6 +5129,7 @@ def add_authorization(request, person_id):
                                                 if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
                                                     person.user.waiver_expiration = expiration
                                                     person.user.save()
+                                                deactivate_replaced_youth_authorizations(new_auth)
                                             messages.success(request, success_message)
                                         else:
                                             new_auth = Authorization.objects.create(
@@ -5148,6 +5182,7 @@ def add_authorization(request, person_id):
                                             if (not person.user.waiver_expiration) or (person.user.waiver_expiration < expiration):
                                                 person.user.waiver_expiration = expiration
                                                 person.user.save()
+                                            deactivate_replaced_youth_authorizations(new_auth)
 
                         except Exception as e:
                             print(f"Error processing style {style_id}: {e}")

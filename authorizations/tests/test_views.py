@@ -4524,6 +4524,48 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             'start_date': date.today().isoformat(),
         }
 
+    def test_replacement_youth_authorization_inactivates_previous_age_category_same_style(self):
+        lion_weapon = WeaponStyle.objects.create(name='Lion - Weapon & Shield', discipline=self.discipline_youth_armored)
+        gryphon_weapon = WeaponStyle.objects.create(name='Gryphon - Weapon & Shield', discipline=self.discipline_youth_armored)
+        dragon_weapon = WeaponStyle.objects.create(name='Dragon - Weapon & Shield', discipline=self.discipline_youth_armored)
+        lion_two_handed = WeaponStyle.objects.create(name='Lion - Two-Handed', discipline=self.discipline_youth_armored)
+        youth_marshal_user, youth_marshal = self.make_person('replacement_youth_marshal', 'Replacement Youth Marshal')
+        self.grant_authorization(youth_marshal, self.style_sm_youth_armored)
+        target_user, target = self.make_person(
+            'replacement_youth_target',
+            'Replacement Youth Target',
+            birthday=date.today() - relativedelta(years=10),
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        previous_same_style = self.grant_authorization(target, lion_weapon, marshal=youth_marshal)
+        previous_other_style = self.grant_authorization(target, lion_two_handed, marshal=youth_marshal)
+        previous_future_category = self.grant_authorization(target, dragon_weapon, marshal=youth_marshal)
+
+        self.client.login(username=youth_marshal_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_youth_armored.id),
+                'weapon_styles': [str(gryphon_weapon.id)],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        previous_same_style.refresh_from_db()
+        previous_other_style.refresh_from_db()
+        previous_future_category.refresh_from_db()
+        self.assertEqual(previous_same_style.status.name, 'Inactive')
+        self.assertEqual(previous_other_style.status.name, 'Active')
+        self.assertEqual(previous_future_category.status.name, 'Inactive')
+        self.assertTrue(
+            Authorization.objects.filter(
+                person=target,
+                style=gryphon_weapon,
+                status=self.status_active,
+            ).exists()
+        )
+
     def _setup_equestrian_submission_context(self):
         discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
         style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
