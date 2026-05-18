@@ -13,6 +13,18 @@ logger = logging.getLogger(__name__)
 
 KINGDOM_APPROVAL_STATUS = 'Needs Kingdom Approval'
 KINGDOM_EQUESTRIAN_WAIVER_STATUS = 'Needs Kingdom Equestrian Waiver'
+YOUTH_DISCIPLINE_NAMES = ['Youth Armored', 'Youth Rapier']
+YOUTH_AGE_CATEGORIES = {
+    'Lion': (6, 9),
+    'Gryphon': (10, 13),
+    'Dragon': (14, 17),
+}
+YOUTH_AGE_OUT_YEARS = {
+    'Lion': 10,
+    'Gryphon': 14,
+    'Dragon': 18,
+}
+YOUTH_CATEGORY_PREFIXES = tuple(YOUTH_AGE_CATEGORIES.keys())
 
 EQUESTRIAN_STYLE_ALIASES = {
     'Ground Crew - Junior': {'Ground Crew - Junior', 'Junior Ground Crew'},
@@ -48,6 +60,54 @@ _MOUNTED_WEAPON_GAME_STYLES = (
     | _MOUNTED_COMBAT_STYLES
     | _FOAM_TIPPED_JOUSTING_STYLES
 )
+
+
+def youth_age_category_for_age(age: int) -> Optional[str]:
+    for category, (minimum, maximum) in YOUTH_AGE_CATEGORIES.items():
+        if minimum <= age <= maximum:
+            return category
+    return None
+
+
+def youth_age_category_for_birthday(birthday, today: Optional[date] = None) -> Optional[str]:
+    if not birthday:
+        return None
+    if today is None:
+        today = date.today()
+    age = today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+    return youth_age_category_for_age(age)
+
+
+def youth_age_category_for_style_name(style_name: str) -> Optional[str]:
+    if not style_name:
+        return None
+    for category in YOUTH_CATEGORY_PREFIXES:
+        if style_name == category or style_name.startswith(f'{category} - '):
+            return category
+    return None
+
+
+def youth_base_style_name(style_name: str) -> str:
+    category = youth_age_category_for_style_name(style_name)
+    if category and style_name.startswith(f'{category} - '):
+        return style_name[len(category) + 3:]
+    return style_name
+
+
+def youth_category_age_out_date(birthday, category: str):
+    age_out_years = YOUTH_AGE_OUT_YEARS.get(category)
+    if not birthday or not age_out_years:
+        return None
+    return birthday + relativedelta(years=age_out_years)
+
+
+def is_youth_combat_style(style: WeaponStyle) -> bool:
+    return (
+        style
+        and getattr(style, 'discipline', None)
+        and style.discipline.name in YOUTH_DISCIPLINE_NAMES
+        and style.name not in ['Junior Marshal', 'Senior Marshal']
+    )
 
 
 def _equestrian_aliases_for_style_name(style_name: str) -> set[str]:
@@ -386,12 +446,17 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
 
     # Rule 4: A Rapier or Youth Rapier fighter must have single sword as their first weapon authorization
     # Since these require single sword first, they rely on single sword being before the other combat styles so that they can be added in the same form submission.
-    if not style.name in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
+    style_base_name = youth_base_style_name(style.name)
+    if not style_base_name in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
         if style.discipline.name == 'Rapier Combat':
             if not active_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier Combat').exists():
                 return False, 'A fighter must be authorized with single sword as their first rapier authorization.'
         if style.discipline.name == 'Youth Rapier':
-            if not active_authorizations.filter(style__name='Single Sword', style__discipline__name='Youth Rapier').exists():
+            category = youth_age_category_for_style_name(style.name)
+            single_sword_names = ['Single Sword']
+            if category:
+                single_sword_names.append(f'{category} - Single Sword')
+            if not active_authorizations.filter(style__name__in=single_sword_names, style__discipline__name='Youth Rapier').exists():
                 return False, 'A fighter must be authorized with single sword as their first youth rapier authorization.'
     
     # Rule 5: A Cut & Thrust fighter cannot have spear as their first authorization.
@@ -431,13 +496,20 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
             return False, 'Must be at least 16 years old to become authorized as Ground Crew - Senior.'
 
     # Rule 9: Youth combatants must be at least 6 years old and minors.
-    if style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+    if style.discipline.name in YOUTH_DISCIPLINE_NAMES:
         # Rule 9a: The exception is that marshals can be adults.
         if not style.name in ['Junior Marshal', 'Senior Marshal']:
             if age < 6:
                 return False, f'Must be at least 6 years old to become authorized in {style.discipline.name} combat.'
             if not fighter_is_minor:
                 return False, f'Must be a minor to become authorized in {style.discipline.name} combat.'
+            style_category = youth_age_category_for_style_name(style.name)
+            fighter_category = youth_age_category_for_age(age)
+            if style_category and style_category != fighter_category:
+                return False, (
+                    f'{style.name} is only for {style_category} youth. '
+                    f'This fighter is in the {fighter_category or "ineligible"} age category.'
+                )
 
     # Rule 10: For equestrian, a person must be at least 5 years old to engage in general riding, mounted gaming, mounted archery, or junior ground crew.
     if style.name in (
@@ -607,7 +679,7 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
             return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored Combat unless you are a regional marshal.'
 
     # Rule 23: Adults cannot be authorized as youth armored or youth rapier fighters. They can be authorized as youth marshals.
-    if not fighter_is_minor and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+    if not fighter_is_minor and style.discipline.name in YOUTH_DISCIPLINE_NAMES:
         if style.name != 'Junior Marshal' and style.name != 'Senior Marshal':
             return False, 'Adults cannot be authorized as youth armored or youth rapier fighters.'
 
@@ -624,8 +696,13 @@ def calculate_age(birthday):
 def calculate_authorization_expiration(person: Person, style: WeaponStyle, today: Optional[date] = None) -> date:
     if today is None:
         today = date.today()
-    base_years = 2 if style.discipline.name in ['Youth Armored', 'Youth Rapier'] else 4
+    base_years = 2 if style.discipline.name in YOUTH_DISCIPLINE_NAMES else 4
     base_expiration = today + relativedelta(years=base_years)
+    if is_youth_combat_style(style):
+        category = youth_age_category_for_style_name(style.name)
+        age_out_date = youth_category_age_out_date(person.user.birthday, category)
+        if age_out_date:
+            base_expiration = min(base_expiration, age_out_date)
     adult_date = person.adult_date
     if person.is_current_minor and adult_date:
         return min(base_expiration, adult_date)

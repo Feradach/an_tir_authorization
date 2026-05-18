@@ -1,4 +1,9 @@
 ﻿
+## [1.0.2] - 2026-05-20
+### Changed
+- Youth combat authorizations are tied to specific age categories and must be renewed when moving to a new age category.
+
+
 ## [1.0.1] - 2026-05-13
 ### Changed
 - When a roster is uploaded, all membership expiration dates are automatically updated to the latest date found in the roster.

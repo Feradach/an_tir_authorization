@@ -74,7 +74,13 @@ class AuthorizationTestBase(TestCase):
         cls.style_sm_youth_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_armored)
         cls.style_jm_youth_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_youth_armored)
         cls.style_sword_youth_armored = WeaponStyle.objects.create(name='Sword', discipline=cls.discipline_youth_armored)
+        cls.style_lion_sword_youth_armored = WeaponStyle.objects.create(name='Lion - Sword', discipline=cls.discipline_youth_armored)
+        cls.style_gryphon_sword_youth_armored = WeaponStyle.objects.create(name='Gryphon - Sword', discipline=cls.discipline_youth_armored)
+        cls.style_dragon_sword_youth_armored = WeaponStyle.objects.create(name='Dragon - Sword', discipline=cls.discipline_youth_armored)
         cls.style_sword_youth_rapier = WeaponStyle.objects.create(name='Single Sword', discipline=cls.discipline_youth_rapier)
+        cls.style_sm_youth_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_youth_rapier)
+        cls.style_gryphon_single_youth_rapier = WeaponStyle.objects.create(name='Gryphon - Single Sword', discipline=cls.discipline_youth_rapier)
+        cls.style_gryphon_defensive_youth_rapier = WeaponStyle.objects.create(name='Gryphon - Sword w/Defensive Secondary', discipline=cls.discipline_youth_rapier)
         cls.style_sm_equestrian = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_equestrian)
         cls.style_jm_equestrian = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_equestrian)
         cls.style_junior_ground_crew = WeaponStyle.objects.create(name='Ground Crew - Junior', discipline=cls.discipline_equestrian)
@@ -328,6 +334,17 @@ class AuthorizationExpirationCalculationTests(AuthorizationTestBase):
         expected = birthday + relativedelta(years=19)
         self.assertEqual(calculate_authorization_expiration(fighter, self.style_weapon_armored), expected)
 
+    def test_youth_category_expiration_is_capped_at_age_out(self):
+        birthday = date.today() - relativedelta(years=9, months=11)
+        _, fighter = self.make_person(
+            'lion_age_out',
+            'Lion Age Out',
+            birthday=birthday,
+        )
+
+        expected = birthday + relativedelta(years=10)
+        self.assertEqual(calculate_authorization_expiration(fighter, self.style_lion_sword_youth_armored), expected)
+
 
 class MarshalRoleCheckTests(AuthorizationTestBase):
     def test_is_senior_marshal_true_with_current_membership_and_active_authorization(self):
@@ -438,6 +455,34 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_jm_youth_armored.id)
 
         self.assertTrue(ok)
+
+    def test_youth_authorization_must_match_age_category(self):
+        marshal_user, marshal = self.make_person('youth_category_marshal', 'Youth Category Marshal')
+        self.grant_authorization(marshal, self.style_sm_youth_armored)
+        _, fighter = self.make_person(
+            'youth_category_target',
+            'Youth Category Target',
+            birthday=date.today() - relativedelta(years=12),
+        )
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_lion_sword_youth_armored.id)
+
+        self.assertFalse(ok)
+        self.assertIn('only for Lion youth', msg)
+
+    def test_youth_rapier_category_secondary_accepts_matching_single_sword(self):
+        marshal_user, marshal = self.make_person('youth_rapier_marshal', 'Youth Rapier Marshal')
+        self.grant_authorization(marshal, self.style_sm_youth_rapier)
+        _, fighter = self.make_person(
+            'youth_rapier_target',
+            'Youth Rapier Target',
+            birthday=date.today() - relativedelta(years=12),
+        )
+        self.grant_authorization(fighter, self.style_gryphon_single_youth_rapier)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_gryphon_defensive_youth_rapier.id)
+
+        self.assertTrue(ok, msg)
         self.assertEqual(msg, 'Authorization follows all rules.')
 
     def test_blocks_pending_duplicate_authorization(self):

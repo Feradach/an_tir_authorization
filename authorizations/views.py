@@ -28,7 +28,7 @@ from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
 from collections import defaultdict
@@ -4538,13 +4538,15 @@ def generate_fighter_card(request, person_id, template_id):
     expiration = earliest_auth.effective_expiration if earliest_auth else None
 
     weapon_styles = WeaponStyle.objects.select_related('discipline').all()
-    status_list = []
+    status_map = {}
     for style in weapon_styles:
         is_authorized = authorization_list.filter(style=style).exists()
-        status_list.append({
-            'style': f'{style.discipline.name} - {style.name}',
-            'is_authorized': 'X' if is_authorized else ''
-        })
+        style_name = style.name
+        if template_id == '2' and style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+            style_name = youth_base_style_name(style.name)
+        status_key = f'{style.discipline.name} - {style_name}'
+        if is_authorized or status_key not in status_map:
+            status_map[status_key] = 'X' if is_authorized else ''
 
     marshal_list = []
     seen_disciplines = set()
@@ -4562,25 +4564,21 @@ def generate_fighter_card(request, person_id, template_id):
         'expiration': expiration.strftime('%m/%d/%Y'),
         'minor': 'X' if person.minor_status == 'Yes' else ''
     }
-    for status in status_list:
-        data[status['style']] = status['is_authorized']
+    for style_key, is_authorized in status_map.items():
+        data[style_key] = is_authorized
 
     if template_id == '2':
         data['Youth Marshal'] = marshal_list[0]['marshal']
-        birthday = person.user.birthday
-        if birthday:
-            user_age = calculate_age(birthday)
-            if 6 <= user_age <= 9:
-                data['Lion'] = 'X'
-            elif 10 <= user_age <= 13:
-                data['Gryphon'] = 'X'
-            elif 14 <= user_age <= 17:
-                data['Dragon'] = 'X'
-            else:
-                # Add Background Check exp
-                data['Background_expiration'] = expiration.strftime('%m/%d/%Y')
-        else:
-            # Add Background Check exp
+        youth_categories = set()
+        for auth in authorization_list:
+            if auth.style.name in ['Junior Marshal', 'Senior Marshal']:
+                continue
+            category = youth_age_category_for_style_name(auth.style.name)
+            if category:
+                youth_categories.add(category)
+        for category in youth_categories:
+            data[category] = 'X'
+        if not youth_categories:
             data['Background_expiration'] = expiration.strftime('%m/%d/%Y')
 
     else:
@@ -4614,8 +4612,27 @@ def generate_fighter_card(request, person_id, template_id):
 
 
 def get_weapon_styles(request, discipline_id):
-    styles = WeaponStyle.objects.filter(discipline_id=discipline_id).values('id', 'name')
-    return JsonResponse({'styles': list(styles)})
+    styles = list(
+        WeaponStyle.objects.select_related('discipline')
+        .filter(discipline_id=discipline_id)
+        .order_by('id')
+    )
+    if styles and styles[0].discipline.name in ['Youth Armored', 'Youth Rapier']:
+        styles = [
+            style for style in styles
+            if style.name in ['Junior Marshal', 'Senior Marshal'] or youth_age_category_for_style_name(style.name)
+        ]
+        category_order = {'Lion': 0, 'Gryphon': 1, 'Dragon': 2}
+        marshal_order = {'Junior Marshal': 98, 'Senior Marshal': 99}
+        styles.sort(
+            key=lambda style: (
+                marshal_order.get(style.name, category_order.get(youth_age_category_for_style_name(style.name), 50)),
+                youth_base_style_name(style.name),
+                style.name,
+                style.id,
+            )
+        )
+    return JsonResponse({'styles': [{'id': style.id, 'name': style.name} for style in styles]})
 
 
 @login_required
