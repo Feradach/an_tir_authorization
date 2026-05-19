@@ -33,13 +33,15 @@
 {% if branch_officers %}
     <h4>Officer Positions</h4>
     {% for office in branch_officers %}
-        <p><strong>Position:</strong> {{ office.branch.name }} {{ office.discipline.name }}</p>
-        <p>
-            <strong>Expires:</strong> {{ office.end_date }}
-            {% if office.show_effective_expiration %}
-                <span class="past-expiration">({{ office.effective_expiration }})</span>
-            {% endif %}
-        </p>
+        <p><strong>Position:</strong> {{ office.display_position }}</p>
+        {% if office.end_date %}
+            <p>
+                <strong>Expires:</strong> {{ office.end_date }}
+                {% if office.show_effective_expiration %}
+                    <span class="past-expiration">({{ office.effective_expiration }})</span>
+                {% endif %}
+            </p>
+        {% endif %}
     {% endfor %}
 {% endif %}
 {% if can_manage_marshal_offices %}

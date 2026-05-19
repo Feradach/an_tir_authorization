@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 from django.core.mail import send_mail
 from django.conf import settings
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 from django.db import IntegrityError, transaction
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
@@ -28,7 +29,7 @@ from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
 from collections import defaultdict
@@ -121,6 +122,71 @@ def _email_sent_message(message):
     return (
         f'{message} '
         f'Please check your spam or junk folder for an email from {settings.DEFAULT_FROM_EMAIL}.'
+    )
+
+
+def _send_previous_email_change_notice(request, user, person, previous_email):
+    if not previous_email:
+        return
+
+    fighter_url = request.build_absolute_uri(reverse('fighter', kwargs={'person_id': person.user_id}))
+    pacific_time = timezone.localtime(timezone.now(), ZoneInfo('America/Los_Angeles'))
+    changed_at = pacific_time.strftime('%Y-%m-%d %H:%M %Z')
+    mundane_name = user.get_full_name() or user.username
+    admin_email = 'antir.authorization.database@gmail.com'
+
+    message = (
+        'Hello,\n\n'
+        'The email address was changed for this An Tir Authorization account:\n\n'
+        f'Society name: {person.sca_name}\n'
+        f'Mundane name: {mundane_name}\n'
+        f'Fighter page: {fighter_url}\n\n'
+        f'The change was made on {changed_at} Pacific Time.\n\n'
+        'If you made this change, no action is needed.\n\n'
+        'If you did not make this change, please contact the site administration team immediately at:\n\n'
+        f'{admin_email}\n\n'
+        'For your security, future account emails and recovery messages for this account will be sent to the updated email address.\n\n'
+        f'{_email_sender_notice()}'
+    )
+    send_mail(
+        'Email address changed for an An Tir Authorization account',
+        message,
+        settings.DEFAULT_FROM_EMAIL,
+        [previous_email],
+        fail_silently=False,
+    )
+
+
+def _send_password_change_notice(request, user, person):
+    if not user.email:
+        return
+
+    fighter_url = request.build_absolute_uri(reverse('fighter', kwargs={'person_id': person.user_id})) if person else ''
+    pacific_time = timezone.localtime(timezone.now(), ZoneInfo('America/Los_Angeles'))
+    changed_at = pacific_time.strftime('%Y-%m-%d %H:%M %Z')
+    mundane_name = user.get_full_name() or user.username
+    society_name = person.sca_name if person else '-'
+    admin_email = 'antir.authorization.database@gmail.com'
+    fighter_line = f'Fighter page: {fighter_url}\n' if fighter_url else ''
+
+    message = (
+        'Hello,\n\n'
+        'The password was changed for this An Tir Authorization account:\n\n'
+        f'Society name: {society_name}\n'
+        f'Mundane name: {mundane_name}\n'
+        f'{fighter_line}\n'
+        f'The change was made on {changed_at} Pacific Time.\n\n'
+        'If you made this change, no action is needed.\n\n'
+        'If you did not make this change, please contact the site administration team immediately at:\n\n'
+        f'{admin_email}\n\n'
+        f'{_email_sender_notice()}'
+    )
+    send_mail(
+        'Password changed for an An Tir Authorization account',
+        message,
+        settings.DEFAULT_FROM_EMAIL,
+        [user.email],
+        fail_silently=False,
     )
 
 
@@ -1750,6 +1816,7 @@ def _handle_supporting_document_upload(request, *, default_person=None, next_url
 
         has_global_upload_scope = (
             is_kingdom_authorization_officer(request.user)
+            or is_kingdom_equestrian_authorization_officer(request.user)
             or is_senior_marshal(request.user, 'Equestrian')
         )
         if not has_global_upload_scope:
@@ -1878,7 +1945,11 @@ def _viewer_is_superior_for_office(viewer: User, office: BranchMarshal) -> bool:
     # Regional discipline marshals are superiors for branch discipline marshals in their own region.
     if office.branch.is_region():
         return False
-    if office.discipline.name in ['Earl Marshal', 'Authorization Officer']:
+    if office.discipline.name in [
+        'Earl Marshal',
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ]:
         return False
 
     region_name = _office_region_name(office)
@@ -1915,6 +1986,7 @@ def _can_view_all_supporting_documents(user) -> bool:
         return False
     if (
         is_kingdom_authorization_officer(user)
+        or is_kingdom_equestrian_authorization_officer(user)
         or is_kingdom_earl_marshal(user)
     ):
         return True
@@ -2070,7 +2142,11 @@ def _annotate_homepage_document_alerts(authorizations):
     return rows
 
 def _sanctionable_disciplines_for_user(user):
-    base = Discipline.objects.exclude(name__in=['Earl Marshal', 'Authorization Officer'])
+    base = Discipline.objects.exclude(name__in=[
+        'Earl Marshal',
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ])
     if not user or not user.is_authenticated:
         return base.none()
     if _is_sanctions_supervisor(user):
@@ -2089,7 +2165,11 @@ def _can_manage_sanctions_for_discipline(user, discipline) -> bool:
     if not discipline:
         return False
     discipline_name = discipline.name if hasattr(discipline, 'name') else discipline
-    if discipline_name in ['Earl Marshal', 'Authorization Officer']:
+    if discipline_name in [
+        'Earl Marshal',
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ]:
         return False
     if _is_sanctions_supervisor(user):
         return True
@@ -2106,7 +2186,7 @@ def _active_sanction_issuing_office(user, discipline, today=None):
 
     target_discipline_names = [discipline.name]
     if is_kingdom_authorization_officer(user):
-        target_discipline_names = ['Authorization Officer']
+        target_discipline_names = [KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE]
     elif is_kingdom_earl_marshal(user):
         target_discipline_names = ['Earl Marshal']
 
@@ -2575,6 +2655,7 @@ def index(request):
     kingdom_marshal = is_kingdom_marshal(request.user)
     kingdom_earl_marshal = is_kingdom_marshal(request.user, 'Earl Marshal')
     auth_officer = is_kingdom_authorization_officer(request.user)
+    equestrian_auth_officer = is_kingdom_equestrian_authorization_officer(request.user)
     can_manage_sanctions = _can_access_sanctions(request.user)
     can_view_supporting_documents = _can_view_supporting_documents(request.user)
     can_manage_lock = can_manage_maintenance_lock(request.user)
@@ -2613,13 +2694,22 @@ def index(request):
             pending_authorizations = Authorization.objects.with_effective_expiration().filter(
                 status__name='Needs Regional Approval'
             ).order_by('effective_expiration_date')
-    if auth_officer:
+    if auth_officer or equestrian_auth_officer:
+        status_filter = Q()
+        if auth_officer:
+            status_filter |= Q(status__name=KINGDOM_APPROVAL_STATUS) & ~Q(style__discipline__name='Equestrian')
+            status_filter |= Q(status__name='Pending Background Check') & ~Q(style__discipline__name='Equestrian')
+        if equestrian_auth_officer:
+            status_filter |= Q(
+                status__name__in=[
+                    KINGDOM_APPROVAL_STATUS,
+                    KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+                    'Pending Background Check',
+                ],
+                style__discipline__name='Equestrian',
+            )
         pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-            status__name__in=[
-                KINGDOM_APPROVAL_STATUS,
-                'Pending Background Check',
-                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
-            ]
+            status_filter,
         ).order_by('effective_expiration_date')
     pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
 
@@ -2836,6 +2926,7 @@ def index(request):
         'kingdom_marshal': kingdom_marshal,
         'kingdom_earl_marshal': kingdom_earl_marshal,
         'auth_officer': auth_officer,
+        'equestrian_auth_officer': equestrian_auth_officer,
         'can_manage_sanctions': can_manage_sanctions,
         'can_view_supporting_documents': can_view_supporting_documents,
         'pending_authorizations': pending_authorizations,
@@ -3099,6 +3190,10 @@ def password_reset(request, user_id):
         user.set_password(password)
         user.has_logged_in = True
         user.save()
+        try:
+            _send_password_change_notice(request, user, getattr(user, 'person', None))
+        except Exception:
+            logger.exception('Error sending password change notice for user_id=%s', user.id)
         login(request, user)
         messages.success(request, 'Your password has been reset successfully.')
         return redirect('index')
@@ -3179,6 +3274,10 @@ def password_reset_token(request, uidb64, token):
         user.is_active = True
         user.has_logged_in = True
         user.save()
+        try:
+            _send_password_change_notice(request, user, getattr(user, 'person', None))
+        except Exception:
+            logger.exception('Error sending password change notice for user_id=%s', user.id)
         messages.success(request, 'Your password has been set. You can now log in.')
         return redirect('login')
 
@@ -3833,6 +3932,7 @@ def fighter(request, person_id):
         return redirect('search')
     user = person.user
     auth_officer = is_kingdom_authorization_officer(request.user) if request.user.is_authenticated else False
+    equestrian_auth_officer = is_kingdom_equestrian_authorization_officer(request.user) if request.user.is_authenticated else False
     earl_marshal = is_kingdom_earl_marshal(request.user) if request.user.is_authenticated else False
     can_manage_sanctions = _can_access_sanctions(request.user) if request.user.is_authenticated else False
     has_active_marshal_office = BranchMarshal.objects.filter(
@@ -4175,6 +4275,7 @@ def fighter(request, person_id):
     if request.user.is_authenticated:
         can_view_notes = (
             is_kingdom_authorization_officer(request.user)
+            or is_kingdom_equestrian_authorization_officer(request.user)
             or is_kingdom_earl_marshal(request.user)
             or is_kingdom_marshal(request.user)
             or is_regional_marshal(request.user)
@@ -4260,7 +4361,11 @@ def fighter(request, person_id):
         can_reject = False
         if request.user.is_authenticated:
             can_approve, _ = validate_approve_authorization(request.user, request.user, auth)
-            if auth_officer:
+            if (
+                auth_officer
+                and auth.style.discipline.name != 'Equestrian'
+                and auth.status.name in ['Pending', 'Needs Regional Approval', KINGDOM_APPROVAL_STATUS]
+            ):
                 can_approve = True
             can_reject_ok, _ = validate_reject_authorization(request.user, auth)
             can_reject = auth.status.name in [
@@ -4269,12 +4374,18 @@ def fighter(request, person_id):
                 KINGDOM_APPROVAL_STATUS,
                 KINGDOM_EQUESTRIAN_WAIVER_STATUS,
             ] and can_reject_ok
-            if auth_officer and auth.status.name in [
+            if auth_officer and auth.style.discipline.name != 'Equestrian' and auth.status.name in [
                 'Pending',
                 'Needs Regional Approval',
                 KINGDOM_APPROVAL_STATUS,
-                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
             ]:
+                can_reject = True
+            if equestrian_auth_officer and auth.style.discipline.name == 'Equestrian' and auth.status.name in [
+                KINGDOM_APPROVAL_STATUS,
+                KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+                'Pending Background Check',
+            ]:
+                can_approve = True
                 can_reject = True
 
         if discipline_name not in pending_authorizations:
@@ -4373,6 +4484,13 @@ def fighter(request, person_id):
         )
         viewer_is_superior = _viewer_is_superior_for_office(request.user, office)
         office.show_effective_expiration = lower_than_warrant and (viewer_is_self or viewer_is_superior)
+        office.display_position = f'{office.branch.name} {office.discipline.name}'
+    if user.is_staff:
+        branch_officers.insert(0, SimpleNamespace(
+            display_position='Database Administrator',
+            end_date=None,
+            show_effective_expiration=False,
+        ))
 
     if request.user.is_anonymous:
         return render(
@@ -4448,9 +4566,10 @@ def fighter(request, person_id):
             'equestrian': equestrian,
             'youth': youth,
             'fighter': fighter,
-            'is_marshal': is_senior_marshal(request.user) or auth_officer,
+            'is_marshal': is_senior_marshal(request.user) or auth_officer or equestrian_auth_officer,
             'auth_form': CreateAuthorizationForm(user=request.user, show_all=auth_officer),
             'auth_officer': auth_officer,
+            'equestrian_auth_officer': equestrian_auth_officer,
             'can_manage_sanctions': can_manage_sanctions,
             'can_manage_marshal_offices': can_manage_marshal_offices,
             'can_manage_officer_comments': can_manage_officer_comments,
@@ -5383,7 +5502,10 @@ def user_account(request, user_id):
             if action == 'self_set_regional':
                 # Validate requirements only for setting (not removing)
                 # Skip Senior Marshal requirement for Authorization Officer discipline
-                if discipline.name != 'Authorization Officer':
+                if discipline.name not in [
+                    KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+                    KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+                ]:
                     if branch.type in ['Kingdom', 'Principality', 'Region']:
                         # Regional/kingdom appointment requires Senior Marshal
                         has_required = Authorization.objects.effectively_active().filter(
@@ -5410,7 +5532,10 @@ def user_account(request, user_id):
                     return redirect('user_account', user_id=user_id)
 
                 # Authorization Officer may only select the Kingdom (An Tir)
-                if discipline.name == 'Authorization Officer' and branch.name != 'An Tir':
+                if discipline.name in [
+                    KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+                    KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+                ] and branch.name != 'An Tir':
                     messages.error(request, 'Authorization Officers must be appointed at the Kingdom level (An Tir).')
                     return redirect('user_account', user_id=user_id)
 
@@ -5471,6 +5596,7 @@ def user_account(request, user_id):
             form.add_error(None, 'A bypass note is required when overriding membership validation.')
             form_valid = False
         if form_valid:
+            previous_email = user.email
             previous_membership = user.membership
             previous_membership_expiration = user.membership_expiration
             previous_background_check_expiration = user.background_check_expiration
@@ -5509,6 +5635,12 @@ def user_account(request, user_id):
             person.parent_first_name = form.cleaned_data.get('parent_first_name', '')
             person.parent_last_name = form.cleaned_data.get('parent_last_name', '')
             person.save()
+
+            if (previous_email or '').strip().casefold() != (user.email or '').strip().casefold():
+                try:
+                    _send_previous_email_change_notice(request, user, person, previous_email)
+                except Exception:
+                    logger.exception('Error sending previous email change notice for user_id=%s', user.id)
 
             if form.membership_mismatch_bypass_used:
                 UserNote.objects.create(
@@ -5564,6 +5696,7 @@ def user_account(request, user_id):
     )
     can_upload_equestrian_for_anyone = (
         is_kingdom_authorization_officer(request.user)
+        or is_kingdom_equestrian_authorization_officer(request.user)
         or is_senior_marshal(request.user, 'Equestrian')
     )
 
@@ -5887,6 +6020,7 @@ def supporting_documents(request):
         'can_upload_equestrian_for_anyone': (
             request.user.is_authenticated and (
                 is_kingdom_authorization_officer(request.user)
+                or is_kingdom_equestrian_authorization_officer(request.user)
                 or is_senior_marshal(request.user, 'Equestrian')
             )
         ),
@@ -7829,7 +7963,11 @@ class CreateAuthorizationForm(forms.Form):
     """Get the authorizations that the user would like to create."""
 
     discipline = forms.ModelChoiceField(
-        queryset=Discipline.objects.all().exclude(name__in=['Earl Marshal', 'Authorization Officer']),
+        queryset=Discipline.objects.all().exclude(name__in=[
+            'Earl Marshal',
+            KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+            KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+        ]),
         required=False,
         empty_label='Select Discipline',
         widget=forms.Select(attrs={'id': 'discipline-select'})
@@ -7848,11 +7986,19 @@ class CreateAuthorizationForm(forms.Form):
 
         if show_all:
             # Public testing: expose all disciplines (except AO/EM which aren't user auths)
-            self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
+            self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=[
+                KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+                KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+                'Earl Marshal',
+            ])
         elif user:
             # Filter disciplines based on the user's senior marshal authorizations
             if is_kingdom_authorization_officer(user):
-                self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=['Authorization Officer', 'Earl Marshal'])
+                self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=[
+                    KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+                    KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+                    'Earl Marshal',
+                ])
             else:
                 senior_authorizations = Authorization.objects.effectively_active().filter(
                     person__user=user,

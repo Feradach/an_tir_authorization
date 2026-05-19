@@ -1,7 +1,14 @@
 ﻿
 ## [1.0.2] - 2026-05-20
+### Added
+- When an account email address or password is changed, a security notice is sent to the (previous) email address.
+- Password fields now include a show/hide control so users can check what they typed.
+- Tightened authorization officer interface.
+- Added a Kingdom Equestrian Authorization Officer role for kingdom-level review of equestrian authorizations.
+
 ### Changed
 - Youth combat authorizations are tied to specific age categories and must be renewed when moving to a new age category.
+- Kingdom Authorization Officer review is now limited to non-equestrian authorizations; equestrian kingdom waiver review belongs to the Kingdom Equestrian Authorization Officer.
 
 
 ## [1.0.1] - 2026-05-13

@@ -216,7 +216,7 @@
                             {% endif %}
                         </td>
                         <td>
-                    {% if auth_officer and authorization.status.name == "Pending Background Check" %}
+                    {% if auth_officer and authorization.status.name == "Pending Background Check" and authorization.style.discipline.name != "Equestrian" %}
                         <a href="{% url 'user_account' user_id=authorization.person.user_id %}" class="btn btn-primary">Go To Page</a>
                     {% else %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
@@ -230,7 +230,7 @@
                                 <button type="submit" class="btn btn-success">Approve</button>
                             </form>
                     {% endif %}
-                    {% if regional_marshal and not auth_officer or auth_officer and authorization.status.name == "Needs Kingdom Approval" or auth_officer and authorization.status.name == "Pending Background Check" or auth_officer and authorization.status.name == "Needs Kingdom Equestrian Waiver" or kingdom_marshal and authorization.status.name == "Needs Kingdom Equestrian Waiver" %}
+                    {% if regional_marshal and not auth_officer and not equestrian_auth_officer or auth_officer and authorization.status.name == "Needs Kingdom Approval" or auth_officer and authorization.status.name == "Pending Background Check" or equestrian_auth_officer and authorization.style.discipline.name == "Equestrian" and authorization.status.name == "Needs Kingdom Approval" or equestrian_auth_officer and authorization.status.name == "Needs Kingdom Equestrian Waiver" or equestrian_auth_officer and authorization.style.discipline.name == "Equestrian" and authorization.status.name == "Pending Background Check" %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'reject_authorization' and pending_authorization_action.authorization_id == authorization.id %} data-pending-note="1" data-note-title="Rejection Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}>
                         {% csrf_token %}
                         <input type="hidden" name="action" value="reject_authorization">

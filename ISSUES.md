@@ -1,15 +1,11 @@
 # Bugs
 
-* KAO has a bug where they cannot confirm an authorization as themselves.
-
 
 ## Features
 
 ### Urgent
 
 * Authorizations on the fighter page need to be separated by status first and discipline second. Each authorization that is in a status other than "Active" should be separated from all other authorizations so that they can be approved or denied separately.
-* Add a confirmation email to the old address for email changes and password resets with instructions on how to dispute if it is fraudulent.
-* Need to create a separation between Kingdom Authorization Officer and Kingdom Equestrian Authorization Officer Roles.
 * Names on the PDF cards exceed the field width and need to be truncated.
 
 

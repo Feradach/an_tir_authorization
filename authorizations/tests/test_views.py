@@ -74,6 +74,7 @@ class ViewTestBase(TestCase):
         cls.discipline_rapier = Discipline.objects.create(name='Rapier Combat')
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
+        cls.discipline_equestrian_auth_officer = Discipline.objects.create(name='Equestrian Authorization Officer')
         cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
 
         cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
@@ -959,7 +960,7 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Require Kingdom Authorization Officer Verification is now Off.')
         self.assertContains(response, 'Automatically approved all 2 authorizations waiting for Kingdom approval.')
 
-    def test_authorization_officer_queue_shows_kingdom_background_and_equestrian_waiver(self):
+    def test_authorization_officer_queue_shows_kingdom_and_background_not_equestrian_waiver(self):
         ao_user, ao_person = self.make_person('index_queue_ao', 'Index Queue AO')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
         proposer_user, proposer_person = self.make_person('index_queue_prop', 'Index Queue Prop')
@@ -1004,7 +1005,7 @@ class IndexViewTests(ViewTestBase):
 
         self.assertContains(response, 'Needs Kingdom Approval')
         self.assertContains(response, 'Pending Background Check')
-        self.assertContains(response, 'Needs Kingdom Equestrian Waiver')
+        self.assertNotContains(response, 'Needs Kingdom Equestrian Waiver')
         self.assertNotContains(response, 'Needs Regional Approval')
         self.assertNotContains(response, 'Approve As (optional):')
         self.assertContains(response, 'No file')
@@ -1149,25 +1150,15 @@ class IndexViewTests(ViewTestBase):
         )
         self.assertContains(response, 'target="_blank"')
 
-    def test_kingdom_equestrian_officer_queue_does_not_show_needs_kingdom_equestrian_waiver(self):
+    def test_kingdom_equestrian_authorization_officer_queue_shows_needs_kingdom_equestrian_waiver(self):
         discipline_equestrian = Discipline.objects.create(name='Equestrian')
-        style_sm_equestrian = WeaponStyle.objects.create(
-            name='Senior Marshal',
-            discipline=discipline_equestrian,
-        )
         style_general_riding = WeaponStyle.objects.create(
             name='General Riding',
             discipline=discipline_equestrian,
         )
         eq_officer_user, eq_officer_person = self.make_person('index_eq_officer', 'Index EQ Officer')
         target_user, target_person = self.make_person('index_eq_target', 'Index EQ Target')
-        self.appoint(eq_officer_person, self.branch_an_tir, discipline_equestrian)
-        self.grant_authorization(
-            eq_officer_person,
-            style_sm_equestrian,
-            status=self.status_active,
-            marshal=eq_officer_person,
-        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
         pending_eq = self.grant_authorization(
             target_person,
             style_general_riding,
@@ -1178,29 +1169,19 @@ class IndexViewTests(ViewTestBase):
         self.client.login(username=eq_officer_user.username, password='StrongPass!123')
         response = self.client.get(reverse('index'))
 
-        self.assertNotContains(response, 'Needs Kingdom Equestrian Waiver')
-        self.assertNotContains(response, 'No file')
-        self.assertNotContains(response, f'name="bad_authorization_id" value="{pending_eq.id}"')
+        self.assertContains(response, 'Needs Kingdom Equestrian Waiver')
+        self.assertContains(response, 'No file')
+        self.assertContains(response, f'name="bad_authorization_id" value="{pending_eq.id}"')
 
-    def test_kingdom_equestrian_officer_cannot_reject_needs_kingdom_equestrian_waiver(self):
+    def test_kingdom_equestrian_authorization_officer_can_reject_needs_kingdom_equestrian_waiver(self):
         discipline_equestrian = Discipline.objects.create(name='Equestrian')
-        style_sm_equestrian = WeaponStyle.objects.create(
-            name='Senior Marshal',
-            discipline=discipline_equestrian,
-        )
         style_general_riding = WeaponStyle.objects.create(
             name='General Riding',
             discipline=discipline_equestrian,
         )
         eq_officer_user, eq_officer_person = self.make_person('index_eq_reject_officer', 'Index EQ Reject Officer')
         target_user, target_person = self.make_person('index_eq_reject_target', 'Index EQ Reject Target')
-        self.appoint(eq_officer_person, self.branch_an_tir, discipline_equestrian)
-        self.grant_authorization(
-            eq_officer_person,
-            style_sm_equestrian,
-            status=self.status_active,
-            marshal=eq_officer_person,
-        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
         pending_eq = self.grant_authorization(
             target_person,
             style_general_riding,
@@ -1220,10 +1201,29 @@ class IndexViewTests(ViewTestBase):
 
         pending_eq.refresh_from_db()
         self.assertEqual(pending_eq.status, self.status_needs_kingdom_equestrian_waiver)
+        self.assertIn('pending_authorization_action', self.client.session)
+        self.assertIn(
+            'Eligibility verified. Please add a note to finalize the rejection.',
+            self.messages_for(first),
+        )
+
+        second = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_eq.id),
+                'action_note': 'Equestrian waiver was not accepted.',
+            },
+            follow=True,
+        )
+
+        pending_eq.refresh_from_db()
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(pending_eq.status.name, 'Rejected')
         self.assertNotIn('pending_authorization_action', self.client.session)
         self.assertIn(
-            'Only the Kingdom Authorization Officer can reject this authorization.',
-            self.messages_for(first),
+            'Authorization rejected.',
+            self.messages_for(second),
         )
 
     def test_unique_name_redirects_to_fighter_page(self):
@@ -1718,6 +1718,17 @@ class TombstoneBehaviorTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Administrator')
 
+    def test_fighter_page_lists_staff_as_database_administrator(self):
+        staff_user, _ = self.make_person('fighter_staff_admin', 'Fighter Staff Admin')
+        staff_user.is_staff = True
+        staff_user.save(update_fields=['is_staff'])
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': staff_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Officer Positions')
+        self.assertContains(response, 'Database Administrator')
+
     @patch('authorizations.views.send_mail')
     def test_fighter_login_instructions_can_be_requested_anonymously(self, mock_send_mail):
         target_user, _ = self.make_person('fighter_login_target', 'Fighter Login Target')
@@ -1878,6 +1889,66 @@ class TombstoneBehaviorTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'invalid or has expired')
+
+    @patch('authorizations.views.send_mail')
+    def test_logged_in_password_change_sends_security_notice(self, mock_send_mail):
+        user, _ = self.make_person(
+            'password_change_user',
+            'Password Change User',
+            email='password-change@example.com',
+        )
+        self.client.login(username=user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('password_reset', kwargs={'user_id': user.id}),
+            {
+                'password': 'NewStrongPass!456',
+                'confirmation': 'NewStrongPass!456',
+            },
+            follow=True,
+        )
+
+        user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(user.check_password('NewStrongPass!456'))
+        self.assertEqual(mock_send_mail.call_count, 1)
+        call_args = mock_send_mail.call_args.args
+        self.assertEqual(call_args[0], 'Password changed for an An Tir Authorization account')
+        self.assertEqual(call_args[3], ['password-change@example.com'])
+        self.assertIn('Society name: Password Change User', call_args[1])
+        self.assertIn('Mundane name: Password Tester', call_args[1])
+        self.assertIn(reverse('fighter', kwargs={'person_id': user.id}), call_args[1])
+        self.assertIn('Pacific Time', call_args[1])
+        self.assertIn('antir.authorization.database@gmail.com', call_args[1])
+
+    @patch('authorizations.views.send_mail')
+    def test_password_reset_token_sends_security_notice_after_password_set(self, mock_send_mail):
+        user, _ = self.make_person(
+            'password_token_user',
+            'Password Token User',
+            email='password-token@example.com',
+        )
+        uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+        token = PasswordResetTokenGenerator().make_token(user)
+
+        response = self.client.post(
+            reverse('password_reset_token', kwargs={'uidb64': uidb64, 'token': token}),
+            {
+                'password': 'NewStrongPass!456',
+                'confirmation': 'NewStrongPass!456',
+            },
+            follow=True,
+        )
+
+        user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(user.check_password('NewStrongPass!456'))
+        self.assertEqual(mock_send_mail.call_count, 1)
+        call_args = mock_send_mail.call_args.args
+        self.assertEqual(call_args[0], 'Password changed for an An Tir Authorization account')
+        self.assertEqual(call_args[3], ['password-token@example.com'])
+        self.assertIn('Society name: Password Token User', call_args[1])
+        self.assertIn(reverse('fighter', kwargs={'person_id': user.id}), call_args[1])
 
     def test_merge_page_search_excludes_already_merged_identities(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
@@ -2368,6 +2439,55 @@ class UserAccountViewTests(ViewTestBase):
         self.owner_user.refresh_from_db()
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(self.owner_user.background_check_expiration)
+
+    @patch('authorizations.views.send_mail')
+    def test_account_update_sends_notice_to_previous_email_when_email_changes(self, mock_send_mail):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        previous_email = self.owner_user.email
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            email='owner.updated@example.com',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.email, 'owner.updated@example.com')
+        self.assertEqual(mock_send_mail.call_count, 1)
+        call_args = mock_send_mail.call_args.args
+        self.assertEqual(call_args[0], 'Email address changed for an An Tir Authorization account')
+        self.assertEqual(call_args[3], [previous_email])
+        self.assertIn('Society name: Owner of Account', call_args[1])
+        self.assertIn('Mundane name: Owner User', call_args[1])
+        self.assertIn(reverse('fighter', kwargs={'person_id': self.owner_user.id}), call_args[1])
+        self.assertIn('antir.authorization.database@gmail.com', call_args[1])
+        self.assertNotIn('owner.updated@example.com', call_args[1])
+
+    @patch('authorizations.views.send_mail')
+    def test_account_update_does_not_send_previous_email_notice_when_email_unchanged(self, mock_send_mail):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            city='Eugene',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.city, 'Eugene')
+        mock_send_mail.assert_not_called()
 
     def test_ao_can_modify_background_check_expiration(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
@@ -4898,7 +5018,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         pending = response.context['pending_authorization_list']['Rapier Combat']
         self.assertFalse(pending['can_approve'])
 
-    def test_kao_sees_pending_approve_but_must_use_submit_as(self):
+    def test_kao_sees_pending_approve_but_needs_marshal_credentials_or_submit_as(self):
         AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
         Authorization.objects.create(
             person=self.candidate_ao_person,
@@ -4929,7 +5049,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             follow=True,
         )
         self.assertIn(
-            'Kingdom Authorization Officer must use "Approve As" to approve this authorization.',
+            'You must be a senior marshal in this discipline to approve this authorization.',
             self.messages_for(blocked),
         )
         pending_auth.refresh_from_db()
@@ -4948,6 +5068,172 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         pending_auth.refresh_from_db()
         self.assertEqual(pending_auth.status, self.status_active)
         self.assertEqual(approved.status_code, 200)
+
+    def test_kao_who_is_senior_marshal_can_approve_pending_as_self(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        Authorization.objects.create(
+            person=self.kao_person,
+            style=self.style_sm_armored,
+            status=self.status_active,
+            marshal=self.kem_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_ao_person,
+            style=self.style_jm_armored,
+            status=self.status_pending,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'KAO is also an armored senior marshal',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertNotIn(
+            'Kingdom Authorization Officer must use "Approve As" to approve this authorization.',
+            self.messages_for(response),
+        )
+
+    def test_kao_can_approve_needs_regional_using_submit_as(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_ao_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'submit_as_user_id': str(self.kem_user.id),
+                'action_note': 'Approved by KAO as Earl Marshal',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+
+    def test_kao_cannot_add_authorization_outside_their_marshal_discipline_as_self(self):
+        discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
+        style_longsword = WeaponStyle.objects.create(
+            name='Longsword',
+            discipline=discipline_cut_and_thrust,
+        )
+        Authorization.objects.create(
+            person=self.kao_person,
+            style=self.style_sm_rapier,
+            status=self.status_active,
+            marshal=self.krapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_cut_and_thrust.id),
+                'weapon_styles': [str(style_longsword.id)],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Authorization.objects.filter(
+                person=self.candidate_armored_person,
+                style=style_longsword,
+            ).exists()
+        )
+        self.assertIn(
+            'Error: Office KAO is not a senior marshal in Cut & Thrust and cannot authorize authorizations.',
+            self.messages_for(response),
+        )
+
+    def test_kao_can_add_authorization_outside_their_marshal_discipline_using_eligible_marshal(self):
+        discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
+        style_longsword = WeaponStyle.objects.create(
+            name='Longsword',
+            discipline=discipline_cut_and_thrust,
+        )
+        style_sm_cut_and_thrust = WeaponStyle.objects.create(
+            name='Senior Marshal',
+            discipline=discipline_cut_and_thrust,
+        )
+        ct_marshal_user, ct_marshal_person = self.make_person(
+            'office_ct_senior_marshal',
+            'Office C&T Senior Marshal',
+        )
+        Authorization.objects.create(
+            person=ct_marshal_person,
+            style=style_sm_cut_and_thrust,
+            status=self.status_active,
+            marshal=self.kem_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_cut_and_thrust.id),
+                'weapon_styles': [str(style_longsword.id)],
+                'marshal_id': str(ct_marshal_user.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        created_auth = Authorization.objects.get(
+            person=self.candidate_armored_person,
+            style=style_longsword,
+        )
+        self.assertEqual(created_auth.marshal, ct_marshal_person)
+
+    def test_kao_cannot_be_appointed_to_second_regional_office(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.kao_user.id}),
+            self._appointment_payload(
+                self.kao_person,
+                self.region_summits,
+                self.discipline_armored,
+            ),
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            'This fighter already has an active marshal officer appointment.',
+            self.messages_for(response),
+        )
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.kao_person,
+                branch=self.region_summits,
+                discipline=self.discipline_armored,
+            ).exists()
+        )
 
     def test_kao_can_approve_needs_kingdom_marshal_without_note(self):
         AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
@@ -5262,12 +5548,8 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertNotEqual(created_auth.status, self.status_kingdom)
         self.assertContains(response, 'Kingdom equestrian waiver review')
 
-    def test_kingdom_equestrian_marshal_cannot_approve_needs_kingdom_equestrian_waiver(self):
+    def test_kingdom_equestrian_authorization_officer_can_approve_needs_kingdom_equestrian_waiver(self):
         discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
-        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
-            name='Senior Marshal',
-            discipline=discipline_equestrian,
-        )
         style_general_riding, _ = WeaponStyle.objects.get_or_create(
             name='General Riding',
             discipline=discipline_equestrian,
@@ -5280,15 +5562,9 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         BranchMarshal.objects.create(
             person=eq_officer_person,
             branch=self.branch_an_tir,
-            discipline=discipline_equestrian,
+            discipline=self.discipline_equestrian_auth_officer,
             start_date=date.today() - timedelta(days=1),
             end_date=date.today() + relativedelta(years=1),
-        )
-        self.grant_authorization(
-            eq_officer_person,
-            style_sm_equestrian,
-            status=self.status_active,
-            marshal=self.kao_person,
         )
 
         self.candidate_armored_user.waiver_expiration = date.today() + relativedelta(years=1)
@@ -5313,8 +5589,37 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         pending_eq.refresh_from_db()
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_eq.status, self.status_active)
+        self.assertContains(response, 'Equestrian General Riding authorization approved!')
+
+    def test_kao_cannot_approve_needs_kingdom_equestrian_waiver(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        pending_eq = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=style_general_riding,
+            status=self.status_needs_kingdom_equestrian_waiver,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_eq.id),
+            },
+            follow=True,
+        )
+
+        pending_eq.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(pending_eq.status, self.status_needs_kingdom_equestrian_waiver)
-        self.assertContains(response, 'Only the Kingdom Authorization Officer can approve this authorization.')
+        self.assertContains(response, 'Only the Kingdom Equestrian Authorization Officer can approve this authorization.')
 
     def test_non_marshal_does_not_get_reject_button_for_needs_regional(self):
         viewer_user, _ = self.make_person('office_pending_viewer', 'Office Pending Viewer')

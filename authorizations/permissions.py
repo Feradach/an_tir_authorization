@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 KINGDOM_APPROVAL_STATUS = 'Needs Kingdom Approval'
 KINGDOM_EQUESTRIAN_WAIVER_STATUS = 'Needs Kingdom Equestrian Waiver'
+KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE = 'Authorization Officer'
+KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE = 'Equestrian Authorization Officer'
 YOUTH_DISCIPLINE_NAMES = ['Youth Armored', 'Youth Rapier']
 YOUTH_AGE_CATEGORIES = {
     'Lion': (6, 9),
@@ -177,7 +179,10 @@ def _marshal_status_expiration_for_office(person: Person, discipline: Discipline
         person=person,
     )
 
-    if discipline.name == 'Authorization Officer':
+    if discipline.name in [
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ]:
         return today + relativedelta(years=100)
     if discipline.name == 'Earl Marshal':
         query = query.filter(style__name='Senior Marshal')
@@ -370,16 +375,51 @@ def is_kingdom_authorization_officer(user):
     query = BranchMarshal.objects.filter(
         person__user=user,
         branch__name='An Tir',
-        discipline__name='Authorization Officer',
+        discipline__name=KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
         end_date__gte=date.today(),
     )
 
     return _has_active_office(query)
 
 
+def is_kingdom_equestrian_authorization_officer(user):
+    """
+    Checks if the user is the Kingdom Equestrian Authorization Officer.
+    Staff users may act as either kingdom authorization officer role.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if user.is_staff:
+        return True
+
+    query = BranchMarshal.objects.filter(
+        person__user=user,
+        branch__name='An Tir',
+        discipline__name=KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+        end_date__gte=date.today(),
+    )
+
+    return _has_active_office(query)
+
+
+def is_equestrian_authorization(authorization):
+    return (
+        authorization
+        and authorization.style
+        and authorization.style.discipline
+        and authorization.style.discipline.name == 'Equestrian'
+    )
+
+
+def can_approve_kingdom_review_authorization(user, authorization):
+    if is_equestrian_authorization(authorization):
+        return is_kingdom_equestrian_authorization_officer(user)
+    return is_kingdom_authorization_officer(user)
+
+
 def can_authorize_in_discipline(user, discipline) -> bool:
     discipline_name = discipline.name if hasattr(discipline, 'name') else discipline
-    return is_kingdom_authorization_officer(user) or is_senior_marshal(user, discipline_name)
+    return is_senior_marshal(user, discipline_name)
 
 
 def is_kingdom_earl_marshal(user):
@@ -796,8 +836,10 @@ def _format_authorization_note_office(office: BranchMarshal) -> str:
     discipline_label = discipline.name
     if discipline_label.endswith(' Combat'):
         discipline_label = discipline_label[:-7]
-    if discipline.name == 'Authorization Officer' and branch.name == 'An Tir':
+    if discipline.name == KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE and branch.name == 'An Tir':
         return 'Kingdom Authorization Officer'
+    if discipline.name == KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE and branch.name == 'An Tir':
+        return 'Kingdom Equestrian Authorization Officer'
     if discipline.name == 'Earl Marshal' and branch.name == 'An Tir':
         return 'Kingdom Earl Marshal'
     if branch.name == 'An Tir':
@@ -849,8 +891,12 @@ def _authorization_note_office_score(
                 score += 20
         return score
 
-    if discipline.name == 'Authorization Officer':
+    if discipline.name == KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE:
         if is_kingdom_review_status_name(status_name) or action in ['sanction_issued', 'sanction_lifted']:
+            return 200
+        return 0
+    if discipline.name == KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE:
+        if authorization_discipline == 'Equestrian' and is_kingdom_review_status_name(status_name):
             return 200
         return 0
 
@@ -1076,13 +1122,9 @@ def approve_authorization(request):
         )
 
     sign_off_required = authorization_officer_sign_off_enabled()
-    is_kao = is_kingdom_authorization_officer(request_user)
-    can_approve_kingdom_pending = is_kao
-    can_approve_equestrian_waiver_pending = is_kao
+    can_approve_kingdom_pending = can_approve_kingdom_review_authorization(request_user, authorization)
 
     if authorization.status.name == 'Pending':
-        if is_kao and marshal.id == request_user.id:
-            return False, 'Kingdom Authorization Officer must use "Approve As" to approve this authorization.'
         # Rule 2: must be a senior marshal in the discipline to approve (exception for missile marshal concurence).
         if not is_senior_marshal(marshal, discipline):
             return False, 'You must be a senior marshal in this discipline to approve this authorization.'
@@ -1127,8 +1169,6 @@ def approve_authorization(request):
 
     # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored Combat can approve Missile Combat).
     elif authorization.status.name == 'Needs Regional Approval':
-        if is_kao and marshal.id == request_user.id:
-            return False, 'Kingdom Authorization Officer must use "Approve As" to approve this authorization.'
         if not auth_region:
             _log_unresolved_authorization_region('regional approval', authorization, request_user)
             return False, 'Could not determine the fighter region for regional approval.'
@@ -1190,13 +1230,8 @@ def approve_authorization(request):
                     save_authorization(authorization)
                     return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
 
-    elif is_kingdom_review_status_name(authorization.status.name):
+    elif authorization.status.name == KINGDOM_APPROVAL_STATUS:
         if authorization.status.name == KINGDOM_APPROVAL_STATUS and not can_approve_kingdom_pending:
-            return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
-        if (
-            authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS
-            and not can_approve_equestrian_waiver_pending
-        ):
             return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
 
         # Marshal authorizations require current membership; never Pending Waiver for marshal styles
@@ -1231,6 +1266,38 @@ def approve_authorization(request):
             return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending background check.'
         return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
 
+    elif authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
+        if not can_approve_kingdom_pending:
+            return False, 'Only the Kingdom Equestrian Authorization Officer can approve this authorization.'
+        if authorization.style.discipline.name != 'Equestrian':
+            return False, 'Only equestrian authorizations can be approved from kingdom equestrian waiver review.'
+
+        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
+            if not membership_is_current(authorization.person.user):
+                return False, 'Marshal authorizations require a current membership.'
+            if youth_marshal_without_current_background_check(authorization):
+                authorization.status = pending_background_check_status
+            else:
+                authorization.status = active_status
+        else:
+            authorization.status = active_status if waiver_current(authorization.person.user) else pending_waiver_status
+
+        authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
+        save_authorization(authorization)
+
+        if authorization.status == active_status:
+            user = authorization.person.user
+            if (not user.waiver_expiration) or (user.waiver_expiration < authorization.expiration):
+                user.waiver_expiration = authorization.expiration
+                user.save()
+            remove_superseded_junior_authorization(authorization)
+            record_note(authorization, 'marshal_approved', note)
+            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
+        if authorization.status == pending_background_check_status:
+            record_note(authorization, 'marshal_approved', note)
+            return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending background check.'
+        return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending waiver.'
+
     else:
         return False, 'Authorization status not valid for confirmation.'
 
@@ -1244,9 +1311,7 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
         return bool(u.waiver_expiration and u.waiver_expiration > date.today())
 
     sign_off_required = authorization_officer_sign_off_enabled()
-    is_kao = is_kingdom_authorization_officer(request_user)
-    can_approve_kingdom_pending = is_kao
-    can_approve_equestrian_waiver_pending = is_kao
+    can_approve_kingdom_pending = can_approve_kingdom_review_authorization(request_user, authorization)
 
     if authorization.status.name == KINGDOM_APPROVAL_STATUS:
         if not can_approve_kingdom_pending:
@@ -1257,16 +1322,11 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
         return True, 'OK'
 
     if authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
-        if not can_approve_equestrian_waiver_pending:
-            return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
-        if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
-            if not membership_is_current(authorization.person.user):
-                return False, 'Marshal authorizations require a current membership.'
+        if not can_approve_kingdom_pending:
+            return False, 'Only the Kingdom Equestrian Authorization Officer can approve this authorization.'
         return True, 'OK'
 
     if authorization.status.name == 'Pending':
-        if is_kao and marshal.id == request_user.id:
-            return False, 'Kingdom Authorization Officer must use "Approve As" to approve this authorization.'
         if not is_senior_marshal(marshal, discipline):
             return False, 'You must be a senior marshal in this discipline to approve this authorization.'
         if authorization.marshal.user == marshal:
@@ -1282,8 +1342,6 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
         return True, 'OK'
 
     if authorization.status.name == 'Needs Regional Approval':
-        if is_kao and marshal.id == request_user.id:
-            return False, 'Kingdom Authorization Officer must use "Approve As" to approve this authorization.'
         if not auth_region:
             _log_unresolved_authorization_region('regional approval validation', authorization, request_user)
             return False, 'Could not determine the fighter region for regional approval.'
@@ -1313,17 +1371,17 @@ def validate_reject_authorization(marshal: User, authorization: Authorization):
     auth_region = _authorization_region_name(authorization)
 
     if authorization.status.name == 'Pending Background Check':
-        if is_kingdom_authorization_officer(marshal):
+        if can_approve_kingdom_review_authorization(marshal, authorization):
             return True, 'OK'
         return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
     if authorization.status.name == KINGDOM_APPROVAL_STATUS:
-        if is_kingdom_authorization_officer(marshal):
+        if can_approve_kingdom_review_authorization(marshal, authorization):
             return True, 'OK'
         return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
     if authorization.status.name == KINGDOM_EQUESTRIAN_WAIVER_STATUS:
-        if is_kingdom_authorization_officer(marshal):
+        if can_approve_kingdom_review_authorization(marshal, authorization):
             return True, 'OK'
-        return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
+        return False, 'Only the Kingdom Equestrian Authorization Officer can reject this authorization.'
 
     if not auth_region:
         _log_unresolved_authorization_region('regional rejection validation', authorization, marshal)
@@ -1364,7 +1422,10 @@ def can_manage_branch_marshal_office(user: User, branch: Branch, discipline: Dis
 
     # Only the Kingdom Authorization Officer can manage Authorization Officer offices,
     # and those offices may only exist at Kingdom level.
-    if discipline_name == 'Authorization Officer':
+    if discipline_name in [
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ]:
         return branch_name == 'An Tir' and is_kingdom_authorization_officer(user)
 
     # Only the Kingdom Authorization Officer can manage the Kingdom Earl Marshal office.
@@ -1374,11 +1435,18 @@ def can_manage_branch_marshal_office(user: User, branch: Branch, discipline: Dis
     if is_kingdom_authorization_officer(user):
         return True
 
+    if is_kingdom_equestrian_authorization_officer(user):
+        return discipline_name == 'Equestrian'
+
     if is_kingdom_earl_marshal(user):
         return True
 
     # Kingdom discipline marshals can manage lower offices in their own discipline only.
-    if discipline_name in ['Earl Marshal', 'Authorization Officer']:
+    if discipline_name in [
+        'Earl Marshal',
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ]:
         return False
     if branch_name == 'An Tir':
         return False
@@ -1390,6 +1458,7 @@ def can_manage_any_branch_marshal_office(user: User) -> bool:
         return False
     return (
         is_kingdom_authorization_officer(user)
+        or is_kingdom_equestrian_authorization_officer(user)
         or is_kingdom_earl_marshal(user)
         or is_kingdom_marshal(user)
     )
@@ -1445,16 +1514,22 @@ def appoint_branch_marshal(request):
         return False, 'Can only serve as one branch marshal position at a time.'
 
     # Rule 2: Authorization Officer offices are only at Kingdom level.
-    if discipline.name == 'Authorization Officer':
+    if discipline.name in [
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ]:
         if branch.name != 'An Tir':
-            return False, 'An Tir is the only branch that can have the authorization officer.'
+            return False, 'An Tir is the only branch that can have this authorization officer.'
 
     # Rule 2b: Earl Marshal offices are only allowed at region/kingdom level.
     if discipline.name == 'Earl Marshal' and not branch.is_region():
         return False, 'Earl Marshal offices may only be appointed at regional or kingdom level.'
 
     # Rule 3: Authorization Officer appointment does not require marshal authorization.
-    if discipline.name == 'Authorization Officer':
+    if discipline.name in [
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    ]:
         BranchMarshal.objects.create(
             person=person,
             branch=branch,
@@ -1463,7 +1538,7 @@ def appoint_branch_marshal(request):
             end_date=start_date + relativedelta(years=2),
         )
 
-        return True, 'Authorization officer appointed.'
+        return True, f'{_format_authorization_note_office(BranchMarshal(person=person, branch=branch, discipline=discipline))} appointed.'
 
     # Check is_region() to see if they are being made a regional marshal.
     # Rule 4: A regional marshal must be a senior marshal.

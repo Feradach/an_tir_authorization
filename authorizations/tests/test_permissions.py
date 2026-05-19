@@ -27,6 +27,7 @@ from authorizations.permissions import (
     calculate_authorization_expiration,
     create_authorization_note,
     is_kingdom_authorization_officer,
+    is_kingdom_equestrian_authorization_officer,
     is_kingdom_marshal,
     is_regional_marshal,
     is_senior_marshal,
@@ -64,6 +65,7 @@ class AuthorizationTestBase(TestCase):
         cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
         cls.discipline_siege = Discipline.objects.create(name='Siege')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
+        cls.discipline_equestrian_auth_officer = Discipline.objects.create(name='Equestrian Authorization Officer')
         cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
 
         # Styles
@@ -395,6 +397,14 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
         user.save()
 
         self.assertTrue(is_kingdom_authorization_officer(user))
+        self.assertTrue(is_kingdom_equestrian_authorization_officer(user))
+
+    def test_kingdom_equestrian_authorization_officer_is_separate_office(self):
+        user, marshal = self.make_person('keao_user', 'KEAO User')
+        self.appoint(marshal, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+
+        self.assertFalse(is_kingdom_authorization_officer(user))
+        self.assertTrue(is_kingdom_equestrian_authorization_officer(user))
 
     def test_earl_marshal_office_does_not_grant_senior_marshal_status(self):
         user, marshal = self.make_person('earl_no_sm', 'Earl No SM')
