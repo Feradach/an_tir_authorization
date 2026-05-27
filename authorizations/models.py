@@ -90,7 +90,7 @@ class User(AbstractUser):
     postal_code = models.CharField(null=True, blank=True, max_length=10,
         validators=[
             RegexValidator(
-                regex=r'"""(\d{5}(-\d{4})?|[A-Za-z]\d[A-Za-z] ?\d[A-Za-z]\d)$',
+                regex=r'^(\d{5}(-\d{4})?|[A-Za-z]\d[A-Za-z] ?\d[A-Za-z]\d)$',
                 message='Enter a valid postal code (e.g., 12345, 12345-6789, or A1A 1A1).'
             )
         ],

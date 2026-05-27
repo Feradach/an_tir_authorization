@@ -3709,21 +3709,29 @@ def _latest_active_authorization_expiration(user: User):
 
 
 def _record_legacy_imported_waiver_if_needed(user: User, *, recorded_by: Optional[User], source_filename: str = ''):
-    if user.waiver_expiration or _has_membership_roster_waiver(user):
+    if _has_membership_roster_waiver(user):
         return None
 
     latest_expiration = _latest_active_authorization_expiration(user)
     if not latest_expiration:
         return None
 
-    user.waiver_expiration = latest_expiration
-    user.updated_by = recorded_by
-    user.save(update_fields=['waiver_expiration', 'updated_by', 'updated_at'])
+    if not user.waiver_expiration or user.waiver_expiration < latest_expiration:
+        user.waiver_expiration = latest_expiration
+        user.updated_by = recorded_by
+        user.save(update_fields=['waiver_expiration', 'updated_by', 'updated_at'])
+
+    if WaiverRecord.objects.filter(
+        covered_user=user,
+        source=WaiverRecord.Source.LEGACY_DATABASE_IMPORT,
+        resulting_waiver_expiration=latest_expiration,
+    ).exists():
+        return None
 
     note = 'Waiver coverage imported from the legacy authorization database.'
     if source_filename:
         note = f'{note} Source file: {source_filename}.'
-    return _create_waiver_record(
+    record = _create_waiver_record(
         covered_user=user,
         source=WaiverRecord.Source.LEGACY_DATABASE_IMPORT,
         waiver_type=WaiverRecord.WaiverType.MINOR if getattr(getattr(user, 'person', None), 'is_current_minor', False) else WaiverRecord.WaiverType.ADULT,
@@ -3733,6 +3741,14 @@ def _record_legacy_imported_waiver_if_needed(user: User, *, recorded_by: Optiona
         waiver_version='legacy-database-import',
         note=note,
     )
+    person = getattr(user, 'person', None)
+    if person:
+        UserNote.objects.create(
+            person=person,
+            created_by=recorded_by,
+            note=f'{note} Waiver expiration set to {latest_expiration.isoformat()}.',
+        )
+    return record
 
 
 def _can_sign_waiver_for_user(request_user: User, target_user: User) -> bool:
