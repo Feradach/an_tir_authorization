@@ -28,12 +28,13 @@ from django.utils.html import format_html
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
+from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
 from collections import defaultdict
 from operator import attrgetter
+from typing import Optional
 from pdfrw import PdfReader, PdfWriter, PdfName, PageMerge
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
@@ -564,6 +565,7 @@ def _refresh_user_membership_expirations_from_roster(rows, imported_by, source_f
         user.membership_expiration = roster_entry.membership_expiration
         user.updated_by = imported_by
         user.save()
+        _record_membership_roster_waiver(user, roster_entry=roster_entry, recorded_by=imported_by)
         updated_count += 1
 
         if hasattr(user, 'person') and user.person:
@@ -1319,6 +1321,11 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
                 action='marshal_approved',
                 note=recovery_note,
             )
+            _record_legacy_imported_waiver_if_needed(
+                person.user,
+                recorded_by=actor,
+                source_filename='Legacy Authorization Recovery Tool',
+            )
             noted_people = {person.user_id: person, marshal.user_id: marshal}
             if second_marshal:
                 noted_people[second_marshal.user_id] = second_marshal
@@ -1640,6 +1647,7 @@ def _apply_legacy_authorization_import(rows, pending_people, actor: User, source
     created_count = 0
     updated_count = 0
     profile_updated_keys = set()
+    imported_users = {}
     active_status = _get_or_create_status_by_name('Active')
 
     for row in rows:
@@ -1692,6 +1700,7 @@ def _apply_legacy_authorization_import(rows, pending_people, actor: User, source
             created_count += 1
         else:
             updated_count += 1
+        imported_users[person.user_id] = person.user
 
         AuthorizationNote.objects.create(
             authorization=authorization,
@@ -1702,6 +1711,9 @@ def _apply_legacy_authorization_import(rows, pending_people, actor: User, source
                 f'Historical start date: {row["start_date"].isoformat()}.'
             ),
         )
+
+    for user in imported_users.values():
+        _record_legacy_imported_waiver_if_needed(user, recorded_by=actor, source_filename=source_filename)
 
     return created_count, updated_count, len(pending_people)
 
@@ -3445,7 +3457,10 @@ def _finalize_waiver_signed(request_user: User, target_user: User):
     """
     if request_user.id != target_user.id and not is_kingdom_authorization_officer(request_user):
         return False, 'You can only sign a waiver for your own account.'
+    return _apply_waiver_coverage(request_user, target_user)
 
+
+def _apply_waiver_coverage(request_user: User, target_user: User):
     pending_qs = Authorization.objects.filter(person__user=target_user, status__name='Pending Waiver')
     if pending_qs.exists():
         max_exp = pending_qs.aggregate(latest=Max('expiration'))['latest']
@@ -3472,6 +3487,268 @@ def _finalize_waiver_signed(request_user: User, target_user: User):
         target_user.waiver_expiration = date.today() + relativedelta(years=1)
         target_user.save()
         return True, 'Waiver signed for one year.'
+
+
+ADULT_WAIVER_VERSION = 'adult-portal-2026-05'
+MINOR_WAIVER_VERSION = 'minor-portal-2026-05'
+
+ADULT_WAIVER_TEXT = (
+    'CONSENT TO PARTICIPATE AND RELEASE OF LIABILITY\n\n'
+    'I, the undersigned, do hereby state that I wish to participate in activities sponsored by the international '
+    'organization known as the Society for Creative Anachronism, Inc., a California not-for-profit corporation '
+    '(hereafter "SCA").\n\n'
+    'The SCA has rules which govern and may restrict the activities in which I can participate. These rules include, '
+    'but are not limited to: Corpora, the By-laws, the various kingdom laws and the Rules for combat related activities.\n\n'
+    'The SCA makes no representations or claims as to the condition or safety of the land, structures or surroundings, '
+    'whether or not owned, leased, operated or maintained by the SCA.\n\n'
+    'I understand that all activities are VOLUNTARY and that I do not have to participate unless I choose to do so. '
+    'I understand that these activities are potentially dangerous or harmful to my person or property, and that by '
+    'participating I voluntarily accept and assume the risk of injury to myself or damage to my property.\n\n'
+    'I understand that the SCA does NOT provide any insurance coverage for my person or my property. I acknowledge '
+    'that I am responsible for my safety and my own health care needs, and for the protection of my property.\n\n'
+    'In exchange for allowing me to participate in these SCA activities and events, I agree to release from liability, '
+    'agree to indemnify, and hold harmless the SCA, and any SCA agent, officer, or SCA employee acting within the '
+    'scope of their duties, for any injury to my person or damage to my property.\n\n'
+    'This Release shall be binding upon myself, successors in interest, and/or any person(s) suing on my behalf.\n\n'
+    'I have read the statements in this document. I agree with its terms and have voluntarily signed it. I understand '
+    'that this document is complete unto itself and that any oral promises or representations made to me concerning '
+    'this document and/or its terms are not binding upon the SCA, its officers, agents and/or employees.\n\n'
+    'I UNDERSTAND THAT THIS IS A LEGAL DOCUMENT. I HAVE READ AND UNDERSTOOD THIS RELEASE AND I UNDERSTAND ALL ITS '
+    'TERMS. I EXECUTE IT VOLUNTARILY AND WITH FULL KNOWLEDGE OF ITS MEANING AND SIGNIFICANCE.'
+)
+
+MINOR_WAIVER_TEXT = (
+    'MINOR\'S CONSENT TO PARTICIPATE\n\n'
+    'I hereby state that {minor_legal_name}, (hereafter referred to as "the minor") wishes to participate in activities '
+    'sponsored by the internation organization known as the Society for Creative Anachronism, Inc., a California '
+    'not-for-profit corporation (hereafter "SCA").\n\n'
+    'The SCA has rules which govern and may restrict the activities in which the minor can participate. These rules '
+    'include, but are not limited to: Corpora, the By-laws, the various kingdom laws and the Rules for combat related '
+    'activities.\n\n'
+    'The SCA makes no representations or claims as to the condition or safety of the land, structures or surroundings, '
+    'whether or not owned, leased, operated or maintained by the SCA.\n\n'
+    'It is understood that the SCA does NOT provide any insurance coverage for the minor\'s person or property; and '
+    'the minor\'s parent(s) or guardian(s) aknowledge that they are responsible for the minor\'s safety and minor\'s '
+    'own health care needs, and for the protection of the minor\'s property.\n\n'
+    'In exchange for allowing the minor to participate in these SCA activities and events, the minor by and through '
+    'the undersigned agrees to release from liability, agrees to indemnify, and hold harmless the SCA, and any SCA '
+    'agent, officer, or SCA employee acting within the scope of their duties, for any injury to the minor\'s person '
+    'or damage to the minor\'s property.\n\n'
+    'This Release shall be binding upon the minor, the parent(s) or guardian(s), successors in interest, and/or any '
+    'person(s) suing on the minor\'s behalf.\n\n'
+    'The minor\'s parent(s) or guardian(s) understand that this document is complete unto itself and that any oral '
+    'promises or representations made to them concerning this document and/or its terms are not binding upon the SCA, '
+    'its officers, agents and/or employees.\n\n'
+    'PARENT OR LEGAL GUARDIAN MUST SIGN BELOW:\n\n'
+    'I, the undersigned, state that I am the parent or legal guardian of the minor whose name appears above. I '
+    'understand that the above terms and conditions apply to said minor and to myself. I further understand that said '
+    'minor cannot participate under ANY circumstances in armored marial arts, any combat-related activites, '
+    'combat-archery, or fencing without parental consent where such participation is allowed by kingdom law. The '
+    'minor will not be able to participate in any SCA activities without entering into this agreement. This document '
+    'is binding on myself, the said minor and any person suing on behalf of said minor.'
+)
+
+
+def _parent_legal_name_for_minor(target_user: User):
+    person = getattr(target_user, 'person', None)
+    if not person or not person.is_current_minor:
+        return None
+    if person.parent:
+        return person.parent.user.first_name, person.parent.user.last_name
+    if person.parent_first_name and person.parent_last_name:
+        return person.parent_first_name, person.parent_last_name
+    return None
+
+
+def _posted_parent_name_matches(request, target_user: User) -> bool:
+    parent_name = _parent_legal_name_for_minor(target_user)
+    if not parent_name:
+        return True
+    posted_first = (request.POST.get('parent_first_name') or '').strip()
+    posted_last = (request.POST.get('parent_last_name') or '').strip()
+    parent_first, parent_last = parent_name
+    return (
+        posted_first.casefold() == (parent_first or '').strip().casefold()
+        and posted_last.casefold() == (parent_last or '').strip().casefold()
+    )
+
+
+def _user_legal_name(user: User) -> str:
+    return f'{user.first_name} {user.last_name}'.strip()
+
+
+def _client_ip(request):
+    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
+
+
+def _parent_snapshot_for_user(user: User):
+    person = getattr(user, 'person', None)
+    if not person:
+        return '', '', ''
+    if person.parent:
+        return (
+            person.parent.user.first_name or '',
+            person.parent.user.last_name or '',
+            person.parent.sca_name or '',
+        )
+    return (
+        person.parent_first_name or '',
+        person.parent_last_name or '',
+        person.parent_sca_name or '',
+    )
+
+
+def _create_waiver_record(
+    *,
+    covered_user: User,
+    source: str,
+    waiver_type: str,
+    resulting_expiration,
+    signer_user: Optional[User] = None,
+    recorded_by: Optional[User] = None,
+    signer_first_name: str = '',
+    signer_last_name: str = '',
+    signer_relationship: str = '',
+    waiver_text: str = '',
+    waiver_version: str = '',
+    membership_number: str = '',
+    membership_expiration=None,
+    roster_import=None,
+    paper_signed_date=None,
+    document_url: str = '',
+    note: str = '',
+    request=None,
+):
+    parent_first, parent_last, parent_sca = _parent_snapshot_for_user(covered_user)
+    return WaiverRecord.objects.create(
+        covered_user=covered_user,
+        signer_user=signer_user,
+        recorded_by=recorded_by,
+        source=source,
+        waiver_type=waiver_type,
+        signer_first_name=signer_first_name,
+        signer_last_name=signer_last_name,
+        signer_relationship=signer_relationship,
+        covered_first_name_snapshot=covered_user.first_name or '',
+        covered_last_name_snapshot=covered_user.last_name or '',
+        covered_sca_name_snapshot=getattr(getattr(covered_user, 'person', None), 'sca_name', '') or '',
+        parent_first_name_snapshot=parent_first,
+        parent_last_name_snapshot=parent_last,
+        parent_sca_name_snapshot=parent_sca,
+        waiver_text=waiver_text,
+        waiver_version=waiver_version,
+        membership_number=membership_number or '',
+        membership_expiration=membership_expiration,
+        roster_import=roster_import,
+        paper_signed_date=paper_signed_date,
+        document_url=document_url,
+        note=note,
+        resulting_waiver_expiration=resulting_expiration,
+        ip_address=_client_ip(request) if request else None,
+        user_agent=request.META.get('HTTP_USER_AGENT', '') if request else '',
+        signed_at=timezone.now() if source in [
+            WaiverRecord.Source.PORTAL_ADULT_SIGNATURE,
+            WaiverRecord.Source.PORTAL_MINOR_SIGNATURE,
+        ] else None,
+    )
+
+
+def _record_membership_roster_waiver(user: User, *, roster_entry=None, roster_import=None, recorded_by=None):
+    if not user.membership or not user.membership_expiration:
+        return None
+    if roster_entry is None:
+        roster_entry = MembershipRosterEntry.objects.filter(
+            membership_number=user.membership,
+            membership_expiration=user.membership_expiration,
+            has_society_waiver=True,
+        ).order_by('id').first()
+    if not roster_entry or not roster_entry.has_society_waiver:
+        return None
+    if WaiverRecord.objects.filter(
+        covered_user=user,
+        source=WaiverRecord.Source.MEMBERSHIP_ROSTER,
+        membership_number=user.membership,
+        membership_expiration=user.membership_expiration,
+    ).exists():
+        return None
+    return _create_waiver_record(
+        covered_user=user,
+        source=WaiverRecord.Source.MEMBERSHIP_ROSTER,
+        waiver_type=WaiverRecord.WaiverType.MEMBERSHIP,
+        resulting_expiration=user.waiver_expiration,
+        recorded_by=recorded_by,
+        signer_first_name=roster_entry.first_name,
+        signer_last_name=roster_entry.last_name,
+        signer_relationship='membership_roster',
+        membership_number=user.membership,
+        membership_expiration=user.membership_expiration,
+        roster_import=roster_import,
+        note='Society membership roster indicated waiver on file.',
+    )
+
+
+def _has_membership_roster_waiver(user: User) -> bool:
+    if not user.membership or not user.membership_expiration:
+        return False
+    return MembershipRosterEntry.objects.filter(
+        membership_number=user.membership,
+        membership_expiration=user.membership_expiration,
+        has_society_waiver=True,
+    ).exists()
+
+
+def _latest_active_authorization_expiration(user: User):
+    return Authorization.objects.filter(
+        person__user=user,
+        status__name='Active',
+        expiration__gte=date.today(),
+    ).aggregate(latest_expiration=Max('expiration'))['latest_expiration']
+
+
+def _record_legacy_imported_waiver_if_needed(user: User, *, recorded_by: Optional[User], source_filename: str = ''):
+    if user.waiver_expiration or _has_membership_roster_waiver(user):
+        return None
+
+    latest_expiration = _latest_active_authorization_expiration(user)
+    if not latest_expiration:
+        return None
+
+    user.waiver_expiration = latest_expiration
+    user.updated_by = recorded_by
+    user.save(update_fields=['waiver_expiration', 'updated_by', 'updated_at'])
+
+    note = 'Waiver coverage imported from the legacy authorization database.'
+    if source_filename:
+        note = f'{note} Source file: {source_filename}.'
+    return _create_waiver_record(
+        covered_user=user,
+        source=WaiverRecord.Source.LEGACY_DATABASE_IMPORT,
+        waiver_type=WaiverRecord.WaiverType.MINOR if getattr(getattr(user, 'person', None), 'is_current_minor', False) else WaiverRecord.WaiverType.ADULT,
+        resulting_expiration=latest_expiration,
+        recorded_by=recorded_by,
+        signer_relationship='legacy_database_import',
+        waiver_version='legacy-database-import',
+        note=note,
+    )
+
+
+def _can_sign_waiver_for_user(request_user: User, target_user: User) -> bool:
+    if request_user.id == target_user.id:
+        return True
+    target_person = getattr(target_user, 'person', None)
+    return bool(target_person and target_person.parent_id == request_user.id)
+
+
+def _can_record_paper_waiver(user: User) -> bool:
+    return (
+        user.is_staff
+        or user.is_superuser
+        or is_kingdom_authorization_officer(user)
+        or is_kingdom_equestrian_authorization_officer(user)
+    )
 
 
 def _get_or_create_status_by_name(name: str) -> AuthorizationStatus:
@@ -5335,7 +5612,7 @@ def user_account(request, user_id):
     user = User.objects.get(id=user_id)
     person = user.person
     if requestor != user and (not hasattr(user, 'person') or user.person.parent_id != requestor.id):
-        if not is_kingdom_authorization_officer(requestor):
+        if not _can_record_paper_waiver(requestor):
             raise PermissionDenied
 
     children = user.person.children.all()
@@ -5398,6 +5675,45 @@ def user_account(request, user_id):
             else:
                 messages.error(request, message)
             return redirect(next_url)
+
+        if action == 'record_paper_waiver':
+            if not _can_record_paper_waiver(request.user):
+                raise PermissionDenied
+            signed_date_raw = (request.POST.get('paper_signed_date') or '').strip()
+            signer_first_name = (request.POST.get('paper_signer_first_name') or '').strip()
+            signer_last_name = (request.POST.get('paper_signer_last_name') or '').strip()
+            signer_relationship = (request.POST.get('paper_signer_relationship') or '').strip()
+            document_url = (request.POST.get('paper_document_url') or '').strip()
+            note = (request.POST.get('paper_note') or '').strip()
+            try:
+                paper_signed_date = date.fromisoformat(signed_date_raw)
+            except (TypeError, ValueError):
+                messages.error(request, 'Paper signed date is required.')
+                return redirect('user_account', user_id=user.id)
+            if not signer_first_name or not signer_last_name or not signer_relationship or not document_url:
+                messages.error(request, 'Signer name, relationship, and SharePoint link are required.')
+                return redirect('user_account', user_id=user.id)
+            ok, msg = _apply_waiver_coverage(request.user, user)
+            if not ok:
+                messages.error(request, msg)
+                return redirect('user_account', user_id=user.id)
+            waiver_type = WaiverRecord.WaiverType.MINOR if person.is_current_minor else WaiverRecord.WaiverType.ADULT
+            _create_waiver_record(
+                covered_user=user,
+                source=WaiverRecord.Source.PAPER_WAIVER,
+                waiver_type=waiver_type,
+                resulting_expiration=user.waiver_expiration,
+                recorded_by=request.user,
+                signer_first_name=signer_first_name,
+                signer_last_name=signer_last_name,
+                signer_relationship=signer_relationship,
+                paper_signed_date=paper_signed_date,
+                document_url=document_url,
+                note=note,
+                request=request,
+            )
+            messages.success(request, f'Paper waiver recorded. {msg}')
+            return redirect('user_account', user_id=user.id)
 
         if action == 'add_authorization_self':
             person.save()
@@ -5619,6 +5935,7 @@ def user_account(request, user_id):
                 user.background_check_expiration = form.cleaned_data.get('background_check_expiration')
 
             user.save()
+            _record_membership_roster_waiver(user, recorded_by=request.user)
             if (
                 is_kingdom_authorization_officer(request.user)
                 and user.background_check_expiration
@@ -5699,6 +6016,12 @@ def user_account(request, user_id):
         or is_kingdom_equestrian_authorization_officer(request.user)
         or is_senior_marshal(request.user, 'Equestrian')
     )
+    waiver_records = WaiverRecord.objects.filter(covered_user=user).select_related(
+        'signer_user__person',
+        'recorded_by__person',
+        'roster_import',
+    )
+    can_record_paper_waiver = _can_record_paper_waiver(request.user)
 
     context = {
         'person': person,
@@ -5724,6 +6047,13 @@ def user_account(request, user_id):
         'supporting_document_jurisdiction_choices': SupportingDocument.Jurisdiction.choices,
         'recent_supporting_documents': recent_supporting_documents,
         'can_upload_equestrian_for_anyone': can_upload_equestrian_for_anyone,
+        'waiver_records': waiver_records,
+        'can_record_paper_waiver': can_record_paper_waiver,
+        'paper_waiver_relationship_choices': [
+            ('self', 'Self'),
+            ('parent_guardian', 'Parent or Guardian'),
+            ('other', 'Other'),
+        ],
     }
 
     return render(request, 'authorizations/user_account.html', context)
@@ -5732,19 +6062,59 @@ def user_account(request, user_id):
 def sign_waiver(request, user_id):
     user = User.objects.get(id=user_id)
     if request.method == 'POST':
-        ok, msg = _finalize_waiver_signed(request.user, user)
+        if not _can_sign_waiver_for_user(request.user, user):
+            messages.error(request, 'You can only sign a waiver for your own account or linked child account.')
+            return redirect('index')
+        if not _posted_parent_name_matches(request, user):
+            messages.error(request, "The first and last name must match the parent's name.")
+            return redirect('sign_waiver', user_id=user.id)
+        ok, msg = _apply_waiver_coverage(request.user, user)
         if ok:
+            is_minor_waiver = bool(getattr(user, 'person', None) and user.person.is_current_minor)
+            if is_minor_waiver:
+                waiver_source = WaiverRecord.Source.PORTAL_MINOR_SIGNATURE
+                waiver_type = WaiverRecord.WaiverType.MINOR
+                waiver_text = MINOR_WAIVER_TEXT.format(minor_legal_name=_user_legal_name(user))
+                waiver_version = MINOR_WAIVER_VERSION
+                signer_first_name = (request.POST.get('parent_first_name') or '').strip()
+                signer_last_name = (request.POST.get('parent_last_name') or '').strip()
+                signer_relationship = 'parent_guardian'
+            else:
+                waiver_source = WaiverRecord.Source.PORTAL_ADULT_SIGNATURE
+                waiver_type = WaiverRecord.WaiverType.ADULT
+                waiver_text = ADULT_WAIVER_TEXT
+                waiver_version = ADULT_WAIVER_VERSION
+                signer_first_name = request.user.first_name or ''
+                signer_last_name = request.user.last_name or ''
+                signer_relationship = 'self'
+            _create_waiver_record(
+                covered_user=user,
+                signer_user=request.user,
+                recorded_by=request.user,
+                source=waiver_source,
+                waiver_type=waiver_type,
+                resulting_expiration=user.waiver_expiration,
+                signer_first_name=signer_first_name,
+                signer_last_name=signer_last_name,
+                signer_relationship=signer_relationship,
+                waiver_text=waiver_text,
+                waiver_version=waiver_version,
+                request=request,
+            )
             messages.success(request, msg)
             return redirect('user_account', user_id=user.id)
         else:
             messages.error(request, msg)
             return redirect('index')
     else:
-        # Only the account owner may view the waiver page (AO cannot view others' waiver page)
-        if request.user.id != user_id:
-            messages.error(request, 'You can only sign a waiver for your own account.')
+        if not _can_sign_waiver_for_user(request.user, user):
+            messages.error(request, 'You can only sign a waiver for your own account or linked child account.')
             return redirect('index')
-        return render(request, 'authorizations/waiver.html')
+        return render(request, 'authorizations/waiver.html', {
+            'waiver_user': user,
+            'is_minor_waiver': bool(getattr(user, 'person', None) and user.person.is_current_minor),
+            'minor_legal_name': _user_legal_name(user),
+        })
 
 def reject_authorization(request, authorization):
     if is_kingdom_review_status_name(authorization.status.name):

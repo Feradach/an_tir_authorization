@@ -47,12 +47,86 @@
                 {% if not waiver_signed %}
                     {% if user.id == request.user.id %}
                         <a href="{% url 'sign_waiver' user_id=user.id %}" class="btn btn-primary">Sign Waiver</a><br>
-                    {% elif is_authorization_officer %}
-                        <form method="post" action="{% url 'sign_waiver' user_id=user.id %}">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-primary">Sign Waiver</button>
-                        </form><br>
+                    {% elif user.person.parent_id == request.user.id %}
+                        <a href="{% url 'sign_waiver' user_id=user.id %}" class="btn btn-primary">Sign Waiver</a><br>
                     {% endif %}
+                {% endif %}
+                {% if can_record_paper_waiver %}
+                    <hr>
+                    <h4 class="h5">Record Paper Waiver</h4>
+                    <form method="post" action="{% url 'user_account' user_id=user.id %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="record_paper_waiver">
+                        <div class="row">
+                            <div class="form-group col-md-3">
+                                <label for="paper_signed_date">Signed Date</label>
+                                <input type="date" id="paper_signed_date" name="paper_signed_date" class="form-control" required>
+                            </div>
+                            <div class="form-group col-md-3">
+                                <label for="paper_signer_first_name">Signer First Name</label>
+                                <input type="text" id="paper_signer_first_name" name="paper_signer_first_name" class="form-control" required>
+                            </div>
+                            <div class="form-group col-md-3">
+                                <label for="paper_signer_last_name">Signer Last Name</label>
+                                <input type="text" id="paper_signer_last_name" name="paper_signer_last_name" class="form-control" required>
+                            </div>
+                            <div class="form-group col-md-3">
+                                <label for="paper_signer_relationship">Relationship</label>
+                                <select id="paper_signer_relationship" name="paper_signer_relationship" class="form-control" required>
+                                    {% for value, label in paper_waiver_relationship_choices %}
+                                        <option value="{{ value }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="paper_document_url">SharePoint Link</label>
+                            <input type="url" id="paper_document_url" name="paper_document_url" class="form-control" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="paper_note">Note</label>
+                            <textarea id="paper_note" name="paper_note" class="form-control" rows="2"></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Record Paper Waiver</button>
+                    </form>
+                {% endif %}
+                <hr>
+                <h4 class="h5">Waiver Records</h4>
+                {% if waiver_records %}
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Recorded</th>
+                                    <th>Source</th>
+                                    <th>Type</th>
+                                    <th>Signer</th>
+                                    <th>Expiration</th>
+                                    <th>Document</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for record in waiver_records %}
+                                    <tr>
+                                        <td>{{ record.recorded_at|date:"Y-m-d H:i" }}</td>
+                                        <td>{{ record.get_source_display }}</td>
+                                        <td>{{ record.get_waiver_type_display }}</td>
+                                        <td>{{ record.signer_first_name }} {{ record.signer_last_name }}</td>
+                                        <td>{{ record.resulting_waiver_expiration|default:"-" }}</td>
+                                        <td>
+                                            {% if record.document_url %}
+                                                <a href="{{ record.document_url }}" target="_blank" rel="noopener noreferrer">Open</a>
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted mb-0">No waiver records have been recorded.</p>
                 {% endif %}
             </div>
     </div>

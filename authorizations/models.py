@@ -207,6 +207,80 @@ class MembershipRosterEntry(models.Model):
             models.Index(fields=['membership_number', 'membership_expiration']),
         ]
 
+
+class WaiverRecord(models.Model):
+    """Durable record of waiver coverage evidence."""
+
+    class Source(models.TextChoices):
+        PORTAL_ADULT_SIGNATURE = 'portal_adult_signature', 'Portal Adult Signature'
+        PORTAL_MINOR_SIGNATURE = 'portal_minor_signature', 'Portal Minor Signature'
+        MEMBERSHIP_ROSTER = 'membership_roster', 'Membership Roster'
+        PAPER_WAIVER = 'paper_waiver', 'Paper Waiver'
+        LEGACY_DATABASE_IMPORT = 'legacy_database_import', 'Legacy Database Import'
+
+    class WaiverType(models.TextChoices):
+        ADULT = 'adult', 'Adult'
+        MINOR = 'minor', 'Minor'
+        MEMBERSHIP = 'membership', 'Membership'
+
+    covered_user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='waiver_records',
+    )
+    signer_user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='waiver_records_signed',
+    )
+    recorded_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='waiver_records_recorded',
+    )
+    source = models.CharField(max_length=50, choices=Source.choices, db_index=True)
+    waiver_type = models.CharField(max_length=20, choices=WaiverType.choices, db_index=True)
+    signer_first_name = models.CharField(max_length=150, blank=True, default='')
+    signer_last_name = models.CharField(max_length=150, blank=True, default='')
+    signer_relationship = models.CharField(max_length=50, blank=True, default='')
+    covered_first_name_snapshot = models.CharField(max_length=150, blank=True, default='')
+    covered_last_name_snapshot = models.CharField(max_length=150, blank=True, default='')
+    covered_sca_name_snapshot = models.CharField(max_length=255, blank=True, default='')
+    parent_first_name_snapshot = models.CharField(max_length=150, blank=True, default='')
+    parent_last_name_snapshot = models.CharField(max_length=150, blank=True, default='')
+    parent_sca_name_snapshot = models.CharField(max_length=255, blank=True, default='')
+    waiver_text = models.TextField(blank=True, default='')
+    waiver_version = models.CharField(max_length=50, blank=True, default='')
+    membership_number = models.CharField(max_length=20, blank=True, default='')
+    membership_expiration = models.DateField(null=True, blank=True)
+    roster_import = models.ForeignKey(
+        MembershipRosterImport,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='waiver_records',
+    )
+    paper_signed_date = models.DateField(null=True, blank=True)
+    document_url = models.URLField(max_length=1000, blank=True, default='')
+    note = models.TextField(blank=True, default='')
+    resulting_waiver_expiration = models.DateField(null=True, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, default='')
+    signed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    recorded_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-recorded_at']
+        indexes = [
+            models.Index(fields=['covered_user', 'recorded_at']),
+            models.Index(fields=['source', 'recorded_at']),
+        ]
+
+
 class BranchManager(models.Manager):
     def regions(self):
         """Return all region branches (Kingdom, Principality, Region)"""

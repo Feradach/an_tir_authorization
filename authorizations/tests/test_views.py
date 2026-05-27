@@ -30,6 +30,7 @@ from authorizations.models import (
     Sanction,
     MembershipRosterEntry,
     MembershipRosterImport,
+    WaiverRecord,
     SupportingDocument,
     SupportingDocumentAuthorization,
     SupportingDocumentPerson,
@@ -3155,6 +3156,14 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(authorization.status.name, 'Active')
         self.assertEqual(authorization.expiration, date(2029, 1, 15))
         self.assertEqual(authorization.marshal, self.ao_person)
+        self.owner_user.refresh_from_db()
+        self.assertEqual(self.owner_user.waiver_expiration, date(2029, 1, 15))
+        record = WaiverRecord.objects.get(
+            covered_user=self.owner_user,
+            source=WaiverRecord.Source.LEGACY_DATABASE_IMPORT,
+        )
+        self.assertEqual(record.resulting_waiver_expiration, date(2029, 1, 15))
+        self.assertEqual(record.recorded_by, self.ao_user)
         self.assertTrue(
             AuthorizationNote.objects.filter(
                 authorization=authorization,
@@ -3335,6 +3344,14 @@ class UserAccountViewTests(ViewTestBase):
         second_auth = Authorization.objects.get(person=self.other_person, style=other_style)
         self.assertEqual(first_auth.expiration, date(2029, 5, 10))
         self.assertEqual(second_auth.expiration, date(2029, 5, 11))
+        self.owner_user.refresh_from_db()
+        self.other_user.refresh_from_db()
+        self.assertEqual(self.owner_user.waiver_expiration, date(2029, 5, 10))
+        self.assertEqual(self.other_user.waiver_expiration, date(2029, 5, 11))
+        self.assertEqual(
+            WaiverRecord.objects.filter(source=WaiverRecord.Source.LEGACY_DATABASE_IMPORT).count(),
+            2,
+        )
         self.assertEqual(LegacyAuthorizationRecoveryEntry.objects.count(), 2)
         first_entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=first_auth)
         self.assertFalse(first_entry.minor_on_paperwork)
@@ -5858,6 +5875,27 @@ class WaiverWorkflowTests(ViewTestBase):
             end_date=date.today() + relativedelta(years=1),
         )
 
+        cls.minor_user = User.objects.create_user(
+            username='waiver_minor',
+            password='StrongPass!123',
+            email='waiver_minor@example.com',
+            first_name='Waiver',
+            last_name='Minor',
+            membership=None,
+            membership_expiration=None,
+            birthday=date.today() - relativedelta(years=12),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.minor_person = Person.objects.create(
+            user=cls.minor_user,
+            sca_name='Waiver Minor',
+            branch=cls.branch_gd,
+            is_minor=True,
+            parent_first_name='Parent',
+            parent_last_name='Guardian',
+        )
+
     def test_owner_can_view_waiver_page(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
 
@@ -5865,6 +5903,54 @@ class WaiverWorkflowTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'authorizations/waiver.html')
+
+    def test_minor_waiver_page_shows_minor_text_and_parent_name_fields(self):
+        self.client.login(username=self.minor_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('sign_waiver', kwargs={'user_id': self.minor_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'I hereby state that Waiver Minor')
+        self.assertContains(response, 'Waiver Minor')
+        self.assertContains(response, 'name="parent_first_name"')
+        self.assertContains(response, 'name="parent_last_name"')
+
+    def test_minor_waiver_rejects_parent_name_mismatch(self):
+        self.client.login(username=self.minor_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('sign_waiver', kwargs={'user_id': self.minor_user.id}),
+            {
+                'parent_first_name': 'Wrong',
+                'parent_last_name': 'Guardian',
+            },
+            follow=True,
+        )
+
+        self.minor_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(self.minor_user.waiver_expiration)
+        self.assertIn("The first and last name must match the parent's name.", self.messages_for(response))
+
+    def test_minor_waiver_accepts_matching_parent_name(self):
+        self.client.login(username=self.minor_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('sign_waiver', kwargs={'user_id': self.minor_user.id}),
+            {
+                'parent_first_name': 'Parent',
+                'parent_last_name': 'Guardian',
+            },
+            follow=True,
+        )
+
+        self.minor_user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.minor_user.waiver_expiration, date.today() + relativedelta(years=1))
+        record = WaiverRecord.objects.get(covered_user=self.minor_user)
+        self.assertEqual(record.source, WaiverRecord.Source.PORTAL_MINOR_SIGNATURE)
+        self.assertEqual(record.signer_first_name, 'Parent')
+        self.assertEqual(record.signer_last_name, 'Guardian')
 
     def test_authorization_officer_cannot_view_other_users_waiver_page(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
@@ -5876,7 +5962,7 @@ class WaiverWorkflowTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         messages = self.messages_for(response)
-        self.assertIn('You can only sign a waiver for your own account.', messages)
+        self.assertIn('You can only sign a waiver for your own account or linked child account.', messages)
 
     def test_non_owner_non_ao_cannot_sign_waiver_for_other_user(self):
         self.client.login(username=self.other_user.username, password='StrongPass!123')
@@ -5888,9 +5974,9 @@ class WaiverWorkflowTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         messages = self.messages_for(response)
-        self.assertIn('You can only sign a waiver for your own account.', messages)
+        self.assertIn('You can only sign a waiver for your own account or linked child account.', messages)
 
-    def test_ao_signing_pending_waiver_activates_authorizations_and_sets_latest_expiration(self):
+    def test_ao_recording_paper_waiver_activates_authorizations_and_sets_latest_expiration(self):
         exp_one = date.today() + timedelta(days=30)
         exp_two = date.today() + timedelta(days=90)
         auth_one = Authorization.objects.create(
@@ -5909,7 +5995,18 @@ class WaiverWorkflowTests(ViewTestBase):
         )
 
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
-        response = self.client.post(reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}), follow=True)
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'record_paper_waiver',
+                'paper_signed_date': date.today().isoformat(),
+                'paper_signer_first_name': 'Waiver',
+                'paper_signer_last_name': 'Owner',
+                'paper_signer_relationship': 'self',
+                'paper_document_url': 'https://example.com/paper-waiver.pdf',
+            },
+            follow=True,
+        )
 
         self.owner_user.refresh_from_db()
         auth_one.refresh_from_db()
@@ -5918,6 +6015,7 @@ class WaiverWorkflowTests(ViewTestBase):
         self.assertEqual(auth_one.status, self.status_active)
         self.assertEqual(auth_two.status, self.status_active)
         self.assertEqual(self.owner_user.waiver_expiration, exp_two)
+        self.assertTrue(WaiverRecord.objects.filter(covered_user=self.owner_user, source=WaiverRecord.Source.PAPER_WAIVER).exists())
 
     def test_signing_senior_ground_crew_pending_waiver_marks_junior_ground_crew_inactive(self):
         discipline_equestrian = Discipline.objects.create(name='Equestrian')
@@ -5962,6 +6060,35 @@ class WaiverWorkflowTests(ViewTestBase):
         self.owner_user.refresh_from_db()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.owner_user.waiver_expiration, date.today() + relativedelta(years=1))
+        record = WaiverRecord.objects.get(covered_user=self.owner_user, source=WaiverRecord.Source.PORTAL_ADULT_SIGNATURE)
+        self.assertEqual(record.signer_first_name, self.owner_user.first_name)
+        self.assertEqual(record.resulting_waiver_expiration, self.owner_user.waiver_expiration)
+
+    def test_authorization_officer_can_record_paper_waiver_even_when_current(self):
+        self.owner_user.waiver_expiration = date.today() + relativedelta(days=30)
+        self.owner_user.save(update_fields=['waiver_expiration'])
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'record_paper_waiver',
+                'paper_signed_date': date.today().isoformat(),
+                'paper_signer_first_name': 'Waiver',
+                'paper_signer_last_name': 'Owner',
+                'paper_signer_relationship': 'self',
+                'paper_document_url': 'https://example.com/paper-waiver.pdf',
+                'paper_note': 'SharePoint record',
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.owner_user.refresh_from_db()
+        record = WaiverRecord.objects.get(covered_user=self.owner_user, source=WaiverRecord.Source.PAPER_WAIVER)
+        self.assertEqual(record.recorded_by, self.ao_user)
+        self.assertEqual(record.document_url, 'https://example.com/paper-waiver.pdf')
+        self.assertEqual(record.resulting_waiver_expiration, self.owner_user.waiver_expiration)
 
 
 class SanctionsWorkflowTests(ViewTestBase):
