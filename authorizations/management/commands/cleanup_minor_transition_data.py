@@ -10,7 +10,7 @@ from authorizations.models import Person, SYSTEM_USER_IDS
 
 
 class Command(BaseCommand):
-    help = "Clean stale birthday, parent, and transitional minor-status data."
+    help = "Clean stale birthday and parent data after minor status is inferred from birthday."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -78,26 +78,21 @@ class Command(BaseCommand):
                 not inferred_minor
                 and (person.parent_sca_name or person.parent_first_name or person.parent_last_name)
             )
-            stored_minor_mismatch = person.is_minor != inferred_minor
 
             if clear_birthday:
                 inferred_minor = False
-                stored_minor_mismatch = person.is_minor is not False
                 clear_parent = bool(person.parent_id)
                 clear_parent_names = bool(
                     person.parent_sca_name or person.parent_first_name or person.parent_last_name
                 )
 
-            if clear_birthday or clear_parent or clear_parent_names or stored_minor_mismatch:
+            if clear_birthday or clear_parent or clear_parent_names:
                 actions.append(
                     {
                         "person": person,
                         "clear_birthday": clear_birthday,
                         "clear_parent": clear_parent,
                         "clear_parent_names": clear_parent_names,
-                        "old_is_minor": person.is_minor,
-                        "new_is_minor": inferred_minor,
-                        "stored_minor_mismatch": person.is_minor != inferred_minor,
                     }
                 )
         return actions
@@ -123,15 +118,10 @@ class Command(BaseCommand):
                     person.parent_last_name = ""
                     person_changed = True
 
-                if person.is_minor != action["new_is_minor"]:
-                    person.is_minor = action["new_is_minor"]
-                    person_changed = True
-
                 if user_changed:
                     person.user.save(update_fields=["birthday", "updated_at"])
                 if person_changed:
                     person.save(update_fields=[
-                        "is_minor",
                         "parent",
                         "parent_sca_name",
                         "parent_first_name",
@@ -143,8 +133,6 @@ class Command(BaseCommand):
         clear_birthday_count = sum(1 for action in actions if action["clear_birthday"])
         clear_parent_count = sum(1 for action in actions if action["clear_parent"])
         clear_parent_names_count = sum(1 for action in actions if action["clear_parent_names"])
-        minor_true_count = sum(1 for action in actions if not action["old_is_minor"] and action["new_is_minor"])
-        minor_false_count = sum(1 for action in actions if action["old_is_minor"] and not action["new_is_minor"])
 
         if dry_run:
             title = "Minor transition cleanup dry run"
@@ -163,8 +151,6 @@ class Command(BaseCommand):
             f"Birthdays to clear for people age 20+: {clear_birthday_count}",
             f"Adult parent links to clear: {clear_parent_count}",
             f"Adult parent names to clear: {clear_parent_names_count}",
-            f"Stored is_minor false -> true: {minor_true_count}",
-            f"Stored is_minor true -> false: {minor_false_count}",
         ]
 
         if actions:
@@ -179,8 +165,6 @@ class Command(BaseCommand):
                     changes.append(f"clear parent_id={person.parent_id}")
                 if action["clear_parent_names"]:
                     changes.append("clear parent names")
-                if action["stored_minor_mismatch"]:
-                    changes.append(f"is_minor {action['old_is_minor']} -> {action['new_is_minor']}")
                 lines.append(
                     "- user_id={user_id}, sca_name=\"{sca_name}\", birthday={birthday}, "
                     "country={country}, state_province={state_province}: {changes}".format(

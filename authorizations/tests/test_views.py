@@ -10,6 +10,7 @@ from django.contrib.messages import get_messages
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.files.base import ContentFile
+from reportlab.pdfbase import pdfmetrics
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -41,25 +42,26 @@ from authorizations.models import (
     SYSTEM_USER_IDS,
 )
 from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER
+from authorizations.views import _fit_pdf_text_for_field, PDF_NAME_MIN_FONT_SIZE
 
 
 class ViewTestBase(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
+        cls.status_pending = AuthorizationStatus.objects.create(name='Awaiting Second Marshal Concurrence')
+        cls.status_regional = AuthorizationStatus.objects.create(name='Awaiting Regional Marshal Approval')
+        cls.status_kingdom = AuthorizationStatus.objects.create(name='Awaiting Kingdom Authorization Officer Review')
         cls.status_needs_kingdom_equestrian_waiver = AuthorizationStatus.objects.filter(
-            name='Needs Kingdom Equestrian Waiver'
+            name='Awaiting Equestrian Authorization Officer Review'
         ).order_by('id').first()
         if not cls.status_needs_kingdom_equestrian_waiver:
             cls.status_needs_kingdom_equestrian_waiver = AuthorizationStatus.objects.create(
-                name='Needs Kingdom Equestrian Waiver'
+                name='Awaiting Equestrian Authorization Officer Review'
             )
-        cls.status_pending_background_check = AuthorizationStatus.objects.create(name='Pending Background Check')
-        cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Pending Waiver')
-        cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
+        cls.status_pending_background_check = AuthorizationStatus.objects.create(name='Awaiting Background Check')
+        cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Awaiting Waiver')
+        cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Awaiting Fighter Concurrence')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
         cls.status_rejected = AuthorizationStatus.objects.create(name='Rejected')
         cls.status_inactive = AuthorizationStatus.objects.create(name='Inactive')
@@ -151,7 +153,6 @@ class ViewTestBase(TestCase):
             user=user,
             sca_name=sca_name,
             branch=branch or self.branch_gd,
-            is_minor=is_minor,
             parent=parent,
             parent_sca_name=parent_sca_name,
             parent_first_name=parent_first_name,
@@ -237,7 +238,7 @@ class ViewTestBase(TestCase):
             'new_title': '',
             'new_title_rank': '',
             'branch': str(person.branch_id),
-            'is_minor': 'on' if person.is_minor else '',
+            'is_minor': 'on' if person.is_current_minor else '',
             'parent_id': str(person.parent_id) if person.parent_id else '',
             'parent_sca_name': person.parent_sca_name,
             'parent_first_name': person.parent_first_name,
@@ -391,6 +392,59 @@ class ContactViewTests(ViewTestBase):
         )
 
 
+class FighterCardPdfTextTests(TestCase):
+    def test_name_field_shrinks_to_fit_before_truncating(self):
+        text, font_size = _fit_pdf_text_for_field(
+            'sca_name',
+            'Long Society Name',
+            'Helvetica',
+            12,
+            90,
+        )
+
+        self.assertEqual(text, 'Long Society Name')
+        self.assertLess(font_size, 12)
+        self.assertGreaterEqual(font_size, PDF_NAME_MIN_FONT_SIZE)
+
+    def test_name_field_truncates_at_latest_fitting_space_after_minimum_size(self):
+        max_width = pdfmetrics.stringWidth('Long Society Name With', 'Helvetica', PDF_NAME_MIN_FONT_SIZE) - 1
+        text, font_size = _fit_pdf_text_for_field(
+            'sca_name',
+            'Long Society Name With Too Many Words',
+            'Helvetica',
+            12,
+            max_width,
+        )
+
+        self.assertEqual(font_size, PDF_NAME_MIN_FONT_SIZE)
+        self.assertEqual(text, 'Long Society Name')
+
+    def test_marshal_name_field_uses_same_fitting_rules(self):
+        max_width = pdfmetrics.stringWidth('Long Marshal Name With', 'Helvetica', PDF_NAME_MIN_FONT_SIZE) - 1
+        text, font_size = _fit_pdf_text_for_field(
+            'Armored Combat marshal',
+            'Long Marshal Name With Too Many Words',
+            'Helvetica',
+            12,
+            max_width,
+        )
+
+        self.assertEqual(font_size, PDF_NAME_MIN_FONT_SIZE)
+        self.assertEqual(text, 'Long Marshal Name')
+
+    def test_non_name_field_is_not_modified(self):
+        text, font_size = _fit_pdf_text_for_field(
+            'expiration',
+            '01/01/2027',
+            'Helvetica',
+            12,
+            10,
+        )
+
+        self.assertEqual(text, '01/01/2027')
+        self.assertEqual(font_size, 12)
+
+
 class IndexViewTests(ViewTestBase):
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_header_uses_standard_logo_when_test_features_disabled(self):
@@ -471,6 +525,18 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'name="membership_csv"')
         self.assertContains(response, 'Last upload:')
 
+    def test_index_senior_marshal_sees_create_account_link_without_merge_accounts(self):
+        marshal_user, marshal_person = self.make_person('index_senior_marshal', 'Index Senior Marshal')
+        self.grant_authorization(marshal_person, self.style_sm_armored)
+        self.client.login(username=marshal_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{reverse("register")}"')
+        self.assertContains(response, 'Create an Account')
+        self.assertNotContains(response, 'Merge Accounts')
+
     def test_index_staff_sees_kingdom_authorization_notifications_without_office(self):
         staff_user, _ = self.make_person('index_staff_kao_view', 'Index Staff KAO View')
         staff_user.is_staff = True
@@ -490,7 +556,7 @@ class IndexViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Authorizations Needing Approval')
         self.assertContains(response, 'Index Staff KAO Target')
-        self.assertContains(response, 'Needs Kingdom Approval')
+        self.assertContains(response, 'Awaiting Kingdom Authorization Officer Review')
 
     @patch('authorizations.views.send_mail')
     def test_register_minor_requires_parent_id_or_parent_first_and_last_name(self, mock_send_mail):
@@ -776,11 +842,11 @@ class IndexViewTests(ViewTestBase):
 
         self.client.login(username=kao_user.username, password='StrongPass!123')
         enabled_response = self.client.get(reverse('index'))
-        self.assertContains(enabled_response, 'Approve All Needs Kingdom Approval')
+        self.assertContains(enabled_response, 'Approve All Awaiting Kingdom Authorization Officer Review')
 
         AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
         disabled_response = self.client.get(reverse('index'))
-        self.assertNotContains(disabled_response, 'Approve All Needs Kingdom Approval')
+        self.assertNotContains(disabled_response, 'Approve All Awaiting Kingdom Authorization Officer Review')
 
     def test_kao_can_bulk_approve_needs_kingdom_without_note_flow(self):
         kao_user, kao_person = self.make_person('index_bulk_flow_kao', 'Index Bulk Flow KAO')
@@ -1004,10 +1070,10 @@ class IndexViewTests(ViewTestBase):
         self.client.login(username=ao_user.username, password='StrongPass!123')
         response = self.client.get(reverse('index'))
 
-        self.assertContains(response, 'Needs Kingdom Approval')
-        self.assertContains(response, 'Pending Background Check')
-        self.assertNotContains(response, 'Needs Kingdom Equestrian Waiver')
-        self.assertNotContains(response, 'Needs Regional Approval')
+        self.assertContains(response, 'Awaiting Kingdom Authorization Officer Review')
+        self.assertContains(response, 'Awaiting Background Check')
+        self.assertNotContains(response, 'Awaiting Equestrian Authorization Officer Review')
+        self.assertNotContains(response, 'Awaiting Regional Marshal Approval')
         self.assertNotContains(response, 'Approve As (optional):')
         self.assertContains(response, 'No file')
 
@@ -1033,8 +1099,8 @@ class IndexViewTests(ViewTestBase):
         self.client.login(username=ao_user.username, password='StrongPass!123')
         response = self.client.get(reverse('index'))
 
-        self.assertContains(response, 'Pending Background Check')
-        self.assertContains(response, 'Needs Kingdom Approval')
+        self.assertContains(response, 'Awaiting Background Check')
+        self.assertContains(response, 'Awaiting Kingdom Authorization Officer Review')
         self.assertContains(response, 'Go To Page')
         self.assertContains(response, f'href="{reverse("user_account", kwargs={"user_id": target_user.id})}"')
         self.assertContains(response, 'class="btn btn-primary">Go To Page')
@@ -1112,7 +1178,7 @@ class IndexViewTests(ViewTestBase):
         self.client.login(username=ao_user.username, password='StrongPass!123')
         response = self.client.get(reverse('index'))
 
-        self.assertContains(response, 'Pending Background Check')
+        self.assertContains(response, 'Awaiting Background Check')
         self.assertContains(response, 'New upload')
         self.assertContains(
             response,
@@ -1170,7 +1236,7 @@ class IndexViewTests(ViewTestBase):
         self.client.login(username=eq_officer_user.username, password='StrongPass!123')
         response = self.client.get(reverse('index'))
 
-        self.assertContains(response, 'Needs Kingdom Equestrian Waiver')
+        self.assertContains(response, 'Awaiting Equestrian Authorization Officer Review')
         self.assertContains(response, 'No file')
         self.assertContains(response, f'name="bad_authorization_id" value="{pending_eq.id}"')
 
@@ -5512,9 +5578,9 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         pending = response.context['pending_authorization_list']['Youth Armored']
-        self.assertEqual(pending['status'], 'Pending Background Check')
+        self.assertEqual(pending['status'], 'Awaiting Background Check')
         self.assertFalse(pending['can_reject'])
-        self.assertContains(response, 'Pending Background Check')
+        self.assertContains(response, 'Awaiting Background Check')
         self.assertContains(response, 'Youth Armored')
 
     def test_add_authorization_routes_equestrian_to_kingdom_waiver_when_sign_off_disabled(self):
@@ -5639,7 +5705,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertContains(response, 'Only the Kingdom Equestrian Authorization Officer can approve this authorization.')
 
     def test_non_marshal_does_not_get_reject_button_for_needs_regional(self):
-        viewer_user, _ = self.make_person('office_pending_viewer', 'Office Pending Viewer')
+        viewer_user, _ = self.make_person('office_pending_viewer', 'Office Awaiting Second Marshal Concurrence Viewer')
         Authorization.objects.create(
             person=self.candidate_armored_person,
             style=self.style_jm_armored,
@@ -6752,7 +6818,7 @@ class ReportsViewTests(TestCase):
             state_province='Oregon',
             country='United States',
         )
-        person = Person.objects.create(user=user, sca_name='Current Report User', branch=local_branch, is_minor=False)
+        person = Person.objects.create(user=user, sca_name='Current Report User', branch=local_branch)
         Authorization.objects.create(
             person=person,
             style=style,

@@ -35,11 +35,12 @@ class AdditionalCoverageBase(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.status_active, _ = AuthorizationStatus.objects.get_or_create(name='Active')
-        cls.status_pending, _ = AuthorizationStatus.objects.get_or_create(name='Pending')
-        cls.status_regional, _ = AuthorizationStatus.objects.get_or_create(name='Needs Regional Approval')
-        cls.status_kingdom, _ = AuthorizationStatus.objects.get_or_create(name='Needs Kingdom Approval')
-        cls.status_pending_waiver, _ = AuthorizationStatus.objects.get_or_create(name='Pending Waiver')
-        cls.status_needs_concurrence, _ = AuthorizationStatus.objects.get_or_create(name='Needs Concurrence')
+        cls.status_pending, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Second Marshal Concurrence')
+        cls.status_regional, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Regional Marshal Approval')
+        cls.status_kingdom, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Kingdom Authorization Officer Review')
+        cls.status_pending_waiver, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Waiver')
+        cls.status_needs_concurrence, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Fighter Concurrence')
+        cls.status_pending_background_check, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Background Check')
         cls.status_revoked, _ = AuthorizationStatus.objects.get_or_create(name='Revoked')
         cls.status_rejected, _ = AuthorizationStatus.objects.get_or_create(name='Rejected')
 
@@ -111,7 +112,6 @@ class AdditionalCoverageBase(TestCase):
             user=user,
             sca_name=sca_name,
             branch=branch or self.branch_gd,
-            is_minor=is_minor,
             parent=parent,
         )
         return user, person
@@ -350,9 +350,9 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         self.assertEqual(response.status_code, 200)
 
     def test_pending_duplicate_is_rejected_in_add_authorization(self):
-        acting_user, acting_person = self.make_person('addauth_pending_actor', 'Pending Actor')
+        acting_user, acting_person = self.make_person('addauth_pending_actor', 'Awaiting Second Marshal Concurrence Actor')
         self.grant_authorization(acting_person, self.style_sm_armored)
-        target_user, target_person = self.make_person('addauth_pending_target', 'Pending Target')
+        target_user, target_person = self.make_person('addauth_pending_target', 'Awaiting Second Marshal Concurrence Target')
         self.grant_authorization(target_person, self.style_weapon_armored, status=self.status_pending, marshal=acting_person)
 
         self.login(acting_user)
@@ -642,10 +642,76 @@ class AuthorizationOfficerSignOffFlagTests(AdditionalCoverageBase):
         pending_a.refresh_from_db()
         pending_b.refresh_from_db()
         self.assertEqual(pending_a.status, self.status_kingdom)
-        self.assertEqual(pending_b.status, self.status_kingdom)
+        self.assertEqual(pending_b.status, self.status_needs_concurrence)
         self.assertEqual(pending_a.concurring_fighter, concurring_person)
-        self.assertEqual(pending_b.concurring_fighter, concurring_person)
+        self.assertIsNone(pending_b.concurring_fighter)
         self.assertEqual(response.status_code, 200)
+
+    def test_pending_background_check_rejection_ignores_submit_as(self):
+        kao_user, kao_person = self.make_person('bg_reject_kao', 'BG Reject KAO')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        submit_as_user, submit_as_person = self.make_person('bg_reject_submit_as', 'BG Reject SubmitAs')
+        proposer_user, proposer_person = self.make_person('bg_reject_prop', 'BG Reject Prop')
+        target_user, target_person = self.make_person('bg_reject_target', 'BG Reject Target')
+        pending_auth = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+
+        self.login(kao_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_auth.id),
+                'submit_as_user_id': str(submit_as_user.id),
+                'action_note': 'Background check was not accepted.',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_rejected)
+        self.assertEqual(pending_auth.updated_by, kao_user)
+
+    def test_equestrian_pending_background_check_can_be_rejected_by_keao(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        discipline_keao, _ = Discipline.objects.get_or_create(name='Equestrian Authorization Officer')
+        style_eq_junior, _ = WeaponStyle.objects.get_or_create(
+            name='Junior Marshal',
+            discipline=discipline_equestrian,
+        )
+        keao_user, keao_person = self.make_person('bg_reject_keao', 'BG Reject KEAO')
+        self.appoint(keao_person, self.branch_an_tir, discipline_keao)
+        submit_as_user, submit_as_person = self.make_person('bg_reject_keao_submit_as', 'BG Reject KEAO SubmitAs')
+        proposer_user, proposer_person = self.make_person('bg_reject_keao_prop', 'BG Reject KEAO Prop')
+        target_user, target_person = self.make_person('bg_reject_keao_target', 'BG Reject KEAO Target')
+        pending_auth = self.grant_authorization(
+            target_person,
+            style_eq_junior,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+
+        self.login(keao_user)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'reject_authorization',
+                'bad_authorization_id': str(pending_auth.id),
+                'submit_as_user_id': str(submit_as_user.id),
+                'action_note': 'Background check was not accepted.',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_rejected)
+        self.assertEqual(pending_auth.updated_by, keao_user)
 
 
 class AuthorizationFormDisciplineTests(AdditionalCoverageBase):
@@ -1047,7 +1113,7 @@ class ConcurrenceFlowTests(AdditionalCoverageBase):
             marshal=self.proposer_person,
         )
 
-    def test_concurrence_records_fighter_and_approves_all_pending_in_discipline(self):
+    def test_concurrence_records_fighter_and_approves_selected_authorization_only(self):
         self.login(self.concurring_user)
 
         response = self.client.post(
@@ -1063,10 +1129,19 @@ class ConcurrenceFlowTests(AdditionalCoverageBase):
         self.pending_b.refresh_from_db()
 
         self.assertEqual(self.pending_a.status, self.status_active)
-        self.assertEqual(self.pending_b.status, self.status_active)
+        self.assertEqual(self.pending_b.status, self.status_needs_concurrence)
         self.assertEqual(self.pending_a.concurring_fighter, self.concurring_person)
-        self.assertEqual(self.pending_b.concurring_fighter, self.concurring_person)
+        self.assertIsNone(self.pending_b.concurring_fighter)
         self.assertEqual(response.status_code, 200)
+
+    def test_fighter_page_renders_separate_actions_for_pending_authorizations(self):
+        self.login(self.concurring_user)
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.target_user.id}))
+
+        self.assertContains(response, 'Awaiting Fighter Concurrence')
+        self.assertContains(response, f'name="authorization_id" value="{self.pending_a.id}"')
+        self.assertContains(response, f'name="authorization_id" value="{self.pending_b.id}"')
 
     def test_fighter_cannot_concur_for_self(self):
         self.login(self.target_user)
@@ -1128,9 +1203,9 @@ class ConcurrenceFlowTests(AdditionalCoverageBase):
         self.pending_a.refresh_from_db()
         self.pending_b.refresh_from_db()
         self.assertEqual(self.pending_a.status, self.status_active)
-        self.assertEqual(self.pending_b.status, self.status_active)
+        self.assertEqual(self.pending_b.status, self.status_needs_concurrence)
         self.assertEqual(self.pending_a.concurring_fighter, self.concurring_person)
-        self.assertEqual(self.pending_b.concurring_fighter, self.concurring_person)
+        self.assertIsNone(self.pending_b.concurring_fighter)
         self.assertEqual(response.status_code, 200)
 
     def test_authorization_officer_submit_as_unqualified_user_is_rejected(self):
@@ -1202,8 +1277,7 @@ class ModelValidationAndConstraintTests(AdditionalCoverageBase):
             birthday=None,
         )
 
-        person = Person.objects.create(user=user, sca_name='Minor No Birthday', branch=self.branch_gd, is_minor=True)
-        self.assertFalse(person.is_minor)
+        person = Person.objects.create(user=user, sca_name='Minor No Birthday', branch=self.branch_gd)
         self.assertFalse(person.is_current_minor)
 
     def test_person_save_clears_parent_and_old_birthday_when_adult_20_or_older(self):
@@ -1221,7 +1295,6 @@ class ModelValidationAndConstraintTests(AdditionalCoverageBase):
         child_user.refresh_from_db()
 
         self.assertIsNone(child_person.parent)
-        self.assertFalse(child_person.is_minor)
         self.assertIsNone(child_user.birthday)
 
     def test_user_save_normalizes_partial_membership_fields_to_none(self):
@@ -1417,8 +1490,6 @@ class SearchFilteringAndPaginationTests(AdditionalCoverageBase):
             is_minor=False,
             birthday=date.today() - relativedelta(years=13),
         )
-        Person.objects.filter(pk=minor.pk).update(is_minor=False)
-        minor.refresh_from_db()
         _, adult = self.make_person('search_minor_no', 'Search Minor No')
         minor_auth = self.grant_authorization(minor, self.style_weapon_armored, status=self.status_active)
         self.grant_authorization(adult, self.style_weapon_armored, status=self.status_active)
@@ -1441,7 +1512,7 @@ class CleanupMinorTransitionDataCommandTests(AdditionalCoverageBase):
             parent=parent,
         )
         User.objects.filter(pk=user.pk).update(birthday=date.today() - relativedelta(years=20))
-        Person.objects.filter(pk=child.pk).update(is_minor=True, parent=parent)
+        Person.objects.filter(pk=child.pk).update(parent=parent)
         user.refresh_from_db()
         child.refresh_from_db()
         return user, child, parent
@@ -1456,7 +1527,6 @@ class CleanupMinorTransitionDataCommandTests(AdditionalCoverageBase):
         child.refresh_from_db()
         self.assertIsNotNone(user.birthday)
         self.assertEqual(child.parent_id, parent.user_id)
-        self.assertTrue(child.is_minor)
         self.assertIn('Minor transition cleanup dry run', output.getvalue())
         self.assertIn(f'user_id={child.user_id}', output.getvalue())
         self.assertIn('No changes were applied', output.getvalue())
@@ -1470,7 +1540,6 @@ class CleanupMinorTransitionDataCommandTests(AdditionalCoverageBase):
         child.refresh_from_db()
         self.assertIsNone(user.birthday)
         self.assertIsNone(child.parent_id)
-        self.assertFalse(child.is_minor)
 
     def test_apply_clears_stale_adult_parent_names(self):
         user, child, _ = self._stale_adult_child()
@@ -1489,7 +1558,6 @@ class CleanupMinorTransitionDataCommandTests(AdditionalCoverageBase):
         self.assertEqual(child.parent_sca_name, '')
         self.assertEqual(child.parent_first_name, '')
         self.assertEqual(child.parent_last_name, '')
-        self.assertFalse(child.is_minor)
 
     def test_dry_run_can_email_report(self):
         _, child, _ = self._stale_adult_child()

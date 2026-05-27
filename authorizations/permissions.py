@@ -11,8 +11,8 @@ from authorizations.models import BranchMarshal, Authorization, WeaponStyle, Use
 
 logger = logging.getLogger(__name__)
 
-KINGDOM_APPROVAL_STATUS = 'Needs Kingdom Approval'
-KINGDOM_EQUESTRIAN_WAIVER_STATUS = 'Needs Kingdom Equestrian Waiver'
+KINGDOM_APPROVAL_STATUS = 'Awaiting Kingdom Authorization Officer Review'
+KINGDOM_EQUESTRIAN_WAIVER_STATUS = 'Awaiting Equestrian Authorization Officer Review'
 KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE = 'Authorization Officer'
 KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE = 'Equestrian Authorization Officer'
 YOUTH_DISCIPLINE_NAMES = ['Youth Armored', 'Youth Rapier']
@@ -520,8 +520,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
             style__discipline__name='Equestrian',
             style__name__in=_JUNIOR_GROUND_CREW_STYLES,
             status__name__in=[
-                'Pending',
-                'Needs Regional Approval',
+                'Awaiting Second Marshal Concurrence',
+                'Awaiting Regional Marshal Approval',
                 KINGDOM_APPROVAL_STATUS,
                 KINGDOM_EQUESTRIAN_WAIVER_STATUS,
             ],
@@ -642,11 +642,11 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         style__name=style.name,
         style__discipline__name=style.discipline.name,
         status__name__in=[
-            'Pending',
-            'Needs Regional Approval',
+            'Awaiting Second Marshal Concurrence',
+            'Awaiting Regional Marshal Approval',
             KINGDOM_APPROVAL_STATUS,
             KINGDOM_EQUESTRIAN_WAIVER_STATUS,
-            'Needs Concurrence',
+            'Awaiting Fighter Concurrence',
         ],
     ).exists():
         return False, 'Cannot renew a pending authorization.'
@@ -666,8 +666,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
                 style__discipline__name='Equestrian',
                 style__name__in=_SENIOR_GROUND_CREW_STYLES,
                 status__name__in=[
-                    'Pending',
-                    'Needs Regional Approval',
+                    'Awaiting Second Marshal Concurrence',
+                    'Awaiting Regional Marshal Approval',
                     KINGDOM_APPROVAL_STATUS,
                     KINGDOM_EQUESTRIAN_WAIVER_STATUS,
                 ],
@@ -687,8 +687,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
                 style__name='Senior Marshal',
                 style__discipline__name=style.discipline.name,
                 status__name__in=[
-                    'Pending',
-                    'Needs Regional Approval',
+                    'Awaiting Second Marshal Concurrence',
+                    'Awaiting Regional Marshal Approval',
                     KINGDOM_APPROVAL_STATUS,
                     KINGDOM_EQUESTRIAN_WAIVER_STATUS,
                 ],
@@ -701,8 +701,8 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
             style__name='Junior Marshal',
             style__discipline__name=style.discipline.name,
             status__name__in=[
-                'Pending',
-                'Needs Regional Approval',
+                'Awaiting Second Marshal Concurrence',
+                'Awaiting Regional Marshal Approval',
                 KINGDOM_APPROVAL_STATUS,
                 KINGDOM_EQUESTRIAN_WAIVER_STATUS,
             ],
@@ -866,7 +866,7 @@ def _authorization_note_office_score(
 
     if discipline.name == authorization_discipline:
         score = 100
-        if status_name == 'Needs Regional Approval' or action == 'marshal_rejected':
+        if status_name == 'Awaiting Regional Marshal Approval' or action == 'marshal_rejected':
             if branch.is_region() and branch.name == region_name:
                 score += 60
             elif branch.name == 'An Tir':
@@ -901,7 +901,7 @@ def _authorization_note_office_score(
         return 0
 
     if discipline.name == 'Earl Marshal':
-        if status_name == 'Needs Regional Approval' or action in ['marshal_rejected', 'sanction_issued', 'sanction_lifted']:
+        if status_name == 'Awaiting Regional Marshal Approval' or action in ['marshal_rejected', 'sanction_issued', 'sanction_lifted']:
             return 150 if branch.name == 'An Tir' else 140
         if action in ['marshal_proposed', 'marshal_concurred', 'marshal_approved']:
             return 80 if branch.name == 'An Tir' else 70
@@ -1089,7 +1089,7 @@ def approve_authorization(request):
         )
 
     active_status = AuthorizationStatus.objects.get(name='Active')
-    regional_status = AuthorizationStatus.objects.get(name='Needs Regional Approval')
+    regional_status = AuthorizationStatus.objects.get(name='Awaiting Regional Marshal Approval')
     kingdom_status = AuthorizationStatus.objects.get(name=KINGDOM_APPROVAL_STATUS)
     kingdom_equestrian_waiver_status = AuthorizationStatus.objects.filter(
         name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
@@ -1098,8 +1098,8 @@ def approve_authorization(request):
         kingdom_equestrian_waiver_status = AuthorizationStatus.objects.create(
             name=KINGDOM_EQUESTRIAN_WAIVER_STATUS
         )
-    pending_waiver_status = AuthorizationStatus.objects.get(name='Pending Waiver')
-    pending_background_check_status, _ = AuthorizationStatus.objects.get_or_create(name='Pending Background Check')
+    pending_waiver_status = AuthorizationStatus.objects.get(name='Awaiting Waiver')
+    pending_background_check_status, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Background Check')
 
     def kingdom_review_status_for(auth: Authorization):
         status_name = kingdom_review_status_name_for_style(auth.style)
@@ -1124,7 +1124,7 @@ def approve_authorization(request):
     sign_off_required = authorization_officer_sign_off_enabled()
     can_approve_kingdom_pending = can_approve_kingdom_review_authorization(request_user, authorization)
 
-    if authorization.status.name == 'Pending':
+    if authorization.status.name == 'Awaiting Second Marshal Concurrence':
         # Rule 2: must be a senior marshal in the discipline to approve (exception for missile marshal concurence).
         if not is_senior_marshal(marshal, discipline):
             return False, 'You must be a senior marshal in this discipline to approve this authorization.'
@@ -1168,7 +1168,7 @@ def approve_authorization(request):
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
     # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored Combat can approve Missile Combat).
-    elif authorization.status.name == 'Needs Regional Approval':
+    elif authorization.status.name == 'Awaiting Regional Marshal Approval':
         if not auth_region:
             _log_unresolved_authorization_region('regional approval', authorization, request_user)
             return False, 'Could not determine the fighter region for regional approval.'
@@ -1234,7 +1234,7 @@ def approve_authorization(request):
         if authorization.status.name == KINGDOM_APPROVAL_STATUS and not can_approve_kingdom_pending:
             return False, 'Only the Kingdom Authorization Officer can approve this authorization.'
 
-        # Marshal authorizations require current membership; never Pending Waiver for marshal styles
+        # Marshal authorizations require current membership; never Awaiting Waiver for marshal styles
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:
             if not membership_is_current(authorization.person.user):
                 return False, 'Marshal authorizations require a current membership.'
@@ -1326,7 +1326,7 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
             return False, 'Only the Kingdom Equestrian Authorization Officer can approve this authorization.'
         return True, 'OK'
 
-    if authorization.status.name == 'Pending':
+    if authorization.status.name == 'Awaiting Second Marshal Concurrence':
         if not is_senior_marshal(marshal, discipline):
             return False, 'You must be a senior marshal in this discipline to approve this authorization.'
         if authorization.marshal.user == marshal:
@@ -1341,7 +1341,7 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
                 return False, 'Marshal authorizations require a current membership.'
         return True, 'OK'
 
-    if authorization.status.name == 'Needs Regional Approval':
+    if authorization.status.name == 'Awaiting Regional Marshal Approval':
         if not auth_region:
             _log_unresolved_authorization_region('regional approval validation', authorization, request_user)
             return False, 'Could not determine the fighter region for regional approval.'
@@ -1370,8 +1370,14 @@ def validate_reject_authorization(marshal: User, authorization: Authorization):
     auth_discipline = authorization.style.discipline.name
     auth_region = _authorization_region_name(authorization)
 
-    if authorization.status.name == 'Pending Background Check':
-        if can_approve_kingdom_review_authorization(marshal, authorization):
+    if authorization.status.name == 'Awaiting Background Check':
+        if (
+            is_kingdom_authorization_officer(marshal)
+            or (
+                auth_discipline == 'Equestrian'
+                and is_kingdom_equestrian_authorization_officer(marshal)
+            )
+        ):
             return True, 'OK'
         return False, 'Only the Kingdom Authorization Officer can reject this authorization.'
     if authorization.status.name == KINGDOM_APPROVAL_STATUS:

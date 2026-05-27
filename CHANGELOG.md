@@ -3,6 +3,7 @@
 ### Major Changes
 - Waiver handling has been overhauled. You will now be able to see a record of previous waivers you have signed.
 - Youth authorizations have been restructured to be tied to specific age categories and must be renewed when moving to a new age category.
+- Changed the names of the different authorization statuses to be more descriptive.
 
 ### Added
 - When an account email address or password is changed, a security notice is sent to the (previous) email address.
@@ -13,6 +14,9 @@
 ### Changed
 - Kingdom Authorization Officer review is now limited to non-equestrian authorizations; equestrian kingdom waiver review belongs to the Kingdom Equestrian Authorization Officer.
 - Kingdom and equestrian authorization officers can record paper waivers from an account page whenever a paper form has been received.
+- Fighter pages now show authorizations in workflow order, with pending authorizations separated so each one can be approved, concurred with, or rejected individually.
+- Senior marshals can now add new accounts.
+- Long names on fighter card PDFs now shrink down to 8 point text and then truncate at a word boundary when needed.
 
 
 ## [1.0.1] - 2026-05-13

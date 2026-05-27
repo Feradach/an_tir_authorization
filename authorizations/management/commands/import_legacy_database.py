@@ -258,7 +258,6 @@ class Command(BaseCommand):
             Person.objects.using(self.target_alias).filter(user_id=KAO_USER_ID).update(
                 sca_name=KAO_SCA_NAME,
                 branch_id=branch.id,
-                is_minor=False,
             )
         else:
             Person.objects.using(self.target_alias).bulk_create(
@@ -267,7 +266,6 @@ class Command(BaseCommand):
                         user_id=KAO_USER_ID,
                         sca_name=KAO_SCA_NAME,
                         branch_id=branch.id,
-                        is_minor=False,
                     )
                 ]
             )
@@ -358,7 +356,6 @@ class Command(BaseCommand):
                         sca_name=self._clip(row["SCAName"] or first_name, 255),
                         branch_id=branch_id,
                         title_id=title_id,
-                        is_minor=is_current_minor,
                         created_by_id=KAO_USER_ID,
                         updated_by_id=KAO_USER_ID,
                     )

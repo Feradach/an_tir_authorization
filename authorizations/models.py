@@ -472,7 +472,6 @@ class Person(models.Model):
     sca_name = models.CharField(max_length=255, null=True, blank=True, db_index=True)
     branch = models.ForeignKey(Branch, on_delete=models.SET_NULL, null=True, db_index=True)
     title = models.ForeignKey(Title, on_delete=models.SET_NULL, null=True, blank=True)
-    is_minor = models.BooleanField(default=False)
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children')
     parent_sca_name = models.CharField(max_length=255, blank=True, default='')
     parent_first_name = models.CharField(max_length=150, blank=True, default='')
@@ -515,7 +514,6 @@ class Person(models.Model):
 
     def sync_transitional_minor_fields(self):
         inferred_minor = self.is_current_minor
-        self.is_minor = inferred_minor
         if not inferred_minor:
             self.parent = None
             self.parent_sca_name = ''
@@ -529,7 +527,6 @@ class Person(models.Model):
             self.parent_sca_name = ''
             self.parent_first_name = ''
             self.parent_last_name = ''
-            self.is_minor = False
             self.user.save(update_fields=['birthday', 'updated_at'])
 
     class Meta:

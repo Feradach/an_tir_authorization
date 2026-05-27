@@ -91,8 +91,8 @@ class UserAdmin(admin.ModelAdmin):
 
 @admin.register(Person)
 class PersonAdmin(admin.ModelAdmin):
-    list_display = ('sca_name', 'user', 'branch', 'is_minor')
-    list_filter = ('branch', 'is_minor')
+    list_display = ('sca_name', 'user', 'branch', 'minor_status')
+    list_filter = ('branch',)
     search_fields = (
         'sca_name',
         'user__username',

@@ -134,7 +134,31 @@
             </div>
         {% endfor %}
     </div>
-    {% if pending_authorization_list %}
+    {% if pending_waivers %}
+        <h4>Awaiting Waiver</h4>
+        <div class="row">
+            {% for discipline, data in pending_waivers.items %}
+                <div class="col-md-3">
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #e9ecef; color: #333;">
+                        <h5>{{ discipline }}</h5>
+                        <p><strong>Styles:</strong>
+                        <ul>
+                        {% for style in data.styles %}
+                          <li>{{ style }}{% if not forloop.last %}, {% endif %}</li>
+                        {% endfor %}
+                        </ul>
+                        </p>
+                        <p><strong>Status:</strong> {{ data.status }}</p>
+                        {% if data.marshal_name %}
+                            <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    {% if pending_authorization_groups %}
         <h4>Pending Authorizations</h4>
         {% if auth_officer %}
         <div class="row mb-2">
@@ -149,19 +173,21 @@
             </div>
         </div>
         {% endif %}
+        {% for status, authorizations in pending_authorization_groups.items %}
+        <h5>{{ status }}</h5>
         <div class="row">
-            {% for discipline, data in pending_authorization_list.items %}
+            {% for data in authorizations %}
                 <div class="col-md-3">
-                    {% if data.status == "Pending" or data.status == "Needs Concurrence" %}
+                    {% if data.status == "Awaiting Second Marshal Concurrence" or data.status == "Awaiting Fighter Concurrence" %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #ffefae">
-                    {% elif data.status == "Needs Regional Approval" %}
+                    {% elif data.status == "Awaiting Regional Marshal Approval" %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #89bed8">
-                    {% elif data.status == "Needs Kingdom Approval" %}
+                    {% elif data.status == "Awaiting Kingdom Authorization Officer Review" %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #b39dc9">
                     {% else %}
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #a2b5f5">
                     {% endif %}
-                        <h5>{{ discipline }}</h5>
+                        <h5>{{ data.discipline }}</h5>
                         <p><strong>Styles:</strong>
                         <ul>
                         {% for style in data.styles %}
@@ -171,7 +197,7 @@
                         </p>
                         <p><strong>Status:</strong> {{ data.status }}</p>
                         <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
-                        {% if data.status == "Pending" and data.can_approve %}
+                        {% if data.status == "Awaiting Second Marshal Concurrence" and data.can_approve %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
@@ -186,7 +212,7 @@
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
-                        {% if data.status == "Needs Concurrence" and data.can_concur %}
+                        {% if data.status == "Awaiting Fighter Concurrence" and data.can_concur %}
                         <form method="post" action=""{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="concur_authorization">
@@ -197,7 +223,7 @@
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
-                        {% if data.status == "Needs Regional Approval" and data.can_approve %}
+                        {% if data.status == "Awaiting Regional Marshal Approval" and data.can_approve %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
@@ -212,7 +238,7 @@
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
-                        {% if data.status == "Needs Kingdom Approval" and data.can_approve %}
+                        {% if data.status == "Awaiting Kingdom Authorization Officer Review" and data.can_approve %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
@@ -227,7 +253,7 @@
                             <button type="submit" class="btn btn-success">Approve</button>
                         </form>
                         {% endif %}
-                        {% if data.status == "Needs Kingdom Equestrian Waiver" and data.can_approve %}
+                        {% if data.status == "Awaiting Equestrian Authorization Officer Review" and data.can_approve %}
                         <form method="post" action=""{% if pending_authorization_action and pending_authorization_action.action == 'approve_authorization' and pending_authorization_action.authorization_id == data.auth_id %} data-pending-note="1" data-note-title="Marshal Promotion Note" data-clear-form-id="clear_pending_authorization_action_form"{% endif %}{% if auth_officer %} data-kao-submit-as="1" data-submit-as-source-id="kao_submit_as_control" data-submit-as-field="submit_as_user_id"{% endif %}>
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_authorization">
@@ -261,30 +287,7 @@
                 </div>
             {% endfor %}
         </div>
-    {% endif %}
-
-    {% if pending_waivers %}
-        <h4>Pending Waiver</h4>
-        <div class="row">
-            {% for discipline, data in pending_waivers.items %}
-                <div class="col-md-3">
-                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #e9ecef; color: #333;">
-                        <h5>{{ discipline }}</h5>
-                        <p><strong>Styles:</strong>
-                        <ul>
-                        {% for style in data.styles %}
-                          <li>{{ style }}{% if not forloop.last %}, {% endif %}</li>
-                        {% endfor %}
-                        </ul>
-                        </p>
-                        <p><strong>Status:</strong> {{ data.status }}</p>
-                        {% if data.marshal_name %}
-                            <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
-                        {% endif %}
-                    </div>
-                </div>
-            {% endfor %}
-        </div>
+        {% endfor %}
     {% endif %}
 </div>
 </div>

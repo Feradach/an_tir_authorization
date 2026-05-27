@@ -124,14 +124,12 @@ class Command(BaseCommand):
                     defaults={
                         'sca_name': sca_name,
                         'branch': branch,
-                        'is_minor': False,
                         'created_by': user,
                         'updated_by': user,
                     },
                 )
                 person.sca_name = sca_name
                 person.branch = branch
-                person.is_minor = False
                 person.updated_by = user
                 person.save()
 

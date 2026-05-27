@@ -5,13 +5,9 @@
 
 ### Urgent
 
-* Authorizations on the fighter page need to be separated by status first and discipline second. Each authorization that is in a status other than "Active" should be separated from all other authorizations so that they can be approved or denied separately.
-* Names on the PDF cards exceed the field width and need to be truncated.
-
 
 ### Near Term
 
-* Remove is_minor status instead relying on birthday.
 * Add 2FA to the system. Make it optional for now, possibly mandatory for high access users.
 * Notification when authorization expiration is nearing (with ability to turn them off).
 * Make sure quarterly reports are working and emailing to appropriate people

@@ -40,12 +40,12 @@ class AuthorizationTestBase(TestCase):
     def setUpTestData(cls):
         # Statuses
         cls.status_active = AuthorizationStatus.objects.create(name='Active')
-        cls.status_pending = AuthorizationStatus.objects.create(name='Pending')
-        cls.status_regional = AuthorizationStatus.objects.create(name='Needs Regional Approval')
-        cls.status_kingdom = AuthorizationStatus.objects.create(name='Needs Kingdom Approval')
-        cls.status_pending_background_check = AuthorizationStatus.objects.create(name='Pending Background Check')
-        cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Pending Waiver')
-        cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Needs Concurrence')
+        cls.status_pending = AuthorizationStatus.objects.create(name='Awaiting Second Marshal Concurrence')
+        cls.status_regional = AuthorizationStatus.objects.create(name='Awaiting Regional Marshal Approval')
+        cls.status_kingdom = AuthorizationStatus.objects.create(name='Awaiting Kingdom Authorization Officer Review')
+        cls.status_pending_background_check = AuthorizationStatus.objects.create(name='Awaiting Background Check')
+        cls.status_pending_waiver = AuthorizationStatus.objects.create(name='Awaiting Waiver')
+        cls.status_needs_concurrence = AuthorizationStatus.objects.create(name='Awaiting Fighter Concurrence')
         cls.status_revoked = AuthorizationStatus.objects.create(name='Revoked')
         cls.status_rejected = AuthorizationStatus.objects.create(name='Rejected')
         cls.status_inactive = AuthorizationStatus.objects.create(name='Inactive')
@@ -143,7 +143,6 @@ class AuthorizationTestBase(TestCase):
             user=user,
             sca_name=sca_name,
             branch=branch or self.branch_gd,
-            is_minor=is_minor,
             parent=parent,
         )
         return user, person
@@ -302,9 +301,6 @@ class AuthorizationExpirationCalculationTests(AuthorizationTestBase):
             country='United States',
             state_province='Oregon',
         )
-        type(fighter).objects.filter(pk=fighter.pk).update(is_minor=False)
-        fighter.refresh_from_db()
-
         expected = birthday + relativedelta(years=18)
         self.assertEqual(calculate_authorization_expiration(fighter, self.style_weapon_armored), expected)
 
@@ -444,9 +440,6 @@ class AuthorizationRuleTests(AuthorizationTestBase):
             is_minor=False,
             birthday=birthday,
         )
-        type(minor).objects.filter(pk=minor.pk).update(is_minor=False)
-        minor.refresh_from_db()
-
         ok, msg = authorization_follows_rules(marshal_user, minor, self.style_weapon_armored.id)
 
         self.assertFalse(ok)
@@ -496,8 +489,8 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertEqual(msg, 'Authorization follows all rules.')
 
     def test_blocks_pending_duplicate_authorization(self):
-        marshal_user, marshal = self.make_person('pending_marshal', 'Pending Marshal')
-        _, fighter = self.make_person('pending_target', 'Pending Target')
+        marshal_user, marshal = self.make_person('pending_marshal', 'Awaiting Second Marshal Concurrence Marshal')
+        _, fighter = self.make_person('pending_target', 'Awaiting Second Marshal Concurrence Target')
         self.grant_authorization(marshal, self.style_sm_armored)
         self.grant_authorization(fighter, self.style_weapon_armored, status=self.status_pending)
 
@@ -557,8 +550,8 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertEqual(msg, 'Cannot make someone Ground Crew - Junior if they are already Ground Crew - Senior.')
 
     def test_junior_ground_crew_blocked_when_senior_ground_crew_is_pending(self):
-        marshal_user, marshal = self.make_person('eq_sm_jgc_pending', 'Eq SM JGC Pending')
-        _, fighter = self.make_person('eq_target_jgc_pending', 'Eq Target JGC Pending')
+        marshal_user, marshal = self.make_person('eq_sm_jgc_pending', 'Eq SM JGC Awaiting Second Marshal Concurrence')
+        _, fighter = self.make_person('eq_target_jgc_pending', 'Eq Target JGC Awaiting Second Marshal Concurrence')
         self.grant_authorization(marshal, self.style_sm_equestrian)
         self.grant_authorization(fighter, self.style_senior_ground_crew, status=self.status_pending)
 
@@ -568,8 +561,8 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertEqual(msg, 'Cannot have a new Ground Crew - Junior if Ground Crew - Senior is pending.')
 
     def test_senior_ground_crew_blocked_when_junior_ground_crew_is_pending(self):
-        marshal_user, marshal = self.make_person('eq_sm_sgc_pending', 'Eq SM SGC Pending')
-        _, fighter = self.make_person('eq_target_sgc_pending', 'Eq Target SGC Pending')
+        marshal_user, marshal = self.make_person('eq_sm_sgc_pending', 'Eq SM SGC Awaiting Second Marshal Concurrence')
+        _, fighter = self.make_person('eq_target_sgc_pending', 'Eq Target SGC Awaiting Second Marshal Concurrence')
         self.grant_authorization(marshal, self.style_sm_equestrian)
         self.grant_authorization(fighter, self.style_junior_ground_crew, status=self.status_pending)
 
@@ -588,7 +581,7 @@ class AuthorizationRuleTests(AuthorizationTestBase):
             waiver_expiration=date.today() + relativedelta(years=1),
         )
         junior_auth = self.grant_authorization(fighter, self.style_junior_ground_crew)
-        review_status, _ = AuthorizationStatus.objects.get_or_create(name='Needs Kingdom Equestrian Waiver')
+        review_status, _ = AuthorizationStatus.objects.get_or_create(name='Awaiting Equestrian Authorization Officer Review')
         senior_auth = self.grant_authorization(
             fighter,
             self.style_senior_ground_crew,
@@ -730,9 +723,9 @@ class ConcurrenceRequirementTests(AuthorizationTestBase):
 
 class ApproveAuthorizationTests(AuthorizationTestBase):
     def test_pending_junior_marshal_is_approved_by_different_senior_marshal(self):
-        _, fighter = self.make_person('pending_jm_target', 'Pending JM Target')
-        proposer_user, proposer = self.make_person('pending_jm_proposer', 'Pending JM Proposer')
-        approver_user, approver = self.make_person('pending_jm_approver', 'Pending JM Approver')
+        _, fighter = self.make_person('pending_jm_target', 'Awaiting Second Marshal Concurrence JM Target')
+        proposer_user, proposer = self.make_person('pending_jm_proposer', 'Awaiting Second Marshal Concurrence JM Proposer')
+        approver_user, approver = self.make_person('pending_jm_approver', 'Awaiting Second Marshal Concurrence JM Approver')
         self.grant_authorization(proposer, self.style_sm_armored)
         self.grant_authorization(approver, self.style_sm_armored)
 
@@ -766,17 +759,17 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
     def test_pending_youth_junior_marshal_moves_to_pending_background_check(self):
         _, fighter = self.make_person(
             'pending_youth_jm_target',
-            'Pending Youth JM Target',
+            'Awaiting Second Marshal Concurrence Youth JM Target',
             background_check_expiration=None,
         )
         proposer_user, proposer = self.make_person(
             'pending_youth_jm_proposer',
-            'Pending Youth JM Proposer',
+            'Awaiting Second Marshal Concurrence Youth JM Proposer',
             background_check_expiration=date.today() + relativedelta(years=1),
         )
         approver_user, approver = self.make_person(
             'pending_youth_jm_approver',
-            'Pending Youth JM Approver',
+            'Awaiting Second Marshal Concurrence Youth JM Approver',
             background_check_expiration=date.today() + relativedelta(years=1),
         )
         self.grant_authorization(proposer, self.style_sm_youth_armored)
@@ -870,9 +863,9 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertEqual(needs_kingdom.status, self.status_pending_background_check)
 
     def test_pending_senior_marshal_moves_to_regional_approval(self):
-        _, fighter = self.make_person('pending_sm_target', 'Pending SM Target')
-        proposer_user, proposer = self.make_person('pending_sm_proposer', 'Pending SM Proposer')
-        approver_user, approver = self.make_person('pending_sm_approver', 'Pending SM Approver')
+        _, fighter = self.make_person('pending_sm_target', 'Awaiting Second Marshal Concurrence SM Target')
+        proposer_user, proposer = self.make_person('pending_sm_proposer', 'Awaiting Second Marshal Concurrence SM Proposer')
+        approver_user, approver = self.make_person('pending_sm_approver', 'Awaiting Second Marshal Concurrence SM Approver')
         self.grant_authorization(proposer, self.style_sm_armored)
         self.grant_authorization(approver, self.style_sm_armored)
 
@@ -897,9 +890,9 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertEqual(pending_auth.status, self.status_regional)
 
     def test_kingdom_earl_marshal_cannot_concur_pending_without_senior_marshal(self):
-        proposer_user, proposer = self.make_person('earl_pending_prop', 'Earl Pending Prop')
-        earl_user, earl_person = self.make_person('earl_pending_actor', 'Earl Pending Actor')
-        _, fighter = self.make_person('earl_pending_target', 'Earl Pending Target')
+        proposer_user, proposer = self.make_person('earl_pending_prop', 'Earl Awaiting Second Marshal Concurrence Prop')
+        earl_user, earl_person = self.make_person('earl_pending_actor', 'Earl Awaiting Second Marshal Concurrence Actor')
+        _, fighter = self.make_person('earl_pending_target', 'Earl Awaiting Second Marshal Concurrence Target')
         self.grant_authorization(proposer, self.style_sm_armored)
         self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
 
