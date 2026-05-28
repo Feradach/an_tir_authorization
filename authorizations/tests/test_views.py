@@ -1499,6 +1499,34 @@ class RegisterViewTests(ViewTestBase):
         self.assertContains(response, 'Why was my membership update rejected?')
         self.assertContains(response, 'middle initial')
 
+    def test_faq_includes_authorization_status_flowchart(self):
+        response = self.client.get(reverse('faq'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="authorization-status-flow"')
+        self.assertContains(response, 'id="authorization-status-flow-chart"')
+        self.assertContains(response, 'data-drag-scroll')
+        self.assertContains(response, 'setupSemanticFlowChart')
+        self.assertContains(response, 'parseFlowRoute')
+        self.assertContains(response, 'status-flow-object-highlight')
+        self.assertContains(response, 'highlightOutgoingFlowRoutes')
+        self.assertContains(response, 'data-flow-zoom-action="in"')
+        self.assertContains(response, 'applyFlowZoom')
+        self.assertContains(response, 'let flowZoom = 0.3')
+        self.assertContains(response, 'data-flow-start')
+        self.assertContains(response, 'setFlowInfoObject')
+        self.assertContains(response, 'animatePaneScrollTo')
+        self.assertContains(response, 'centerSvgBoxHorizontallyInPane')
+        self.assertContains(response, 'Follow route to')
+        self.assertContains(response, 'status-flow-route-path-highlight')
+        self.assertContains(response, 'status-flow-route-label-highlight')
+        self.assertContains(response, 'centerSvgBoxInPane')
+        self.assertContains(response, 'flowObjectDetails')
+        self.assertContains(response, 'Cleared by')
+        self.assertContains(response, 'Appears on')
+        self.assertContains(response, 'Awaiting Background Check')
+        self.assertContains(response, 'authorization_status_workflow.svg')
+
     def test_register_get_renders_template(self):
         response = self.client.get(reverse('register'))
 

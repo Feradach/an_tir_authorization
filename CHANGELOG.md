@@ -1,5 +1,11 @@
 ﻿
-## [1.1.0] - 2026-05-26
+
+## [1.1.1] - 2026-06-03
+### Added
+- Added a scrollable, zoomable FAQ flow chart with clickable object highlights showing how authorization statuses move through review.
+
+
+## [1.1.0] - 2026-05-27
 ### Major Changes
 - Waiver handling has been overhauled. You will now be able to see a record of previous waivers you have signed.
 - Youth authorizations have been restructured to be tied to specific age categories and must be renewed when moving to a new age category.
@@ -10,6 +16,7 @@
 - Password fields now include a show/hide control so users can check what they typed.
 - Tightened authorization officer interface.
 - Added a Kingdom Equestrian Authorization Officer role for kingdom-level review of equestrian authorizations.
+
 
 ### Changed
 - Kingdom Authorization Officer review is now limited to non-equestrian authorizations; equestrian kingdom waiver review belongs to the Kingdom Equestrian Authorization Officer.

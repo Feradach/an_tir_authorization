@@ -39,6 +39,8 @@
     <li><a href="#marshal-home">What can I do from the home page when I log in?</a></li>
     <li><a href="#add-fighter">How do I add a new fighter to the database?</a></li>
     <li><a href="#add-authorization">How do I add a new authorization for an existing fighter?</a></li>
+    <li><a href="#authorization-status-flow">How do the different authorization statuses work?</a></li>
+    <li><a href="#authorization-status-flow-chart">Jump straight to the authorization flowchart</a></li>
     <li><a href="#approval-process">How does the approval process for new Junior and Senior Marshals work?</a></li>
 </ul>
 
@@ -111,7 +113,7 @@
 </ul>
 
 <h3 id="sign-waiver">How do waivers and required documents affect authorization status?</h3>
-<p>Some authorizations need supporting requirements before they can become fully active. Depending on the workflow, you may see statuses like <code>Pending Waiver</code>, <code>Pending Background Check</code>, or <code>Needs Kingdom Equestrian Waiver</code>.</p>
+<p>Some authorizations need supporting requirements before they can become fully active. Depending on the workflow, you may see statuses like <code>Awaiting Waiver</code>, <code>Awaiting Background Check</code>, or <code>Awaiting Equestrian Authorization Officer Review</code>.</p>
 <p>You can upload supported files (including background check proof and equestrian waiver documents) from account pages. For equestrian workflows, one roster-style upload can be linked to multiple fighters and multiple equestrian authorizations.</p>
 
 <h3 id="youth-authorizations">How do youth combat age categories work?</h3>
@@ -141,7 +143,7 @@
             <li>Mounted Archery, Crest Combat, Mounted Heavy Combat, and Jousting require Mounted Gaming first.</li>
             <li>Mounted Heavy Combat requires both General Riding and Mounted Gaming.</li>
             <li>Driving is a separate special authorization with its own skills test.</li>
-            <li>For first-time special authorizations, the authorizing marshal must also hold that same special skill.</li>
+            <li>For first-time special authorizations, the Authorizing Marshal must also hold that same special skill.</li>
         </ul>
     </li>
     <li><strong>Minor limits</strong>:
@@ -190,14 +192,40 @@
 <p>On the fighter page, use the add-authorization form. The system only shows disciplines/styles you are allowed to issue and validates requirements (such as age and prerequisites) before it creates records.</p>
 <p>When acting as Kingdom Authorization Officer in specific workflows, use <strong>Approve As</strong> where required instead of direct self-approval.</p>
 
+<h3 id="authorization-status-flow">How do the different authorization statuses work?</h3>
+<p>When authorizations are submitted they go through a series of checks and approvals before becoming active. Most of these are behind the scenes confirming that the marshal has the appropriate authorizations and that the fighter meets the requirements such as age or prior authorizations.</p>
+<p>Some of the steps require additional actions from either the fighter or other authorized individuals. When that happens the authorization will be put put into one of several statuses. Each status has a specific circumstance in which it is used, specific actions required to clear it, and certain roles that can clear it.</p>
+</p>The flowchart below shows the different statuses and lets you walk through a hypothetical authorization to see how they come into effect and get resolved. You can click on any individual status to see more details about it. If you click "Start" you can begin walking through the authorization process. At each step you will click on the line that represents the "choice" being made.</p>
+
+<div class="status-flow-wrap" aria-label="Authorization status flow chart" data-drag-scroll>
+    <div class="status-flow-panel">
+        <div class="status-flow-controls" aria-label="Flow chart zoom controls">
+            <button type="button" class="status-flow-zoom-button" data-flow-zoom-action="out" aria-label="Zoom out" title="Zoom out">-</button>
+            <button type="button" class="status-flow-zoom-button status-flow-zoom-reset" data-flow-zoom-action="reset" data-flow-zoom-value aria-label="Reset zoom" title="Reset zoom">30%</button>
+            <button type="button" class="status-flow-zoom-button" data-flow-zoom-action="in" aria-label="Zoom in" title="Zoom in">+</button>
+        </div>
+        <div class="status-flow-info" data-flow-info>
+            <button type="button" class="status-flow-start-button" data-flow-start>Start</button>
+            <div class="status-flow-info-text" data-flow-info-text hidden></div>
+        </div>
+    </div>
+    <div class="status-flow-canvas" data-flow-targets>
+        <object id="authorization-status-flow-chart" class="status-flow-image" data="{% static 'authorization_status_workflow.svg' %}" type="image/svg+xml" aria-label="Authorization status workflow flow chart">
+            Authorization status workflow flow chart
+        </object>
+    </div>
+</div>
+
+<p class="text-muted">Sanctions are separate from the status flow. They temporarily hide affected authorizations from active displays while preserving the underlying authorization records.</p>
+
 <h3 id="approval-process">How does the approval process for new Junior and Senior Marshals work?</h3>
 <p>Marshal authorization follows staged approvals with role-based actions and server-side checks:</p>
 <ol>
     <li><strong>Proposal</strong>: A qualified marshal creates the pending record.</li>
     <li><strong>Concurrence/Regional steps</strong>: Approvals are limited to authorized users in the correct scope (including region-scoped checks for regional actions).</li>
-    <li><strong>Kingdom steps (if required)</strong>: Records may move into <code>Needs Kingdom Approval</code> or <code>Needs Kingdom Equestrian Waiver</code>, depending on workflow and settings.</li>
+    <li><strong>Kingdom steps (if required)</strong>: Records may move into <code>Awaiting Kingdom Authorization Officer Review</code> or <code>Awaiting Equestrian Authorization Officer Review</code>, depending on workflow and settings.</li>
 </ol>
-<p>Youth marshal flows can pause at <code>Pending Background Check</code> until a current check is on file. Updating background-check expiration can automatically advance those records.</p>
+<p>Youth marshal flows can pause at <code>Awaiting Background Check</code> until a current check is on file. Updating background-check expiration can automatically advance those records.</p>
 
 <hr>
 
@@ -222,10 +250,10 @@
 <p>From the homepage queue and related fighter-page actions, Kingdom Authorization Officers can:</p>
 <ul>
     <li>Turn Kingdom Authorization Officer verification on or off.</li>
-    <li>Bulk approve records currently in <code>Needs Kingdom Approval</code>.</li>
-    <li>Review and take allowed actions on <code>Pending Background Check</code> and <code>Needs Kingdom Equestrian Waiver</code> items.</li>
+    <li>Bulk approve records currently in <code>Awaiting Kingdom Authorization Officer Review</code>.</li>
+    <li>Review and take allowed actions on <code>Awaiting Background Check</code> and <code>Awaiting Equestrian Authorization Officer Review</code> items.</li>
 </ul>
-<p>If verification is turned off, existing <code>Needs Kingdom Approval</code> records are automatically processed through the normal approval flow.</p>
+<p>If verification is turned off, existing <code>Awaiting Kingdom Authorization Officer Review</code> records are automatically processed through the normal approval flow.</p>
 
 <h3 id="issue-sanction">How do I issue a sanction against a fighter?</h3>
 <p>Use the fighter page sanction action to open the sanction workflow. Sanctions are stored as dedicated sanction records with required end dates, and you can scope them by discipline/style based on your authority.</p>
@@ -240,4 +268,1088 @@
 {% endblock %}
 
 {% block script %}
+<style>
+    .faq-answer-heading {
+        margin-top: 1rem;
+    }
+
+    .faq-answer-toggle {
+        align-items: center;
+        background: transparent;
+        border: 0;
+        color: inherit;
+        display: flex;
+        font: inherit;
+        gap: 0.5rem;
+        padding: 0;
+        text-align: left;
+        width: 100%;
+    }
+
+    .faq-answer-toggle:hover,
+    .faq-answer-toggle:focus {
+        color: #0d6efd;
+    }
+
+    .faq-answer-toggle::before {
+        content: "+";
+        border: 1px solid #b6c2cf;
+        border-radius: 4px;
+        color: #1f2937;
+        flex: 0 0 auto;
+        font: 700 1rem/1 Arial, sans-serif;
+        height: 1.5rem;
+        padding-top: 0.15rem;
+        text-align: center;
+        width: 1.5rem;
+    }
+
+    .faq-answer-toggle[aria-expanded="true"]::before {
+        content: "-";
+    }
+
+    .faq-answer-panel[hidden] {
+        display: none;
+    }
+
+    .faq-answer-panel {
+        margin-bottom: 0.75rem;
+    }
+
+    .status-flow-wrap {
+        border: 1px solid #d6dde5;
+        border-radius: 8px;
+        margin: 1rem 0;
+        max-height: 70vh;
+        overflow: auto;
+        padding: 1rem;
+        background: #fff;
+        cursor: grab;
+        position: relative;
+        scrollbar-gutter: stable both-edges;
+        touch-action: none;
+        user-select: none;
+    }
+
+    .status-flow-wrap.is-dragging {
+        cursor: grabbing;
+    }
+
+    .status-flow-panel {
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(15, 23, 42, 0.14);
+        cursor: default;
+        left: 0;
+        margin-bottom: 0.5rem;
+        padding: 0.25rem;
+        position: sticky;
+        top: 0;
+        width: min(24rem, calc(100vw - 4rem));
+        z-index: 3;
+    }
+
+    .status-flow-controls {
+        align-items: center;
+        display: flex;
+        gap: 0.25rem;
+        width: max-content;
+    }
+
+    .status-flow-zoom-button {
+        align-items: center;
+        background: #fff;
+        border: 1px solid #b6c2cf;
+        border-radius: 4px;
+        color: #1f2937;
+        display: inline-flex;
+        font: 700 0.95rem/1 Arial, sans-serif;
+        height: 2rem;
+        justify-content: center;
+        min-width: 2rem;
+        padding: 0 0.45rem;
+    }
+
+    .status-flow-zoom-button:hover,
+    .status-flow-zoom-button:focus {
+        background: #eef4ff;
+        border-color: #0d6efd;
+        color: #0b5ed7;
+    }
+
+    .status-flow-zoom-button:disabled {
+        background: #f1f5f9;
+        border-color: #cbd5e1;
+        color: #94a3b8;
+        cursor: not-allowed;
+    }
+
+    .status-flow-zoom-reset {
+        font-weight: 600;
+        min-width: 3.75rem;
+    }
+
+    .status-flow-info {
+        background: #fff;
+        border: 1px solid #d6dde5;
+        border-radius: 4px;
+        color: #1f2937;
+        font-size: 0.95rem;
+        line-height: 1.3;
+        margin-top: 0.25rem;
+        min-height: 2.25rem;
+        padding: 0.35rem 0.45rem;
+    }
+
+    .status-flow-start-button {
+        background: #0d6efd;
+        border: 1px solid #0d6efd;
+        border-radius: 4px;
+        color: #fff;
+        font-weight: 600;
+        padding: 0.25rem 0.65rem;
+    }
+
+    .status-flow-start-button:hover,
+    .status-flow-start-button:focus {
+        background: #0b5ed7;
+        border-color: #0a58ca;
+    }
+
+    .status-flow-info-text {
+        display: block;
+    }
+
+    .status-flow-info-title {
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+    }
+
+    .status-flow-info-body,
+    .status-flow-info-meta {
+        font-weight: 400;
+        margin: 0.35rem 0 0;
+    }
+
+    .status-flow-info-meta {
+        font-size: 0.88rem;
+    }
+
+    .status-flow-canvas {
+        height: 3240px;
+        position: relative;
+        width: 4167px;
+    }
+
+    .status-flow-image {
+        display: block;
+        height: 3240px;
+        left: 0;
+        max-width: none;
+        pointer-events: auto;
+        position: absolute;
+        top: 0;
+        width: 4167px;
+    }
+</style>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const answerHeadings = Array.from(document.querySelectorAll('h3[id]'));
+        const answersById = new Map();
+        const stopTags = new Set(['H2', 'H3', 'HR']);
+
+        function toggleAnswer(heading, expand) {
+            const button = heading.querySelector('.faq-answer-toggle');
+            const panel = heading.nextElementSibling && heading.nextElementSibling.classList.contains('faq-answer-panel')
+                ? heading.nextElementSibling
+                : null;
+            if (!button || !panel) {
+                return;
+            }
+
+            const shouldExpand = typeof expand === 'boolean' ? expand : button.getAttribute('aria-expanded') !== 'true';
+            button.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+            panel.hidden = !shouldExpand;
+        }
+
+        function scrollToTarget(target) {
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                    const stickyHeader = document.querySelector('.sticky-header');
+                    const headerOffset = stickyHeader ? stickyHeader.getBoundingClientRect().height + 16 : 24;
+                    const targetTop = target.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+                    window.scrollTo({
+                        top: Math.max(0, targetTop),
+                        behavior: 'smooth'
+                    });
+                });
+            });
+        }
+
+        function expandForHash(hash, shouldScroll) {
+            if (!hash) {
+                return;
+            }
+
+            const targetId = decodeURIComponent(hash.replace(/^#/, ''));
+            const target = document.getElementById(targetId);
+            if (!target) {
+                return;
+            }
+
+            const panel = target.closest('.faq-answer-panel');
+            const heading = answersById.get(targetId) || (panel && panel.previousElementSibling);
+            if (heading && heading.matches('h3[id]')) {
+                toggleAnswer(heading, true);
+            }
+            if (shouldScroll) {
+                scrollToTarget(target);
+            }
+        }
+
+        answerHeadings.forEach((heading) => {
+            heading.classList.add('faq-answer-heading');
+            const panel = document.createElement('div');
+            panel.className = 'faq-answer-panel';
+            panel.id = `${heading.id}-answer`;
+            panel.hidden = true;
+
+            let sibling = heading.nextSibling;
+            while (sibling && !(sibling.nodeType === Node.ELEMENT_NODE && stopTags.has(sibling.tagName))) {
+                const nextSibling = sibling.nextSibling;
+                panel.appendChild(sibling);
+                sibling = nextSibling;
+            }
+            heading.after(panel);
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'faq-answer-toggle';
+            button.setAttribute('aria-expanded', 'false');
+            button.setAttribute('aria-controls', panel.id);
+            button.textContent = heading.textContent;
+            heading.replaceChildren(button);
+            answersById.set(heading.id, heading);
+
+            button.addEventListener('click', () => {
+                toggleAnswer(heading);
+            });
+        });
+
+        document.querySelectorAll('a[href^="#"]').forEach((link) => {
+            link.addEventListener('click', (event) => {
+                const hash = link.getAttribute('href');
+                if (!hash || hash === '#') {
+                    return;
+                }
+                const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+                if (!target) {
+                    return;
+                }
+                event.preventDefault();
+                expandForHash(hash, true);
+                history.pushState(null, '', hash);
+            });
+        });
+
+        expandForHash(window.location.hash, true);
+        window.addEventListener('hashchange', () => {
+            expandForHash(window.location.hash, true);
+        });
+    });
+</script>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const chart = document.getElementById('authorization-status-flow-chart');
+        const canvas = document.querySelector('[data-flow-targets]');
+        const pane = chart && chart.closest('[data-drag-scroll]');
+        const zoomControls = document.querySelectorAll('[data-flow-zoom-action]');
+        const zoomValue = document.querySelector('[data-flow-zoom-value]');
+        const startButton = document.querySelector('[data-flow-start]');
+        const flowInfoText = document.querySelector('[data-flow-info-text]');
+        const objectIdPattern = /^(Gn|Yt|Eq|Ot)-/;
+        const domainIdPattern = /^(Gn|Yt|Eq|Ot)-/;
+        const shapeTagNames = new Set(['path', 'rect', 'ellipse', 'circle', 'polygon']);
+        const routeLineTagNames = new Set(['line', 'path', 'polyline']);
+        const routeLabelTagNames = new Set(['rect', 'ellipse', 'circle']);
+        const minFlowZoom = 0.1;
+        const maxFlowZoom = 1.5;
+        const flowZoomStep = 0.1;
+        let flowBaseWidth = 4167;
+        let flowBaseHeight = 3240;
+        let flowZoom = 0.3;
+        let selectedFlowObject = null;
+        let selectedObjectHighlight = null;
+        let selectedRouteHighlights = [];
+        let semanticFlowRoutes = [];
+        let paneScrollAnimation = null;
+        const flowObjectDetails = {
+            'Gn-Start': {
+                body: "The first step in the authorization process is to find or create the fighter's account. Fighters are encouraged to create their own accounts, and any Senior Marshal can create one for them through the create an account button. Once the account is found, the Senior Marshal starts this workflow by submitting an authorization for them on their fighter page.",
+                instructions: 'Click a question or a highlighted route label to follow the next check.'
+            },
+            'Q-Discipline': {
+                body: 'When submitting an authorization you are required to choose a discipline. Equestrian and Youth Combat authorizations have some unique statuses so are broken out into their own routes in this flowchart.',
+                instructions: 'Choose the route that matches the authorization discipline.'
+            },
+            'Q-Marshal': {
+                body: 'The marshal authorizations include Junior Marshal and Senior Marshal. Marshals have increased authority and so require additional marshals to sign off beyond what a standard authorization requires.',
+                instructions: 'Marshal authorizations must have current membership before they can become active.'
+            },
+            'Q-First': {
+                body: "Society law requires that the first time someone is authorized in a new discipline they need to have both the Senior Marshal approve them and a second person sign off. That second person can be anyone who is authorized in that discipline. If their authorization has been lapsed more than a year it is treated as new.",
+                instructions: 'Follow the outgoing route for the answer that matches the fighter record.'
+            },
+            'Q-Membership': {
+                body: 'When purchasing an SCA membership one is directed to sign the society waiver. This waiver ensures that the fighter understands the risks associated with combat sports and agrees to abide by the rules of the Society. It is possible to get a membership without signing the waiver, and if that is the case then you will answer "No" to this question.',
+                instructions: 'If membership is not current, correct the membership record before completing the Marshal approval.'
+            },
+            'Q-Waiver': {
+                body: "If the fighter has not purchased a membership and signed the society waiver then they will need to sign a waiver in the authorization system. They can do this by going to their account page and clicking the 'Sign Waiver' button. Until they do so, any authorizations will be put on hold.",
+                instructions: 'A portal waiver or recorded paper waiver clears the waiting status.'
+            },
+            'Q-Senior': {
+                body: 'Senior Marshal authorizations need a Regional Marshal or Kingdom Marshal to approve their promotion.',
+                instructions: 'The Regional Marshal or Kingdom Marshal will need to review the authorization and approve it.'
+            },
+            'Yt-Q-Background': {
+                body: 'Youth Combat Marshal authorizations require a current background check before activation. Proof of a current background check can be submitted on the fighter\'s account page.',
+                instructions: 'If the background check is missing or expired, the authorization waits until a valid background-check expiration is recorded.'
+            },
+            'Q-Auth-Officer': {
+                body: 'There is a setting that the Kingdom Authorization Officer can toggle to require a final Kingdom Authorization Officer review for applicable non-equestrian authorizations.',
+                instructions: 'If the setting is off, the authorization can become active after the other required checks are complete. Equestrian authorizations use the Kingdom Equestrian Authorization Officer review path.'
+            },
+            'Fighter-Conc': {
+                body: 'Used for new non-marshal authorizations that need another fighter to concur before the authorization can continue.',
+                clearedBy: 'Another currently authorized fighter in the same discipline, not the fighter being authorized, and not the Authorizing Marshal.',
+                appearsOn: 'Fighter page under Pending Authorizations. This status is not in the homepage approval queue.'
+            },
+            'Second-Marshal': {
+                body: 'All Marshal authorizations require a Second Marshal to sign off on the authorization.',
+                clearedBy: 'A Senior Marshal in the same discipline who did not propose the authorization.',
+                appearsOn: 'Fighter page under Pending Authorizations and on the dashboard of the Branch Marshal in this discipline.'
+            },
+            'Regional': {
+                body: 'Used for the final review of Senior Marshal authorizations by the appropriate Regional Marshal or Kingdom Marshal after the Second Marshal concurrence.',
+                clearedBy: "The Regional Marshal for the fighter's region and discipline. Kingdom Marshals in that discipline and the Earl Marshal also qualify. Missile Combat can be handled by the Regional Missile Marshal or Regional Armored Marshal.",
+                appearsOn: 'Homepage approval queue for Regional Marshal and Kingdom Marshal roles, and the fighter page under Pending Authorizations.'
+            },
+            'Auth-Officer': {
+                body: 'Final review by the Kingdom Authorization Officer for non-equestrian authorizations when Kingdom Authorization Officer verification is enabled.',
+                clearedBy: 'The Kingdom Authorization Officer. When approved it may move to Awaiting Waiver or Awaiting Background Check if those documents have not yet been submitted. Otherwise it will become active.',
+                appearsOn: 'Kingdom Authorization Officer and admin homepage approval queue, and the fighter page under Pending Authorizations.'
+            },
+            'Equestrian-Officer': {
+                body: 'Final review by the Kingdom Equestrian Authorization Officer for Equestrian authorizations. This will check whether an equestrian waiver has been uploaded for this authorization. Either the fighter or the Authorizing Marshal can upload that file on their account page.',
+                clearedBy: 'The Kingdom Equestrian Authorization Officer.  When approved it may move to Awaiting Waiver if the individual waiver has not yet been submitted. Otherwise it will become active.',
+                appearsOn: 'Kingdom Equestrian Authorization Officer and admin homepage approval queue, and the fighter page under Pending Authorizations.'
+            },
+            'Waiver': {
+                body: 'The authorization has completed the approval steps but cannot become fully active until the fighter signs the waiver in the system.',
+                clearedBy: 'The fighter can sign their own portal waiver, a linked parent or guardian can sign for a minor, and the admin, the Kingdom Authorization Officer, or the Kingdom Equestrian Authorization Officer can record a paper waiver. Recording waiver coverage activates all Awaiting Waiver authorizations for that fighter.',
+                appearsOn: 'Fighter page under Awaiting Waiver, and user account waiver controls. This status is not in the homepage approval queue.'
+            },
+            'Background': {
+                body: 'Used for Youth Combat Marshal authorizations that are otherwise approved but still need a current background check. A fighter can submit proof of their background check on their account page and this will notify the Kingdom Authorization Officer.',
+                clearedBy: "A current background-check expiration recorded on the user's account. The Kingdom Authorization Officer can reject if they are unable to get a background check.",
+                appearsOn: 'Kingdom Authorization Officer and admin homepage approval queue and the fighter page under Pending Authorizations.'
+            },
+            'Gn-Approved': {
+                body: 'Congratulations! The authorization is now active and ready to use. It will appear on the fighter page under Active Authorizations, show up on their fighter card, and show up in search results as an active authorization. Once it expires, it will only show up in the search results but not on their fighter page.',
+                instructions: 'If you would like to explore another workflow, click away from the status box and then click "Start" in the top right corner.'
+            }
+        };
+
+        function getSvgDocument() {
+            try {
+                return chart && chart.contentDocument;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function createSvgElement(svgDocument, tagName) {
+            return svgDocument.createElementNS('http://www.w3.org/2000/svg', tagName);
+        }
+
+        function parseSvgLength(value, fallback) {
+            const parsed = parseFloat(value);
+            return Number.isFinite(parsed) ? parsed : fallback;
+        }
+
+        function clampFlowZoom(value) {
+            return Math.max(minFlowZoom, Math.min(maxFlowZoom, value));
+        }
+
+        function clampScrollValue(value, maxValue) {
+            return Math.max(0, Math.min(maxValue, value));
+        }
+
+        function easeInOutCubic(value) {
+            return value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2;
+        }
+
+        function roundFlowZoom(value) {
+            return Math.round(value * 100) / 100;
+        }
+
+        function updateFlowZoomControls() {
+            if (zoomValue) {
+                zoomValue.textContent = `${Math.round(flowZoom * 100)}%`;
+            }
+            zoomControls.forEach((control) => {
+                const action = control.dataset.flowZoomAction;
+                control.disabled = (action === 'out' && flowZoom <= minFlowZoom) || (action === 'in' && flowZoom >= maxFlowZoom);
+            });
+        }
+
+        function setFlowInfoObject(objectGroup) {
+            if (!startButton || !flowInfoText) {
+                return;
+            }
+            if (!objectGroup) {
+                startButton.hidden = false;
+                flowInfoText.hidden = true;
+                flowInfoText.replaceChildren();
+                return;
+            }
+            startButton.hidden = true;
+            flowInfoText.hidden = false;
+            renderFlowObjectDetail(objectGroup);
+        }
+
+        function renderFlowZoom() {
+            if (!canvas || !chart) {
+                return;
+            }
+            const width = Math.round(flowBaseWidth * flowZoom);
+            const height = Math.round(flowBaseHeight * flowZoom);
+            canvas.style.width = `${width}px`;
+            canvas.style.height = `${height}px`;
+            chart.style.width = `${width}px`;
+            chart.style.height = `${height}px`;
+            updateFlowZoomControls();
+        }
+
+        function getFlowPaneAnchor(options) {
+            if (options && Number.isFinite(options.paneX) && Number.isFinite(options.paneY)) {
+                return { x: options.paneX, y: options.paneY };
+            }
+            if (options && Number.isFinite(options.clientX) && Number.isFinite(options.clientY) && pane) {
+                const paneRect = pane.getBoundingClientRect();
+                return {
+                    x: options.clientX - paneRect.left,
+                    y: options.clientY - paneRect.top
+                };
+            }
+            return {
+                x: pane ? pane.clientWidth / 2 : 0,
+                y: pane ? pane.clientHeight / 2 : 0
+            };
+        }
+
+        function applyFlowZoom(nextZoom, options) {
+            const previousZoom = flowZoom;
+            const clampedZoom = roundFlowZoom(clampFlowZoom(nextZoom));
+            cancelPaneScrollAnimation();
+            if (!pane || !canvas || Math.abs(clampedZoom - previousZoom) < 0.001) {
+                flowZoom = clampedZoom;
+                renderFlowZoom();
+                return;
+            }
+
+            const anchor = getFlowPaneAnchor(options || {});
+            const contentX = pane.scrollLeft + anchor.x - canvas.offsetLeft;
+            const contentY = pane.scrollTop + anchor.y - canvas.offsetTop;
+            const scaleRatio = clampedZoom / previousZoom;
+            flowZoom = clampedZoom;
+            renderFlowZoom();
+
+            const maxScrollLeft = Math.max(0, pane.scrollWidth - pane.clientWidth);
+            const maxScrollTop = Math.max(0, pane.scrollHeight - pane.clientHeight);
+            pane.scrollLeft = clampScrollValue(canvas.offsetLeft + contentX * scaleRatio - anchor.x, maxScrollLeft);
+            pane.scrollTop = clampScrollValue(canvas.offsetTop + contentY * scaleRatio - anchor.y, maxScrollTop);
+        }
+
+        function setFlowCanvasSize(svg) {
+            const viewBox = svg.viewBox && svg.viewBox.baseVal;
+            flowBaseWidth = viewBox && viewBox.width ? viewBox.width : parseSvgLength(svg.getAttribute('width'), 4167);
+            flowBaseHeight = viewBox && viewBox.height ? viewBox.height : parseSvgLength(svg.getAttribute('height'), 3240);
+            renderFlowZoom();
+        }
+
+        zoomControls.forEach((control) => {
+            control.addEventListener('click', () => {
+                const action = control.dataset.flowZoomAction;
+                if (action === 'in') {
+                    applyFlowZoom(flowZoom + flowZoomStep);
+                } else if (action === 'out') {
+                    applyFlowZoom(flowZoom - flowZoomStep);
+                } else if (action === 'reset') {
+                    applyFlowZoom(1);
+                }
+            });
+        });
+
+        if (startButton) {
+            startButton.addEventListener('click', () => {
+                const svgDocument = getSvgDocument();
+                const svg = svgDocument && svgDocument.querySelector('svg');
+                const startObject = svgDocument && svgDocument.getElementById('Gn-Start');
+                if (svg && startObject) {
+                    highlightFlowObject(startObject, svg);
+                }
+            });
+        }
+
+        updateFlowZoomControls();
+        renderFlowZoom();
+
+        function ensureSvgHighlightStyles(svgDocument, svg) {
+            let defs = svg.querySelector('defs');
+            if (!defs) {
+                defs = createSvgElement(svgDocument, 'defs');
+                svg.insertBefore(defs, svg.firstChild);
+            }
+
+            if (!svgDocument.getElementById('status-flow-object-highlight-filter')) {
+                const viewBox = svg.viewBox && svg.viewBox.baseVal;
+                const width = viewBox && viewBox.width ? viewBox.width : parseSvgLength(svg.getAttribute('width'), 4167);
+                const height = viewBox && viewBox.height ? viewBox.height : parseSvgLength(svg.getAttribute('height'), 3240);
+                const filter = createSvgElement(svgDocument, 'filter');
+                filter.setAttribute('id', 'status-flow-object-highlight-filter');
+                filter.setAttribute('filterUnits', 'userSpaceOnUse');
+                filter.setAttribute('x', '-200');
+                filter.setAttribute('y', '-200');
+                filter.setAttribute('width', String(width + 400));
+                filter.setAttribute('height', String(height + 400));
+
+                const blur = createSvgElement(svgDocument, 'feGaussianBlur');
+                blur.setAttribute('in', 'SourceAlpha');
+                blur.setAttribute('stdDeviation', '12');
+                blur.setAttribute('result', 'blur');
+                filter.appendChild(blur);
+
+                const flood = createSvgElement(svgDocument, 'feFlood');
+                flood.setAttribute('flood-color', '#0d6efd');
+                flood.setAttribute('flood-opacity', '0.55');
+                flood.setAttribute('result', 'glow-color');
+                filter.appendChild(flood);
+
+                const composite = createSvgElement(svgDocument, 'feComposite');
+                composite.setAttribute('in', 'glow-color');
+                composite.setAttribute('in2', 'blur');
+                composite.setAttribute('operator', 'in');
+                composite.setAttribute('result', 'glow');
+                filter.appendChild(composite);
+
+                const merge = createSvgElement(svgDocument, 'feMerge');
+                const glowNode = createSvgElement(svgDocument, 'feMergeNode');
+                glowNode.setAttribute('in', 'glow');
+                const sourceNode = createSvgElement(svgDocument, 'feMergeNode');
+                sourceNode.setAttribute('in', 'SourceGraphic');
+                merge.appendChild(glowNode);
+                merge.appendChild(sourceNode);
+                filter.appendChild(merge);
+                defs.appendChild(filter);
+            }
+
+            if (!svgDocument.getElementById('status-flow-semantic-style')) {
+                const style = createSvgElement(svgDocument, 'style');
+                style.setAttribute('id', 'status-flow-semantic-style');
+                style.textContent = `
+                    .status-flow-object {
+                        cursor: pointer;
+                    }
+                    .status-flow-object:focus,
+                    .status-flow-object:focus-visible,
+                    .status-flow-route-label-highlight:focus,
+                    .status-flow-route-label-highlight:focus-visible {
+                        outline: none;
+                    }
+                    .status-flow-object-highlight {
+                        fill: none;
+                        fill-opacity: 0;
+                        filter: url(#status-flow-object-highlight-filter);
+                        pointer-events: none;
+                        stroke: #0d6efd;
+                        stroke-opacity: 0.95;
+                        stroke-width: 5;
+                        vector-effect: non-scaling-stroke;
+                    }
+                    .status-flow-route-line-highlight {
+                        fill: none;
+                        pointer-events: none;
+                        stroke: #0d6efd;
+                        stroke-linecap: round;
+                        stroke-linejoin: round;
+                        stroke-opacity: 1;
+                        stroke-width: 5;
+                        vector-effect: non-scaling-stroke;
+                    }
+                    .status-flow-route-path-highlight {
+                        fill: #0d6efd;
+                        fill-opacity: 1;
+                        pointer-events: none;
+                        stroke: #0d6efd;
+                        stroke-linejoin: round;
+                        stroke-opacity: 1;
+                        stroke-width: 1.5;
+                        vector-effect: non-scaling-stroke;
+                    }
+                    .status-flow-route-label-highlight {
+                        cursor: pointer;
+                        fill: none;
+                        fill-opacity: 0;
+                        filter: url(#status-flow-object-highlight-filter);
+                        pointer-events: all;
+                        stroke: #0d6efd;
+                        stroke-opacity: 0.95;
+                        stroke-width: 5;
+                        vector-effect: non-scaling-stroke;
+                    }
+                    svg {
+                        cursor: grab;
+                        touch-action: none;
+                        user-select: none;
+                    }
+                    svg.is-flow-dragging {
+                        cursor: grabbing;
+                    }
+                `;
+                defs.appendChild(style);
+            }
+        }
+
+        function getObjectsLayer(svg) {
+            return svg.querySelector('#Objects') || svg;
+        }
+
+        function getLinesLayer(svg) {
+            return svg.querySelector('#Lines') || svg;
+        }
+
+        function getFlowObjects(svg) {
+            return Array.from(getObjectsLayer(svg).children).filter((element) => objectIdPattern.test(element.id));
+        }
+
+        function getFlowRoutes(svg) {
+            return Array.from(getLinesLayer(svg).children).filter((element) => element.id && element.id.startsWith('Ln-'));
+        }
+
+        function normalizeFlowRouteEndpoint(endpoint, sourceDomain) {
+            return domainIdPattern.test(endpoint) ? endpoint : `${sourceDomain}-${endpoint}`;
+        }
+
+        function parseFlowRoute(routeGroup) {
+            const routeName = routeGroup.id.slice(3);
+            const routeParts = routeName.split('---');
+            if (routeParts.length !== 2 || !routeParts[0] || !routeParts[1]) {
+                return null;
+            }
+            const source = routeParts[0];
+            const sourceDomain = source.split('-', 1)[0];
+            const target = normalizeFlowRouteEndpoint(routeParts[1], sourceDomain);
+            return {
+                group: routeGroup,
+                id: routeGroup.id,
+                source,
+                target
+            };
+        }
+
+        function findFlowObjectFromEventTarget(target, svg) {
+            let current = target;
+            while (current && current !== svg) {
+                if (current.id && objectIdPattern.test(current.id)) {
+                    return current;
+                }
+                current = current.parentNode;
+            }
+            return null;
+        }
+
+        function findPrimaryShape(objectGroup) {
+            for (const child of objectGroup.children) {
+                if (shapeTagNames.has(child.tagName.toLowerCase())) {
+                    return child;
+                }
+                if (child.tagName.toLowerCase() === 'g') {
+                    for (const nestedChild of child.children) {
+                        if (shapeTagNames.has(nestedChild.tagName.toLowerCase())) {
+                            return nestedChild;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        function getFlowObjectText(objectGroup) {
+            const text = objectGroup.querySelector('text');
+            if (!text) {
+                return objectGroup.id;
+            }
+            const tspans = Array.from(text.querySelectorAll('tspan'));
+            const parts = tspans.length ? tspans : [text];
+            const label = parts.map((part) => part.textContent.trim()).filter(Boolean).join(' ');
+            return label || objectGroup.id;
+        }
+
+        function getFlowObjectDetail(objectGroup) {
+            const domainlessId = objectGroup.id.replace(/^(Gn|Yt|Eq|Ot)-/, '');
+            return flowObjectDetails[objectGroup.id] || flowObjectDetails[domainlessId] || null;
+        }
+
+        function appendFlowInfoParagraph(label, value) {
+            if (!value) {
+                return;
+            }
+            const paragraph = document.createElement('p');
+            paragraph.className = 'status-flow-info-meta';
+            const labelNode = document.createElement('strong');
+            labelNode.textContent = `${label}: `;
+            paragraph.appendChild(labelNode);
+            paragraph.appendChild(document.createTextNode(value));
+            flowInfoText.appendChild(paragraph);
+        }
+
+        function renderFlowObjectDetail(objectGroup) {
+            const detail = getFlowObjectDetail(objectGroup);
+            const title = document.createElement('div');
+            title.className = 'status-flow-info-title';
+            title.textContent = getFlowObjectText(objectGroup);
+            flowInfoText.replaceChildren(title);
+
+            if (!detail) {
+                return;
+            }
+
+            if (detail.body) {
+                const body = document.createElement('p');
+                body.className = 'status-flow-info-body';
+                body.textContent = detail.body;
+                flowInfoText.appendChild(body);
+            }
+
+            appendFlowInfoParagraph('Instruction', detail.instructions);
+            appendFlowInfoParagraph('Cleared by', detail.clearedBy);
+            appendFlowInfoParagraph('Appears on', detail.appearsOn);
+        }
+
+        function clearSelectedFlowObject() {
+            if (selectedFlowObject) {
+                selectedFlowObject.classList.remove('is-flow-selected');
+                selectedFlowObject = null;
+            }
+            if (selectedObjectHighlight) {
+                selectedObjectHighlight.remove();
+                selectedObjectHighlight = null;
+            }
+            selectedRouteHighlights.forEach((highlight) => highlight.remove());
+            selectedRouteHighlights = [];
+            setFlowInfoObject(null);
+        }
+
+        function cancelPaneScrollAnimation() {
+            if (paneScrollAnimation) {
+                window.cancelAnimationFrame(paneScrollAnimation);
+                paneScrollAnimation = null;
+            }
+        }
+
+        function animatePaneScrollTo(left, top) {
+            if (!pane) {
+                return;
+            }
+            cancelPaneScrollAnimation();
+            const startLeft = pane.scrollLeft;
+            const startTop = pane.scrollTop;
+            const deltaLeft = left - startLeft;
+            const deltaTop = top - startTop;
+            const distance = Math.hypot(deltaLeft, deltaTop);
+            const duration = Math.max(900, Math.min(1800, 750 + distance * 0.35));
+            const startTime = window.performance.now();
+
+            function step(timestamp) {
+                const progress = Math.min(1, (timestamp - startTime) / duration);
+                const easedProgress = easeInOutCubic(progress);
+                pane.scrollLeft = startLeft + deltaLeft * easedProgress;
+                pane.scrollTop = startTop + deltaTop * easedProgress;
+                if (progress < 1) {
+                    paneScrollAnimation = window.requestAnimationFrame(step);
+                } else {
+                    paneScrollAnimation = null;
+                }
+            }
+
+            paneScrollAnimation = window.requestAnimationFrame(step);
+        }
+
+        function getSvgBoxCenterInPane(box, svg) {
+            if (!pane || !chart || !box) {
+                return null;
+            }
+            const viewBox = svg.viewBox && svg.viewBox.baseVal;
+            const viewBoxX = viewBox ? viewBox.x : 0;
+            const viewBoxY = viewBox ? viewBox.y : 0;
+            const viewBoxWidth = viewBox && viewBox.width ? viewBox.width : parseSvgLength(svg.getAttribute('width'), chart.clientWidth);
+            const viewBoxHeight = viewBox && viewBox.height ? viewBox.height : parseSvgLength(svg.getAttribute('height'), chart.clientHeight);
+            const scaleX = chart.clientWidth / viewBoxWidth;
+            const scaleY = chart.clientHeight / viewBoxHeight;
+            return {
+                x: canvas.offsetLeft + (box.x - viewBoxX + box.width / 2) * scaleX,
+                y: canvas.offsetTop + (box.y - viewBoxY + box.height / 2) * scaleY
+            };
+        }
+
+        function centerSvgBoxInPane(box, svg) {
+            const center = getSvgBoxCenterInPane(box, svg);
+            if (!center) {
+                return;
+            }
+            const maxScrollLeft = Math.max(0, pane.scrollWidth - pane.clientWidth);
+            const maxScrollTop = Math.max(0, pane.scrollHeight - pane.clientHeight);
+            const left = Math.max(0, Math.min(maxScrollLeft, center.x - pane.clientWidth / 2));
+            const top = Math.max(0, Math.min(maxScrollTop, center.y - pane.clientHeight / 2));
+            animatePaneScrollTo(left, top);
+        }
+
+        function centerSvgBoxHorizontallyInPane(box, svg) {
+            const center = getSvgBoxCenterInPane(box, svg);
+            if (!center) {
+                return;
+            }
+            const maxScrollLeft = Math.max(0, pane.scrollWidth - pane.clientWidth);
+            pane.scrollLeft = Math.max(0, Math.min(maxScrollLeft, center.x - pane.clientWidth / 2));
+        }
+
+        function highlightFlowObject(objectGroup, svg) {
+            clearSelectedFlowObject();
+            if (!objectGroup) {
+                return;
+            }
+
+            const shape = findPrimaryShape(objectGroup);
+            selectedFlowObject = objectGroup;
+            selectedFlowObject.classList.add('is-flow-selected');
+            if (shape) {
+                selectedObjectHighlight = shape.cloneNode(false);
+                selectedObjectHighlight.removeAttribute('id');
+                selectedObjectHighlight.setAttribute('class', 'status-flow-object-highlight');
+                objectGroup.parentNode.appendChild(selectedObjectHighlight);
+            }
+            setFlowInfoObject(objectGroup);
+            if (flowZoom < 1) {
+                applyFlowZoom(1);
+            }
+            centerSvgBoxInPane(objectGroup.getBBox(), svg);
+            highlightOutgoingFlowRoutes(objectGroup, svg);
+        }
+
+        function highlightOutgoingFlowRoutes(objectGroup, svg) {
+            const svgDocument = svg.ownerDocument;
+            const outgoingRoutes = semanticFlowRoutes.filter((route) => route.source === objectGroup.id);
+
+            outgoingRoutes.forEach((route) => {
+                const originalChildren = Array.from(route.group.children);
+                const labelShapes = originalChildren.filter((child) => routeLabelTagNames.has(child.tagName.toLowerCase()));
+                const labelAnchor = labelShapes[0] || null;
+                const routeLineHighlight = createSvgElement(svgDocument, 'g');
+                routeLineHighlight.setAttribute('class', 'status-flow-route-highlight');
+
+                originalChildren.forEach((child) => {
+                    const tagName = child.tagName.toLowerCase();
+                    if (routeLineTagNames.has(tagName)) {
+                        const lineHighlight = child.cloneNode(false);
+                        lineHighlight.removeAttribute('id');
+                        lineHighlight.setAttribute(
+                            'class',
+                            tagName === 'path' ? 'status-flow-route-path-highlight' : 'status-flow-route-line-highlight'
+                        );
+                        routeLineHighlight.appendChild(lineHighlight);
+                    }
+                });
+
+                if (routeLineHighlight.childNodes.length) {
+                    if (labelAnchor) {
+                        route.group.insertBefore(routeLineHighlight, labelAnchor);
+                    } else {
+                        route.group.appendChild(routeLineHighlight);
+                    }
+                    selectedRouteHighlights.push(routeLineHighlight);
+                }
+
+                labelShapes.forEach((labelShape) => {
+                    const labelHighlight = labelShape.cloneNode(false);
+                    labelHighlight.removeAttribute('id');
+                    labelHighlight.setAttribute('class', 'status-flow-route-label-highlight');
+                    labelHighlight.setAttribute('role', 'button');
+                    labelHighlight.setAttribute('tabindex', '0');
+                    labelHighlight.setAttribute('aria-label', `Follow route to ${route.target}`);
+                    labelHighlight.addEventListener('pointerdown', (event) => {
+                        event.stopPropagation();
+                    });
+                    labelHighlight.addEventListener('pointerup', (event) => {
+                        event.stopPropagation();
+                    });
+                    labelHighlight.addEventListener('click', (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const targetObject = svgDocument.getElementById(route.target);
+                        if (targetObject) {
+                            highlightFlowObject(targetObject, svg);
+                        }
+                    });
+                    labelHighlight.addEventListener('keydown', (event) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') {
+                            return;
+                        }
+                        event.preventDefault();
+                        event.stopPropagation();
+                        const targetObject = svgDocument.getElementById(route.target);
+                        if (targetObject) {
+                            highlightFlowObject(targetObject, svg);
+                        }
+                    });
+                    route.group.appendChild(labelHighlight);
+                    selectedRouteHighlights.push(labelHighlight);
+                });
+            });
+        }
+
+        function setupSvgDragAndSelection(svg) {
+            let dragState = null;
+
+            function finishDrag(event) {
+                if (!dragState) {
+                    return;
+                }
+                const state = dragState;
+                dragState = null;
+                svg.classList.remove('is-flow-dragging');
+                if (pane) {
+                    pane.classList.remove('is-dragging');
+                }
+                if (event && svg.hasPointerCapture(event.pointerId)) {
+                    svg.releasePointerCapture(event.pointerId);
+                }
+                if (!state.didDrag) {
+                    highlightFlowObject(state.objectGroup, svg);
+                }
+            }
+
+            svg.addEventListener('pointerdown', (event) => {
+                if (event.button !== 0 || !pane) {
+                    return;
+                }
+                cancelPaneScrollAnimation();
+                dragState = {
+                    didDrag: false,
+                    objectGroup: findFlowObjectFromEventTarget(event.target, svg),
+                    startX: event.screenX,
+                    startY: event.screenY,
+                    startScrollLeft: pane.scrollLeft,
+                    startScrollTop: pane.scrollTop
+                };
+                svg.classList.add('is-flow-dragging');
+                pane.classList.add('is-dragging');
+                svg.setPointerCapture(event.pointerId);
+            });
+
+            svg.addEventListener('pointermove', (event) => {
+                if (!dragState || !pane) {
+                    return;
+                }
+                event.preventDefault();
+                const deltaX = event.screenX - dragState.startX;
+                const deltaY = event.screenY - dragState.startY;
+                if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+                    dragState.didDrag = true;
+                }
+                pane.scrollLeft = dragState.startScrollLeft - deltaX;
+                pane.scrollTop = dragState.startScrollTop - deltaY;
+            });
+
+            svg.addEventListener('pointerup', finishDrag);
+            svg.addEventListener('pointercancel', finishDrag);
+            svg.addEventListener('lostpointercapture', finishDrag);
+            svg.addEventListener('wheel', (event) => {
+                if (!pane) {
+                    return;
+                }
+                cancelPaneScrollAnimation();
+                event.preventDefault();
+                if (event.ctrlKey || event.metaKey) {
+                    const paneRect = pane.getBoundingClientRect();
+                    const chartRect = chart.getBoundingClientRect();
+                    const paneX = chartRect.left - paneRect.left + event.clientX;
+                    const paneY = chartRect.top - paneRect.top + event.clientY;
+                    applyFlowZoom(flowZoom + (event.deltaY < 0 ? flowZoomStep : -flowZoomStep), { paneX, paneY });
+                    return;
+                }
+                const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? pane.clientHeight : 1;
+                const deltaX = event.shiftKey && !event.deltaX ? event.deltaY : event.deltaX;
+                const deltaY = event.shiftKey && !event.deltaX ? 0 : event.deltaY;
+                pane.scrollLeft += deltaX * unit;
+                pane.scrollTop += deltaY * unit;
+            }, { passive: false });
+        }
+
+        function setupSemanticFlowChart() {
+            const svgDocument = getSvgDocument();
+            const svg = svgDocument && svgDocument.querySelector('svg');
+            if (!svg) {
+                return;
+            }
+            if (svg.dataset.statusFlowInitialized === 'true') {
+                return;
+            }
+            svg.dataset.statusFlowInitialized = 'true';
+
+            setFlowCanvasSize(svg);
+            ensureSvgHighlightStyles(svgDocument, svg);
+
+            const objectGroups = getFlowObjects(svg);
+            semanticFlowRoutes = getFlowRoutes(svg).map(parseFlowRoute).filter(Boolean);
+            objectGroups.forEach((objectGroup) => {
+                objectGroup.classList.add('status-flow-object');
+                objectGroup.setAttribute('role', 'button');
+                objectGroup.setAttribute('tabindex', '0');
+                objectGroup.addEventListener('keydown', (event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') {
+                        return;
+                    }
+                    event.preventDefault();
+                    highlightFlowObject(objectGroup, svg);
+                });
+            });
+            setupSvgDragAndSelection(svg);
+            setFlowInfoObject(null);
+            window.requestAnimationFrame(() => {
+                const startObject = svgDocument.getElementById('Gn-Start');
+                if (startObject) {
+                    centerSvgBoxHorizontallyInPane(startObject.getBBox(), svg);
+                }
+            });
+            chart.dataset.flowObjectCount = String(objectGroups.length);
+            chart.dataset.flowRouteCount = String(semanticFlowRoutes.length);
+        }
+
+        if (chart) {
+            chart.addEventListener('load', setupSemanticFlowChart);
+            if (getSvgDocument()) {
+                setupSemanticFlowChart();
+            }
+        }
+
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('.status-flow-wrap')) {
+                clearSelectedFlowObject();
+            }
+        });
+    });
+</script>
 {% endblock %}

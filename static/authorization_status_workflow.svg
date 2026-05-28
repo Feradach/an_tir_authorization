@@ -1,0 +1,536 @@
+<svg width="4167" height="3240" viewBox="0 0 4167 3240" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="4167" height="3240" fill="#1E1E1E"/>
+<g id="authorization-flowchart">
+<rect width="4167" height="3240" fill="white"/>
+<g id="Lines">
+<g id="Ln-Gn-Auth-Officer---Approved">
+<path id="Arrow 5" d="M2285.71 2690.62C2286.1 2690.23 2286.1 2689.6 2285.71 2689.21L2279.33 2682.85C2278.94 2682.46 2278.31 2682.47 2277.92 2682.86C2277.53 2683.25 2277.53 2683.88 2277.92 2684.27L2283.59 2689.92L2277.94 2695.58C2277.55 2695.98 2277.55 2696.61 2277.94 2697C2278.33 2697.39 2278.96 2697.39 2279.35 2697L2285.71 2690.62ZM1583 2691L1583 2692L2285 2690.92L2285 2689.92L2285 2688.92L1583 2690L1583 2691Z" fill="black"/>
+<rect id="Rectangle 2" x="1632" y="2680" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1633.16" y="2696.55">Done</tspan></text>
+</g>
+<g id="Ln-Gn-Q-Auth-Officer---Auth-Officer">
+<line id="Line 1" x1="1550.01" y1="2452" x2="1470.01" y2="2452.99" stroke="black" stroke-width="2"/>
+<path id="Arrow 4" d="M1470.29 2604.71C1470.68 2605.1 1471.32 2605.1 1471.71 2604.71L1478.07 2598.34C1478.46 2597.95 1478.46 2597.32 1478.07 2596.93C1477.68 2596.54 1477.05 2596.54 1476.66 2596.93L1471 2602.59L1465.34 2596.93C1464.95 2596.54 1464.32 2596.54 1463.93 2596.93C1463.54 2597.32 1463.54 2597.95 1463.93 2598.34L1470.29 2604.71ZM1471 2452H1470V2604H1471H1472V2452H1471Z" fill="black"/>
+<rect id="Rectangle 2_2" x="1491" y="2440" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1499.27" y="2456.55">Yes</tspan></text>
+</g>
+<g id="Ln-Gn-Q-Auth-Officer---Approved">
+<line id="Line 1_2" x1="2361" y1="2451" x2="1932" y2="2451" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_2" d="M2360.29 2632.71C2360.68 2633.1 2361.32 2633.1 2361.71 2632.71L2368.07 2626.34C2368.46 2625.95 2368.46 2625.32 2368.07 2624.93C2367.68 2624.54 2367.05 2624.54 2366.66 2624.93L2361 2630.59L2355.34 2624.93C2354.95 2624.54 2354.32 2624.54 2353.93 2624.93C2353.54 2625.32 2353.54 2625.95 2353.93 2626.34L2360.29 2632.71ZM2361 2450H2360V2632H2361H2362V2450H2361Z" fill="black"/>
+<rect id="Rectangle 2_3" x="2022" y="2439" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2033.35" y="2455.55">No</tspan></text>
+</g>
+<g id="Ln-Eq-Equestrian-Officer---Gn-Approved">
+<path id="Arrow 6" d="M2444.29 2690.29C2443.9 2690.68 2443.9 2691.32 2444.29 2691.71L2450.67 2698.06C2451.06 2698.45 2451.69 2698.45 2452.08 2698.06C2452.47 2697.67 2452.47 2697.04 2452.08 2696.65L2446.41 2691L2452.06 2685.33C2452.45 2684.94 2452.45 2684.31 2452.06 2683.92C2451.67 2683.53 2451.04 2683.53 2450.65 2683.92L2444.29 2690.29ZM3244 2690L3244 2689L2445 2690L2445 2691L2445 2692L3244 2691L3244 2690Z" fill="black"/>
+<line id="Line 2" x1="3243" y1="2222" x2="3243" y2="2690" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_4" x="3217" y="2260" width="49" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3219.16" y="2277.55">Done</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Membership---Equestrian-Officer">
+<path id="Arrow 6_2" d="M3241.29 2060.71C3241.68 2061.1 3242.32 2061.1 3242.71 2060.71L3249.07 2054.34C3249.46 2053.95 3249.46 2053.32 3249.07 2052.93C3248.68 2052.54 3248.05 2052.54 3247.66 2052.93L3242 2058.59L3236.34 2052.93C3235.95 2052.54 3235.32 2052.54 3234.93 2052.93C3234.54 2053.32 3234.54 2053.95 3234.93 2054.34L3241.29 2060.71ZM3242 1893H3241V2060H3242H3243V1893H3242Z" fill="black"/>
+<line id="Line 3" x1="3724" y1="1893" x2="3241" y2="1893" stroke="black" stroke-width="2"/>
+<line id="Line 2_2" x1="3722" y1="1398" x2="3722.99" y2="1893" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_5" x="3703" y="1436" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3704.77" y="1453.55">Yes</tspan></text>
+</g>
+<g id="Ln-Eq-Waiver---Equestrian-Officer">
+<path id="Arrow 6_3" d="M3241.29 2060.71C3241.68 2061.1 3242.32 2061.1 3242.71 2060.71L3249.07 2054.34C3249.46 2053.95 3249.46 2053.32 3249.07 2052.93C3248.68 2052.54 3248.05 2052.54 3247.66 2052.93L3242 2058.59L3236.34 2052.93C3235.95 2052.54 3235.32 2052.54 3234.93 2052.93C3234.54 2053.32 3234.54 2053.95 3234.93 2054.34L3241.29 2060.71ZM3242 1893H3241V2060H3242H3243V1893H3242Z" fill="black"/>
+<line id="Line 3_2" x1="3598" y1="1893" x2="3241" y2="1893" stroke="black" stroke-width="2"/>
+<line id="Line 2_3" x1="3598" y1="1770.99" x2="3599.02" y2="1892.99" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_6" x="3572" y="1807" width="51" height="21" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3575.16" y="1824.55">Done</tspan></text>
+</g>
+<g id="Ln-Eq-Regional---Equestrian-Officer">
+<line id="Line 4" x1="3194" y1="1893" x2="3243" y2="1893" stroke="black" stroke-width="2"/>
+<line id="Line 5" x1="3195" y1="1771" x2="3195" y2="1893" stroke="black" stroke-width="2"/>
+<path id="Arrow 1" d="M3241.29 2060.71C3241.68 2061.1 3242.32 2061.1 3242.71 2060.71L3249.07 2054.34C3249.46 2053.95 3249.46 2053.32 3249.07 2052.93C3248.68 2052.54 3248.05 2052.54 3247.66 2052.93L3242 2058.59L3236.34 2052.93C3235.95 2052.54 3235.32 2052.54 3234.93 2052.93C3234.54 2053.32 3234.54 2053.95 3234.93 2054.34L3241.29 2060.71ZM3242 1892H3241V2060H3242H3243V1892H3242Z" fill="black"/>
+<rect id="Rectangle 2_7" x="3167" y="1800" width="53" height="23" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_4" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3171.16" y="1817.55">Done</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Waiver---Equestrian-Officer">
+<path id="Arrow 6_4" d="M3241.29 2060.71C3241.68 2061.1 3242.32 2061.1 3242.71 2060.71L3249.07 2054.34C3249.46 2053.95 3249.46 2053.32 3249.07 2052.93C3248.68 2052.54 3248.05 2052.54 3247.66 2052.93L3242 2058.59L3236.34 2052.93C3235.95 2052.54 3235.32 2052.54 3234.93 2052.93C3234.54 2053.32 3234.54 2053.95 3234.93 2054.34L3241.29 2060.71ZM3242 1892H3241V2060H3242H3243V1892H3242Z" fill="black"/>
+<line id="Line 3_3" x1="3402" y1="1893" x2="3241" y2="1893" stroke="black" stroke-width="2"/>
+<line id="Line 2_4" x1="3402" y1="1554" x2="3402" y2="1893" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_8" x="3383" y="1592" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3384.77" y="1609.55">Yes</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Senior---Equestrian-Officer">
+<line id="Line 4_2" x1="3003" y1="1893" x2="3243" y2="1893" stroke="black" stroke-width="2"/>
+<line id="Line 5_2" x1="3004" y1="1497" x2="3004" y2="1893" stroke="black" stroke-width="2"/>
+<path id="Arrow 1_2" d="M3241.29 2060.71C3241.68 2061.1 3242.32 2061.1 3242.71 2060.71L3249.07 2054.34C3249.46 2053.95 3249.46 2053.32 3249.07 2052.93C3248.68 2052.54 3248.05 2052.54 3247.66 2052.93L3242 2058.59L3236.34 2052.93C3235.95 2052.54 3235.32 2052.54 3234.93 2052.93C3234.54 2053.32 3234.54 2053.95 3234.93 2054.34L3241.29 2060.71ZM3242 1892H3241V2060H3242H3243V1892H3242Z" fill="black"/>
+<rect id="Rectangle 2_9" x="2986" y="1530" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2990.85" y="1547.55">No</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Senior---Regional">
+<line id="Line 1_3" x1="3200" y1="1422" x2="3116" y2="1422" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_3" d="M3199.29 1631.71C3199.68 1632.1 3200.32 1632.1 3200.71 1631.71L3207.07 1625.34C3207.46 1624.95 3207.46 1624.32 3207.07 1623.93C3206.68 1623.54 3206.05 1623.54 3205.66 1623.93L3200 1629.59L3194.34 1623.93C3193.95 1623.54 3193.32 1623.54 3192.93 1623.93C3192.54 1624.32 3192.54 1624.95 3192.93 1625.34L3199.29 1631.71ZM3200 1421H3199V1631H3200H3201V1421H3200Z" fill="black"/>
+<rect id="Rectangle 2_10" x="3130" y="1408" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_4" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3138.27" y="1424.55">Yes</tspan></text>
+</g>
+<g id="Ln-Eq-Fighter-Conc---Q-Membership">
+<line id="Line 1_4" x1="3722" y1="1191" x2="3501" y2="1191" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_4" d="M3721.29 1253.71C3721.68 1254.1 3722.32 1254.1 3722.71 1253.71L3729.07 1247.34C3729.46 1246.95 3729.46 1246.32 3729.07 1245.93C3728.68 1245.54 3728.05 1245.54 3727.66 1245.93L3722 1251.59L3716.34 1245.93C3715.95 1245.54 3715.32 1245.54 3714.93 1245.93C3714.54 1246.32 3714.54 1246.95 3714.93 1247.34L3721.29 1253.71ZM3722 1191H3721V1253H3722H3723V1191H3722Z" fill="black"/>
+<rect id="Rectangle 2_11" x="3567" y="1179" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_5" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3568.16" y="1195.55">Done</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Marshal---Q-First">
+<line id="Line 1_5" x1="3423" y1="771" x2="3118" y2="771" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_5" d="M3422.3 884.713C3422.69 885.1 3423.33 885.095 3423.71 884.701L3430.02 878.281C3430.41 877.887 3430.4 877.254 3430.01 876.867C3429.61 876.48 3428.98 876.486 3428.59 876.88L3422.99 882.586L3417.28 876.979C3416.89 876.592 3416.25 876.597 3415.87 876.991C3415.48 877.385 3415.49 878.018 3415.88 878.405L3422.3 884.713ZM3422 770L3421 770.009L3422 884.009L3423 884L3424 883.991L3423 769.991L3422 770Z" fill="black"/>
+<rect id="Rectangle 2_12" x="3132" y="757" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3143.35" y="773.545">No</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Waiver---Waiver">
+<line id="Line 1_6" x1="3594" y1="1480" x2="3510" y2="1480" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_6" d="M3593.29 1650.71C3593.68 1651.1 3594.32 1651.1 3594.71 1650.71L3601.07 1644.34C3601.46 1643.95 3601.46 1643.32 3601.07 1642.93C3600.68 1642.54 3600.05 1642.54 3599.66 1642.93L3594 1648.59L3588.34 1642.93C3587.95 1642.54 3587.32 1642.54 3586.93 1642.93C3586.54 1643.32 3586.54 1643.95 3586.93 1644.34L3593.29 1650.71ZM3594 1479H3593V1650H3594H3595V1479H3594Z" fill="black"/>
+<rect id="Rectangle 2_13" x="3524" y="1466" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_4" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3535.35" y="1482.55">No</tspan></text>
+</g>
+<g id="Ln-Eq-Q-First---Q-Membership">
+<line id="Line 1_7" x1="3722" y1="947" x2="3533" y2="947" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_7" d="M3721.3 1253.71C3721.69 1254.1 3722.32 1254.1 3722.71 1253.7L3729.06 1247.32C3729.45 1246.93 3729.44 1246.3 3729.05 1245.91C3728.66 1245.52 3728.03 1245.52 3727.64 1245.91L3722 1251.59L3716.32 1245.95C3715.93 1245.56 3715.3 1245.56 3714.91 1245.95C3714.52 1246.34 3714.52 1246.98 3714.91 1247.37L3721.3 1253.71ZM3721 946L3720 946.003L3721 1253L3722 1253L3723 1253L3722 945.997L3721 946Z" fill="black"/>
+<rect id="Rectangle 2_14" x="3547" y="933" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_5" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3558.35" y="949.545">No</tspan></text>
+</g>
+<g id="Ln-Eq-Second-Marshal---Q-Senior">
+<path id="Arrow 1_3" d="M3001.29 1351.71C3001.68 1352.1 3002.32 1352.1 3002.71 1351.71L3009.07 1345.34C3009.46 1344.95 3009.46 1344.32 3009.07 1343.93C3008.68 1343.54 3008.05 1343.54 3007.66 1343.93L3002 1349.59L2996.34 1343.93C2995.95 1343.54 2995.32 1343.54 2994.93 1343.93C2994.54 1344.32 2994.54 1344.95 2994.93 1345.34L3001.29 1351.71ZM3002 1252H3001V1351H3002H3003V1252H3002Z" fill="black"/>
+<rect id="Rectangle 2_15" x="2980" y="1280" width="44" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_6" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2979.16" y="1295.55">Done</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Membership---Q-Waiver">
+<line id="Line 1_8" x1="3597" y1="1335" x2="3396" y2="1335" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_8" d="M3395.29 1409.71C3395.68 1410.1 3396.32 1410.1 3396.71 1409.71L3403.07 1403.34C3403.46 1402.95 3403.46 1402.32 3403.07 1401.93C3402.68 1401.54 3402.05 1401.54 3401.66 1401.93L3396 1407.59L3390.34 1401.93C3389.95 1401.54 3389.32 1401.54 3388.93 1401.93C3388.54 1402.32 3388.54 1402.95 3388.93 1403.34L3395.29 1409.71ZM3396 1334H3395V1409H3396H3397V1334H3396Z" fill="black"/>
+<rect id="Rectangle 2_16" x="3527" y="1321" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_6" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3538.35" y="1337.55">No</tspan></text>
+</g>
+<g id="Ln-Eq-Q-Marshal---Second-Marshal">
+<path id="Arrow 1_4" d="M3002.31 1095.71C3002.7 1096.1 3003.33 1096.1 3003.72 1095.7L3010.06 1089.31C3010.45 1088.92 3010.45 1088.29 3010.05 1087.9C3009.66 1087.51 3009.03 1087.51 3008.64 1087.91L3003.01 1093.59L2997.33 1087.95C2996.93 1087.56 2996.3 1087.57 2995.91 1087.96C2995.52 1088.35 2995.53 1088.98 2995.92 1089.37L3002.31 1095.71ZM3002 846L3001 846.004L3002.01 1095L3003.01 1095L3004.01 1095L3003 845.996L3002 846Z" fill="black"/>
+<rect id="Rectangle 2_17" x="2985" y="872" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_5" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2986.77" y="889.545">Yes</tspan></text>
+</g>
+<g id="Ln-Eq-Q-First---Fighter-Conc">
+<path id="Arrow 1_5" d="M3422.29 1129.71C3422.68 1130.1 3423.32 1130.1 3423.71 1129.71L3430.07 1123.34C3430.46 1122.95 3430.46 1122.32 3430.07 1121.93C3429.68 1121.54 3429.05 1121.54 3428.66 1121.93L3423 1127.59L3417.34 1121.93C3416.95 1121.54 3416.32 1121.54 3415.93 1121.93C3415.54 1122.32 3415.54 1122.95 3415.93 1123.34L3422.29 1129.71ZM3423 1029H3422V1129H3423H3424V1029H3423Z" fill="black"/>
+<rect id="Rectangle 2_18" x="3406" y="1055" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_6" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="3407.77" y="1072.55">Yes</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Membership---Gn-Q-Auth-Officer">
+<path id="Arrow 6_5" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2059H1741V2372H1742H1743V2059H1742Z" fill="black"/>
+<line id="Line 3_4" x1="2649" y1="2060" x2="1741" y2="2060" stroke="black" stroke-width="2"/>
+<line id="Line 2_5" x1="2648" y1="1567" x2="2648" y2="2060" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_19" x="2629" y="1605" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_7" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2630.77" y="1622.55">Yes</tspan></text>
+</g>
+<g id="Ln-Ot-Regional---Gn-Q-Auth-Officer">
+<path id="Arrow 6_6" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2059H1741V2372H1742H1743V2059H1742Z" fill="black"/>
+<line id="Line 3_5" x1="2058" y1="2060" x2="1741" y2="2060" stroke="black" stroke-width="2"/>
+<line id="Line 2_6" x1="2058" y1="1668" x2="2059" y2="2059" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_20" x="2030" y="1704" width="56" height="21" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_7" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2035.66" y="1721.55">Done</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Waiver---Gn-Q-Auth-Officer">
+<path id="Arrow 6_7" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2059H1741V2372H1742H1743V2059H1742Z" fill="black"/>
+<line id="Line 3_6" x1="2312" y1="2060" x2="1741" y2="2060" stroke="black" stroke-width="2"/>
+<line id="Line 2_7" x1="2312" y1="1714" x2="2313.08" y2="2060" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_21" x="2293" y="1752" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_8" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2294.77" y="1769.55">Yes</tspan></text>
+</g>
+<g id="Ln-Ot-Waiver---Gn-Q-Auth-Officer">
+<path id="Arrow 6_8" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2059H1741V2372H1742H1743V2059H1742Z" fill="black"/>
+<line id="Line 3_7" x1="2508" y1="2060" x2="1741" y2="2060" stroke="black" stroke-width="2"/>
+<line id="Line 2_8" x1="2508" y1="1931.99" x2="2509" y2="2059.99" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_22" x="2478" y="1965" width="60" height="24" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_8" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2485.66" y="1982.55">Done</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Senior---Gn-Q-Auth-Officer">
+<path id="Arrow 1_6" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 1664H1741V2372H1742H1743V1664H1742Z" fill="black"/>
+<rect id="Rectangle 2_23" x="1725" y="1703" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_7" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1729.85" y="1720.55">No</tspan></text>
+</g>
+<g id="Ln-Ot-Fighter-Conc---Q-Membership">
+<line id="Line 1_9" x1="2644" y1="1369" x2="2472" y2="1369" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_9" d="M2642.29 1422.71C2642.68 1423.1 2643.32 1423.1 2643.71 1422.71L2650.07 1416.34C2650.46 1415.95 2650.46 1415.32 2650.07 1414.93C2649.68 1414.54 2649.05 1414.54 2648.66 1414.93L2643 1420.59L2637.34 1414.93C2636.95 1414.54 2636.32 1414.54 2635.93 1414.93C2635.54 1415.32 2635.54 1415.95 2635.93 1416.34L2642.29 1422.71ZM2643 1370H2642V1422H2643H2644V1370H2643Z" fill="black"/>
+<rect id="Rectangle 2_24" x="2488" y="1355" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_9" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2489.16" y="1371.55">Done</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Senior---Regional">
+<path id="Arrow 5_2" d="M1952.71 1593.7C1953.1 1593.31 1953.1 1592.67 1952.71 1592.28L1946.34 1585.92C1945.95 1585.53 1945.32 1585.53 1944.93 1585.92C1944.54 1586.31 1944.54 1586.94 1944.93 1587.33L1950.59 1592.99L1944.93 1598.65C1944.54 1599.04 1944.54 1599.67 1944.93 1600.06C1945.32 1600.45 1945.95 1600.45 1946.34 1600.06L1952.71 1593.7ZM1860 1593L1860 1594L1952 1593.99L1952 1592.99L1952 1591.99L1860 1592L1860 1593Z" fill="black"/>
+<rect id="Rectangle 2_25" x="1878" y="1582" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_9" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1886.27" y="1598.55">Yes</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Waiver---Waiver">
+<line id="Line 1_10" x1="2515" y1="1641" x2="2431" y2="1641" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_10" d="M2514.29 1811.71C2514.68 1812.1 2515.32 1812.1 2515.71 1811.71L2522.07 1805.34C2522.46 1804.95 2522.46 1804.32 2522.07 1803.93C2521.68 1803.54 2521.05 1803.54 2520.66 1803.93L2515 1809.59L2509.34 1803.93C2508.95 1803.54 2508.32 1803.54 2507.93 1803.93C2507.54 1804.32 2507.54 1804.95 2507.93 1805.34L2514.29 1811.71ZM2515 1640H2514V1811H2515H2516V1640H2515Z" fill="black"/>
+<rect id="Rectangle 2_26" x="2445" y="1627" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_8" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2456.35" y="1643.55">No</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Membership---Q-Waiver">
+<line id="Line 1_11" x1="2527" y1="1495" x2="2290" y2="1495" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_11" d="M2289.29 1569.71C2289.68 1570.1 2290.32 1570.1 2290.71 1569.71L2297.07 1563.34C2297.46 1562.95 2297.46 1562.32 2297.07 1561.93C2296.68 1561.54 2296.05 1561.54 2295.66 1561.93L2290 1567.59L2284.34 1561.93C2283.95 1561.54 2283.32 1561.54 2282.93 1561.93C2282.54 1562.32 2282.54 1562.95 2282.93 1563.34L2289.29 1569.71ZM2290 1494H2289V1569H2290H2291V1494H2290Z" fill="black"/>
+<rect id="Rectangle 2_27" x="2421" y="1481" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_9" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2432.35" y="1497.55">No</tspan></text>
+</g>
+<g id="Ln-Ot-Second-Marshal---Q-Senior">
+<path id="Arrow 1_7" d="M1742.29 1519.71C1742.68 1520.1 1743.32 1520.1 1743.71 1519.71L1750.07 1513.34C1750.46 1512.95 1750.46 1512.32 1750.07 1511.93C1749.68 1511.54 1749.05 1511.54 1748.66 1511.93L1743 1517.59L1737.34 1511.93C1736.95 1511.54 1736.32 1511.54 1735.93 1511.93C1735.54 1512.32 1735.54 1512.95 1735.93 1513.34L1742.29 1519.71ZM1743 1412H1742V1519H1743H1744V1412H1743Z" fill="black"/>
+<rect id="Rectangle 2_28" x="1721" y="1440" width="44" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_10" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1720.16" y="1455.55">Done</tspan></text>
+</g>
+<g id="Ln-Ot-Q-First---Fighter-Conc">
+<path id="Arrow 1_8" d="M2396.29 1311.71C2396.68 1312.1 2397.32 1312.1 2397.71 1311.71L2404.07 1305.34C2404.46 1304.95 2404.46 1304.32 2404.07 1303.93C2403.68 1303.54 2403.05 1303.54 2402.66 1303.93L2397 1309.59L2391.34 1303.93C2390.95 1303.54 2390.32 1303.54 2389.93 1303.93C2389.54 1304.32 2389.54 1304.95 2389.93 1305.34L2396.29 1311.71ZM2397 1202H2396V1311H2397H2398V1202H2397Z" fill="black"/>
+<rect id="Rectangle 2_29" x="2380" y="1228" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_10" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2381.77" y="1245.55">Yes</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Marshal---Second-Marshal">
+<line id="Line 1_12" x1="1840.01" y1="1130" x2="1743.01" y2="1131" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_12" d="M1742.29 1255.71C1742.68 1256.1 1743.32 1256.1 1743.71 1255.71L1750.07 1249.34C1750.46 1248.95 1750.46 1248.32 1750.07 1247.93C1749.68 1247.54 1749.05 1247.54 1748.66 1247.93L1743 1253.59L1737.34 1247.93C1736.95 1247.54 1736.32 1247.54 1735.93 1247.93C1735.54 1248.32 1735.54 1248.95 1735.93 1249.34L1742.29 1255.71ZM1743 1130H1742V1255H1743H1744V1130H1743Z" fill="black"/>
+<rect id="Rectangle 2_30" x="1781" y="1118" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_11" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1789.27" y="1134.55">Yes</tspan></text>
+</g>
+<g id="Ln-Ot-Q-First---Q-Membership">
+<line id="Line 1_13" x1="2643" y1="1131" x2="2525" y2="1131" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_13" d="M2642.29 1422.71C2642.68 1423.1 2643.31 1423.1 2643.7 1422.7L2650.04 1416.32C2650.43 1415.93 2650.43 1415.29 2650.04 1414.9C2649.65 1414.52 2649.02 1414.52 2648.63 1414.91L2642.99 1420.59L2637.31 1414.95C2636.92 1414.56 2636.29 1414.56 2635.9 1414.95C2635.51 1415.34 2635.51 1415.98 2635.9 1416.37L2642.29 1422.71ZM2642 1130L2641 1130L2641.99 1422L2642.99 1422L2643.99 1422L2643 1130L2642 1130Z" fill="black"/>
+<rect id="Rectangle 2_31" x="2539" y="1117" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_10" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2550.35" y="1133.55">No</tspan></text>
+</g>
+<g id="Ln-Ot-Q-Marshal---Q-First">
+<path id="Arrow 5_3" d="M2285.71 1130.69C2286.1 1130.3 2286.1 1129.66 2285.71 1129.27L2279.34 1122.91C2278.95 1122.52 2278.32 1122.52 2277.93 1122.91C2277.54 1123.3 2277.54 1123.93 2277.93 1124.32L2283.59 1129.98L2277.93 1135.64C2277.54 1136.03 2277.54 1136.66 2277.93 1137.05C2278.32 1137.44 2278.95 1137.44 2279.34 1137.05L2285.71 1130.69ZM2082 1130L2082 1131L2285 1130.98L2285 1129.98L2285 1128.98L2082 1129L2082 1130Z" fill="black"/>
+<rect id="Rectangle 2_32" x="2131" y="1119" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_11" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2142.35" y="1135.55">No</tspan></text>
+</g>
+<g id="Ln-Yt-Background---Gn-Q-Auth-Officer">
+<line id="Line 4_3" x1="1040" y1="2313" x2="1743" y2="2313" stroke="black" stroke-width="2"/>
+<line id="Line 5_3" x1="1041" y1="2109" x2="1041" y2="2314" stroke="black" stroke-width="2"/>
+<path id="Arrow 1_9" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2312H1741V2372H1742H1743V2312H1742Z" fill="black"/>
+<rect id="Rectangle 2_33" x="1014" y="2139" width="51" height="23" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_11" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1017.16" y="2156.55">Done</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Membership---Gn-Q-Auth-Officer">
+<line id="Line 4_4" x1="752" y1="2313" x2="1743" y2="2313" stroke="black" stroke-width="2"/>
+<line id="Line 5_4" x1="753" y1="1594" x2="753" y2="2314" stroke="black" stroke-width="2"/>
+<path id="Arrow 1_10" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2312.22H1741V2372H1742H1743V2312.22H1742Z" fill="black"/>
+<rect id="Rectangle 2_34" x="735" y="1659" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_12" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="736.769" y="1676.55">Yes</tspan></text>
+</g>
+<g id="Ln-Yt-Waiver---Gn-Q-Auth-Officer">
+<line id="Line 4_5" x1="621" y1="2313" x2="1743" y2="2313" stroke="black" stroke-width="2"/>
+<line id="Line 5_5" x1="622" y1="1910" x2="622" y2="2313" stroke="black" stroke-width="2"/>
+<path id="Arrow 1_11" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2312H1741V2372H1742H1743V2312H1742Z" fill="black"/>
+<rect id="Rectangle 2_35" x="595" y="1937" width="51" height="23" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_12" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="598.158" y="1954.55">Done</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Waiver---Gn-Q-Auth-Officer">
+<line id="Line 4_6" x1="421" y1="2313" x2="1743" y2="2313" stroke="black" stroke-width="2"/>
+<line id="Line 5_6" x1="423" y1="1740" x2="421.98" y2="2314" stroke="black" stroke-width="2"/>
+<path id="Arrow 1_12" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2312H1741V2372H1742H1743V2312H1742Z" fill="black"/>
+<rect id="Rectangle 2_36" x="405" y="1798" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_13" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="406.769" y="1815.55">Yes</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Background---Gn-Q-Auth-Officer">
+<line id="Line 4_7" x1="1293" y1="2313" x2="1743" y2="2313" stroke="black" stroke-width="2"/>
+<line id="Line 5_7" x1="1295" y1="1978" x2="1294" y2="2314" stroke="black" stroke-width="2"/>
+<path id="Arrow 1_13" d="M1741.29 2372.71C1741.68 2373.1 1742.32 2373.1 1742.71 2372.71L1749.07 2366.34C1749.46 2365.95 1749.46 2365.32 1749.07 2364.93C1748.68 2364.54 1748.05 2364.54 1747.66 2364.93L1742 2370.59L1736.34 2364.93C1735.95 2364.54 1735.32 2364.54 1734.93 2364.93C1734.54 2365.32 1734.54 2365.95 1734.93 2366.34L1741.29 2372.71ZM1742 2312H1741V2372H1742H1743V2312H1742Z" fill="black"/>
+<rect id="Rectangle 2_37" x="1277" y="2005" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_14" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1278.77" y="2022.55">Yes</tspan></text>
+</g>
+<g id="Ln-Yt-Regional---Q-Background">
+<path id="Arrow 6_9" d="M1292.29 1834.71C1292.68 1835.1 1293.32 1835.1 1293.71 1834.71L1300.07 1828.34C1300.46 1827.95 1300.46 1827.32 1300.07 1826.93C1299.68 1826.54 1299.05 1826.54 1298.66 1826.93L1293 1832.59L1287.34 1826.93C1286.95 1826.54 1286.32 1826.54 1285.93 1826.93C1285.54 1827.32 1285.54 1827.95 1285.93 1828.34L1292.29 1834.71ZM1293 1771H1292V1834H1293H1294V1771H1293Z" fill="black"/>
+<line id="Line 3_8" x1="1437" y1="1772" x2="1292" y2="1772" stroke="black" stroke-width="2"/>
+<line id="Line 2_9" x1="1436" y1="1670" x2="1436" y2="1772" stroke="black" stroke-width="2"/>
+<rect id="Rectangle 2_38" x="1412" y="1708" width="46" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_13" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1412.66" y="1725.55">Done</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Senior---Q-Background">
+<line id="Line 4_8" x1="1171" y1="1772" x2="1294" y2="1772" stroke="black" stroke-width="2"/>
+<line id="Line 5_8" x1="1172" y1="1534" x2="1172" y2="1772" stroke="black" stroke-width="2"/>
+<path id="Arrow 1_14" d="M1292.29 1834.71C1292.68 1835.1 1293.32 1835.1 1293.71 1834.71L1300.07 1828.34C1300.46 1827.95 1300.46 1827.32 1300.07 1826.93C1299.68 1826.54 1299.05 1826.54 1298.66 1826.93L1293 1832.59L1287.34 1826.93C1286.95 1826.54 1286.32 1826.54 1285.93 1826.93C1285.54 1827.32 1285.54 1827.95 1285.93 1828.34L1292.29 1834.71ZM1293 1772H1292V1834H1293H1294V1772H1293Z" fill="black"/>
+<rect id="Rectangle 2_39" x="1154" y="1567" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_12" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1158.85" y="1584.55">No</tspan></text>
+</g>
+<g id="Ln-Yt-Fighter-Conc---Q-Membership">
+<line id="Line 1_14" x1="754" y1="1330" x2="579" y2="1330" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_14" d="M752.293 1449.71C752.683 1450.1 753.317 1450.1 753.707 1449.71L760.071 1443.34C760.462 1442.95 760.462 1442.32 760.071 1441.93C759.681 1441.54 759.047 1441.54 758.657 1441.93L753 1447.59L747.343 1441.93C746.953 1441.54 746.319 1441.54 745.929 1441.93C745.538 1442.32 745.538 1442.95 745.929 1443.34L752.293 1449.71ZM753 1331H752V1449H753H754V1331H753Z" fill="black"/>
+<rect id="Rectangle 2_40" x="622" y="1316" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_14" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="623.158" y="1332.55">Done</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Background---Background">
+<line id="Line 1_15" x1="1131" y1="1910" x2="1041" y2="1910" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_15" d="M1040.29 1988.71C1040.68 1989.1 1041.32 1989.1 1041.71 1988.71L1048.07 1982.34C1048.46 1981.95 1048.46 1981.32 1048.07 1980.93C1047.68 1980.54 1047.05 1980.54 1046.66 1980.93L1041 1986.59L1035.34 1980.93C1034.95 1980.54 1034.32 1980.54 1033.93 1980.93C1033.54 1981.32 1033.54 1981.95 1033.93 1982.34L1040.29 1988.71ZM1041 1909H1040V1988H1041H1042V1909H1041Z" fill="black"/>
+<rect id="Rectangle 2_41" x="1061" y="1896" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_13" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1072.35" y="1912.55">No</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Senior---Regional">
+<line id="Line 1_16" x1="1442" y1="1461" x2="1293" y2="1461" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_16" d="M1440.29 1531.71C1440.68 1532.1 1441.32 1532.1 1441.71 1531.71L1448.07 1525.34C1448.46 1524.95 1448.46 1524.32 1448.07 1523.93C1447.68 1523.54 1447.05 1523.54 1446.66 1523.93L1441 1529.59L1435.34 1523.93C1434.95 1523.54 1434.32 1523.54 1433.93 1523.93C1433.54 1524.32 1433.54 1524.95 1433.93 1525.34L1440.29 1531.71ZM1441 1461H1440V1531H1441H1442V1461H1441Z" fill="black"/>
+<rect id="Rectangle 2_42" x="1307" y="1447" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_15" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1315.27" y="1463.55">Yes</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Membership---Q-Waiver">
+<line id="Line 1_17" x1="623" y1="1521" x2="422" y2="1521" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_17" d="M421.293 1595.71C421.683 1596.1 422.317 1596.1 422.707 1595.71L429.071 1589.34C429.462 1588.95 429.462 1588.32 429.071 1587.93C428.681 1587.54 428.047 1587.54 427.657 1587.93L422 1593.59L416.343 1587.93C415.953 1587.54 415.319 1587.54 414.929 1587.93C414.538 1588.32 414.538 1588.95 414.929 1589.34L421.293 1595.71ZM422 1520H421V1595H422H423V1520H422Z" fill="black"/>
+<rect id="Rectangle 2_43" x="553" y="1507" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_14" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="564.354" y="1523.55">No</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Waiver---Waiver">
+<line id="Line 1_18" x1="623" y1="1671" x2="539" y2="1671" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_18" d="M622.293 1789.71C622.683 1790.1 623.317 1790.1 623.707 1789.71L630.071 1783.34C630.462 1782.95 630.462 1782.32 630.071 1781.93C629.681 1781.54 629.047 1781.54 628.657 1781.93L623 1787.59L617.343 1781.93C616.953 1781.54 616.319 1781.54 615.929 1781.93C615.538 1782.32 615.538 1782.95 615.929 1783.34L622.293 1789.71ZM623 1670H622V1789H623H624V1670H623Z" fill="black"/>
+<rect id="Rectangle 2_44" x="553" y="1657" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_15" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="564.354" y="1673.55">No</tspan></text>
+</g>
+<g id="Ln-Yt-Second-Marshal---Q-Senior">
+<path id="Arrow 1_15" d="M1172.26 1389.71C1172.65 1390.1 1173.28 1390.1 1173.67 1389.7L1180 1383.31C1180.39 1382.91 1180.39 1382.28 1180 1381.89C1179.6 1381.5 1178.97 1381.51 1178.58 1381.9L1172.95 1387.59L1167.27 1381.96C1166.87 1381.57 1166.24 1381.57 1165.85 1381.97C1165.46 1382.36 1165.47 1382.99 1165.86 1383.38L1172.26 1389.71ZM1172 1210L1171 1210.01L1171.96 1389.01L1172.96 1389L1173.96 1388.99L1173 1209.99L1172 1210Z" fill="black"/>
+<rect id="Rectangle 2_45" x="1150" y="1238" width="44" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_15" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1149.16" y="1253.55">Done</tspan></text>
+</g>
+<g id="Ln-Yt-Q-First---Q-Membership">
+<path id="Arrow 1_16" d="M752.293 1449.71C752.683 1450.1 753.317 1450.1 753.707 1449.71L760.071 1443.34C760.462 1442.95 760.462 1442.32 760.071 1441.93C759.681 1441.54 759.047 1441.54 758.657 1441.93L753 1447.59L747.343 1441.93C746.953 1441.54 746.319 1441.54 745.929 1441.93C745.538 1442.32 745.538 1442.95 745.929 1443.34L752.293 1449.71ZM753 1203H752V1449H753H754V1203H753Z" fill="black"/>
+<rect id="Rectangle 2_46" x="736" y="1229" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_16" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="740.854" y="1246.55">No</tspan></text>
+</g>
+<g id="Ln-Yt-Q-First---Fighter-Conc">
+<line id="Line 1_19" x1="637" y1="1130" x2="503" y2="1130" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_19" d="M503.293 1271.71C503.683 1272.1 504.317 1272.1 504.707 1271.71L511.071 1265.34C511.462 1264.95 511.462 1264.32 511.071 1263.93C510.681 1263.54 510.047 1263.54 509.657 1263.93L504 1269.59L498.343 1263.93C497.953 1263.54 497.319 1263.54 496.929 1263.93C496.538 1264.32 496.538 1264.95 496.929 1265.34L503.293 1271.71ZM504 1129H503V1271H504H505V1129H504Z" fill="black"/>
+<rect id="Rectangle 2_47" x="567" y="1116" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_16" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="575.269" y="1132.55">Yes</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Marshal---Q-First">
+<line id="Line 1_20" x1="1054" y1="771" x2="753.003" y2="772" stroke="black" stroke-width="2"/>
+<path id="Arrow 4_20" d="M752.293 1057.71C752.683 1058.1 753.317 1058.1 753.707 1057.71L760.071 1051.34C760.462 1050.95 760.462 1050.32 760.071 1049.93C759.681 1049.54 759.047 1049.54 758.657 1049.93L753 1055.59L747.343 1049.93C746.953 1049.54 746.319 1049.54 745.929 1049.93C745.538 1050.32 745.538 1050.95 745.929 1051.34L752.293 1057.71ZM753 771H752V1057H753H754V771H753Z" fill="black"/>
+<rect id="Rectangle 2_48" x="945" y="757" width="47" height="22" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="No_17" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="956.353" y="773.545">No</tspan></text>
+</g>
+<g id="Ln-Yt-Q-Marshal---Second-Marshal">
+<path id="Arrow 1_17" d="M1171.29 1052.71C1171.68 1053.1 1172.32 1053.1 1172.71 1052.71L1179.07 1046.34C1179.46 1045.95 1179.46 1045.32 1179.07 1044.93C1178.68 1044.54 1178.05 1044.54 1177.66 1044.93L1172 1050.59L1166.34 1044.93C1165.95 1044.54 1165.32 1044.54 1164.93 1044.93C1164.54 1045.32 1164.54 1045.95 1164.93 1046.34L1171.29 1052.71ZM1172 846H1171V1052H1172H1173V846H1172Z" fill="black"/>
+<rect id="Rectangle 2_49" x="1155" y="872" width="34" height="19" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Yes_17" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1156.77" y="889.545">Yes</tspan></text>
+</g>
+<g id="Ln-Gn-Q-Discipline---Ot-Q-Marshal">
+<path id="Arrow 1_18" d="M1961.29 1057.71C1961.68 1058.1 1962.32 1058.1 1962.71 1057.71L1969.07 1051.34C1969.46 1050.95 1969.46 1050.32 1969.07 1049.93C1968.68 1049.54 1968.05 1049.54 1967.66 1049.93L1962 1055.59L1956.34 1049.93C1955.95 1049.54 1955.32 1049.54 1954.93 1049.93C1954.54 1050.32 1954.54 1050.95 1954.93 1051.34L1961.29 1057.71ZM1962 845H1961V1057H1962H1963V845H1962Z" fill="black"/>
+<rect id="Rectangle 2_50" x="1916" y="869" width="92" height="42" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="All Other Disciplines" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1924.48" y="885.545">All Other </tspan><tspan x="1916.07" y="907.545">Disciplines</tspan></text>
+</g>
+<g id="Ln-Gn-Q-Discipline---Yt-Q-Marshal">
+<path id="Arrow 3" d="M1293.29 772.325C1292.9 772.716 1292.9 773.349 1293.29 773.739L1299.67 780.091C1300.06 780.48 1300.69 780.479 1301.08 780.088C1301.47 779.697 1301.47 779.064 1301.08 778.674L1295.41 773.028L1301.06 767.36C1301.45 766.969 1301.45 766.336 1301.06 765.946C1300.67 765.556 1300.03 765.557 1299.64 765.949L1293.29 772.325ZM1839 772L1839 771L1294 772.03L1294 773.03L1294 774.03L1839 773L1839 772Z" fill="black"/>
+<rect id="Rectangle 2_51" x="1505" y="758.107" width="273.157" height="22.3458" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Youth Armored or Youth Rapier" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1509.85" y="773.545">Youth Armored or Youth Rapier</tspan></text>
+</g>
+<g id="Ln-Gn-Q-Discipline---Eq-Q-Marshal">
+<path id="Arrow 2" d="M2879.71 775.176C2880.1 774.785 2880.1 774.152 2879.71 773.762L2873.33 767.406C2872.94 767.016 2872.31 767.017 2871.92 767.408C2871.53 767.799 2871.53 768.432 2871.92 768.822L2877.59 774.472L2871.94 780.136C2871.55 780.527 2871.55 781.16 2871.94 781.55C2872.33 781.94 2872.96 781.939 2873.35 781.548L2879.71 775.176ZM2078 775.446L2078 776.446L2879 775.47L2879 774.47L2879 773.47L2078 774.446L2078 775.446Z" fill="black"/>
+<rect id="Rectangle 2_52" x="2204.84" y="764.976" width="94.8791" height="19.4762" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Equestrian" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="2205.9" y="780.545">Equestrian</tspan></text>
+</g>
+<g id="Ln-Gn-Start---Q-Discipline">
+<path id="Arrow 1_19" d="M1961.29 700.707C1961.68 701.098 1962.32 701.098 1962.71 700.707L1969.07 694.343C1969.46 693.953 1969.46 693.319 1969.07 692.929C1968.68 692.538 1968.05 692.538 1967.66 692.929L1962 698.586L1956.34 692.929C1955.95 692.538 1955.32 692.538 1954.93 692.929C1954.54 693.319 1954.54 693.953 1954.93 694.343L1961.29 700.707ZM1962 491H1961V700H1962H1963V491H1962Z" fill="black"/>
+<rect id="Rectangle 2_53" x="1940" y="521.857" width="45" height="19.8952" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Done_16" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="18" letter-spacing="0em"><tspan x="1940" y="537.407">Done</tspan></text>
+</g>
+</g>
+<g id="Objects">
+<g id="Ot-Second-Marshal">
+<g id="Rectangle 1">
+<rect x="1641" y="1256" width="199" height="156" rx="7" fill="#D9D9D9"/>
+<rect x="1641" y="1256" width="199" height="156" rx="7" stroke="black" stroke-width="2"/>
+<rect x="1641" y="1256" width="199" height="156" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Second Marshal Concurrence" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1645.96" y="1315.23">Awaiting Second </tspan><tspan x="1695.63" y="1344.23">Marshal </tspan><tspan x="1667.49" y="1373.23">Concurrence</tspan></text>
+</g>
+<g id="Eq-Second-Marshal">
+<g id="Rectangle 1_2">
+<rect x="2900" y="1096" width="199" height="156" rx="7" fill="#D9D9D9"/>
+<rect x="2900" y="1096" width="199" height="156" rx="7" stroke="black" stroke-width="2"/>
+<rect x="2900" y="1096" width="199" height="156" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Second Marshal Concurrence_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2904.96" y="1155.23">Awaiting Second </tspan><tspan x="2954.63" y="1184.23">Marshal </tspan><tspan x="2926.49" y="1213.23">Concurrence</tspan></text>
+</g>
+<g id="Yt-Background">
+<g id="Rectangle 1_3">
+<rect x="965" y="1989" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="965" y="1989" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="965" y="1989" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Background Check" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="995.812" y="2028.23">Awaiting </tspan><tspan x="976.289" y="2057.23">Background </tspan><tspan x="1007.96" y="2086.23">Check</tspan></text>
+</g>
+<g id="Gn-Auth-Officer">
+<g id="Rectangle 1_4">
+<rect x="1353" y="2605" width="230" height="175" rx="7" fill="#D9D9D9"/>
+<rect x="1353" y="2605" width="230" height="175" rx="7" stroke="black" stroke-width="2"/>
+<rect x="1353" y="2605" width="230" height="175" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Kingdom Authorization Officer Review" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1365.98" y="2672.23">Awaiting Kingdom </tspan><tspan x="1392.21" y="2701.23">Authorization </tspan><tspan x="1385.18" y="2730.23">Officer Review</tspan></text>
+</g>
+<g id="Yt-Waiver">
+<g id="Rectangle 1_5">
+<rect x="543" y="1790" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="543" y="1790" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="543" y="1790" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Waiver" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="573.812" y="1843.73">Awaiting </tspan><tspan x="583.715" y="1872.73">Waiver</tspan></text>
+</g>
+<g id="Ot-Waiver">
+<g id="Rectangle 1_6">
+<rect x="2431" y="1812" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="2431" y="1812" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="2431" y="1812" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Waiver_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2461.81" y="1865.73">Awaiting </tspan><tspan x="2471.71" y="1894.73">Waiver</tspan></text>
+</g>
+<g id="Eq-Waiver">
+<g id="Rectangle 1_7">
+<rect x="3517" y="1651" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="3517" y="1651" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="3517" y="1651" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Waiver_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="3547.81" y="1704.73">Awaiting </tspan><tspan x="3557.71" y="1733.73">Waiver</tspan></text>
+</g>
+<g id="Ot-Fighter-Conc">
+<g id="Rectangle 1_8">
+<rect x="2313" y="1312" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="2313" y="1312" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="2313" y="1312" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Fighter Concurrence" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2343.81" y="1351.23">Awaiting </tspan><tspan x="2351.97" y="1380.23">Fighter </tspan><tspan x="2318.99" y="1409.23">Concurrence</tspan></text>
+</g>
+<g id="Eq-Fighter-Conc">
+<g id="Rectangle 1_9">
+<rect x="3343" y="1130" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="3343" y="1130" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="3343" y="1130" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Fighter Concurrence_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="3373.81" y="1169.23">Awaiting </tspan><tspan x="3381.97" y="1198.23">Fighter </tspan><tspan x="3348.99" y="1227.23">Concurrence</tspan></text>
+</g>
+<g id="Eq-Regional">
+<g id="Rectangle 1_10">
+<rect x="3088" y="1632" width="207" height="138" rx="7" fill="#D9D9D9"/>
+<rect x="3088" y="1632" width="207" height="138" rx="7" stroke="black" stroke-width="2"/>
+<rect x="3088" y="1632" width="207" height="138" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Regional Marshal Approval" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="3091.4" y="1695.23">Awaiting Regional </tspan><tspan x="3093.24" y="1724.23">Marshal Approval</tspan></text>
+</g>
+<g id="Ot-Regional">
+<g id="Rectangle 1_11">
+<rect x="1953" y="1529" width="207" height="138" rx="7" fill="#D9D9D9"/>
+<rect x="1953" y="1529" width="207" height="138" rx="7" stroke="black" stroke-width="2"/>
+<rect x="1953" y="1529" width="207" height="138" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Regional Marshal Approval_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1956.4" y="1592.23">Awaiting Regional </tspan><tspan x="1958.24" y="1621.23">Marshal Approval</tspan></text>
+</g>
+<g id="Yt-Regional">
+<g id="Rectangle 1_12">
+<rect x="1339" y="1532" width="207" height="138" rx="7" fill="#D9D9D9"/>
+<rect x="1339" y="1532" width="207" height="138" rx="7" stroke="black" stroke-width="2"/>
+<rect x="1339" y="1532" width="207" height="138" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Regional Marshal Approval_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1342.4" y="1595.23">Awaiting Regional </tspan><tspan x="1344.24" y="1624.23">Marshal Approval</tspan></text>
+</g>
+<g id="Eq-Equestrian-Officer">
+<g id="Rectangle 1_13">
+<rect x="3117" y="2061" width="239" height="161" rx="7" fill="#D9D9D9"/>
+<rect x="3117" y="2061" width="239" height="161" rx="7" stroke="black" stroke-width="2"/>
+<rect x="3117" y="2061" width="239" height="161" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Equestrian Authorization Officer Review" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="3124.77" y="2121.23">Awaiting Equestrian </tspan><tspan x="3160.71" y="2150.23">Authorization </tspan><tspan x="3153.68" y="2179.23">Officer Review</tspan></text>
+</g>
+<g id="Gn-Approved">
+<g id="Rectangle 1_14">
+<rect x="2286" y="2633" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="2286" y="2633" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="2286" y="2633" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Approved" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2310.19" y="2701.23">Approved</tspan></text>
+</g>
+<g id="Ot-Q-First">
+<path id="Ellipse 1" d="M2405.5 1058C2438.62 1058 2468.56 1066.14 2490.19 1079.24C2511.83 1092.35 2525 1110.33 2525 1130C2525 1149.67 2511.83 1167.65 2490.19 1180.76C2468.56 1193.86 2438.62 1202 2405.5 1202C2372.38 1202 2342.44 1193.86 2320.81 1180.76C2299.17 1167.65 2286 1149.67 2286 1130C2286 1110.33 2299.17 1092.35 2320.81 1079.24C2342.44 1066.14 2372.38 1058 2405.5 1058Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this the first authorization they have in this discipline?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2323.88" y="1094.73">Is this the first </tspan><tspan x="2330.56" y="1123.73">authorization </tspan><tspan x="2312.2" y="1152.73">they have in this </tspan><tspan x="2345.79" y="1181.73">discipline?</tspan></text>
+</g>
+<g id="Yt-Q-Waiver">
+<path id="Ellipse 1_2" d="M419.5 1596C452.623 1596 482.563 1604.14 504.188 1617.24C525.832 1630.35 539 1648.33 539 1668C539 1687.67 525.832 1705.65 504.188 1718.76C482.563 1731.86 452.623 1740 419.5 1740C386.377 1740 356.437 1731.86 334.812 1718.76C313.168 1705.65 300 1687.67 300 1668C300 1648.33 313.168 1630.35 334.812 1617.24C356.437 1604.14 386.377 1596 419.5 1596Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Have they signed their waiver?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="361.73" y="1647.23">Have they </tspan><tspan x="351.852" y="1676.23">signed their </tspan><tspan x="375.664" y="1705.23">waiver?</tspan></text>
+</g>
+<g id="Ot-Q-Waiver">
+<path id="Ellipse 1_3" d="M2311.5 1569C2344.62 1569 2374.56 1577.14 2396.19 1590.24C2417.83 1603.35 2431 1621.33 2431 1641C2431 1660.67 2417.83 1678.65 2396.19 1691.76C2374.56 1704.86 2344.62 1713 2311.5 1713C2278.38 1713 2248.44 1704.86 2226.81 1691.76C2205.17 1678.65 2192 1660.67 2192 1641C2192 1621.33 2205.17 1603.35 2226.81 1590.24C2248.44 1577.14 2278.38 1569 2311.5 1569Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Have they signed their waiver?_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2253.73" y="1620.23">Have they </tspan><tspan x="2243.85" y="1649.23">signed their </tspan><tspan x="2267.66" y="1678.23">waiver?</tspan></text>
+</g>
+<g id="Eq-Q-Waiver">
+<path id="Ellipse 1_4" d="M3390.5 1410C3423.62 1410 3453.56 1418.14 3475.19 1431.24C3496.83 1444.35 3510 1462.33 3510 1482C3510 1501.67 3496.83 1519.65 3475.19 1532.76C3453.56 1545.86 3423.62 1554 3390.5 1554C3357.38 1554 3327.44 1545.86 3305.81 1532.76C3284.17 1519.65 3271 1501.67 3271 1482C3271 1462.33 3284.17 1444.35 3305.81 1431.24C3327.44 1418.14 3357.38 1410 3390.5 1410Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Have they signed their waiver?_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="3332.73" y="1461.23">Have they </tspan><tspan x="3322.85" y="1490.23">signed their </tspan><tspan x="3346.66" y="1519.23">waiver?</tspan></text>
+</g>
+<g id="Yt-Q-Background">
+<path id="Ellipse 1_5" d="M1292.64 1835C1337.45 1835 1377.96 1843.15 1407.24 1856.29C1436.61 1869.48 1454.28 1887.48 1454.28 1907C1454.28 1926.52 1436.61 1944.52 1407.24 1957.71C1377.96 1970.85 1337.45 1979 1292.64 1979C1247.84 1979 1207.32 1970.85 1178.05 1957.71C1148.68 1944.52 1131 1926.52 1131 1907C1131 1887.48 1148.68 1869.48 1178.05 1856.29C1207.32 1843.15 1247.84 1835 1292.64 1835Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Do they have a current background check in the system?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1207.19" y="1886.23">Do they have a </tspan><tspan x="1180.46" y="1915.23">current background </tspan><tspan x="1172.39" y="1944.23">check in the system?</tspan></text>
+</g>
+<g id="Gn-Q-Auth-Officer">
+<path id="Ellipse 1_6" d="M1741 2373C1793.92 2373 1841.78 2382 1876.38 2396.5C1893.68 2403.75 1907.61 2412.36 1917.21 2421.88C1926.8 2431.38 1932 2441.73 1932 2452.5C1932 2463.27 1926.8 2473.62 1917.21 2483.12C1907.61 2492.64 1893.68 2501.25 1876.38 2508.5C1841.78 2523 1793.92 2532 1741 2532C1688.08 2532 1640.22 2523 1605.62 2508.5C1588.32 2501.25 1574.39 2492.64 1564.79 2483.12C1555.2 2473.62 1550 2463.27 1550 2452.5C1550 2441.73 1555.2 2431.38 1564.79 2421.88C1574.39 2412.36 1588.32 2403.75 1605.62 2396.5C1640.22 2382 1688.08 2373 1741 2373Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is the Require Kingdom Authorization Officer Verification feature enabled?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1608.63" y="2417.18">Is the Require Kingdom </tspan><tspan x="1622.25" y="2446.18">Authorization Officer </tspan><tspan x="1632.63" y="2475.18">Verification feature </tspan><tspan x="1688.62" y="2504.18">enabled?</tspan></text>
+</g>
+<g id="Yt-Q-Senior">
+<path id="Ellipse 1_7" d="M1172.5 1390C1205.62 1390 1235.56 1398.14 1257.19 1411.24C1278.83 1424.35 1292 1442.33 1292 1462C1292 1481.67 1278.83 1499.65 1257.19 1512.76C1235.56 1525.86 1205.62 1534 1172.5 1534C1139.38 1534 1109.44 1525.86 1087.81 1512.76C1066.17 1499.65 1053 1481.67 1053 1462C1053 1442.33 1066.17 1424.35 1087.81 1411.24C1109.44 1398.14 1139.38 1390 1172.5 1390Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this for a Senior Marshal Authorization?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1109.28" y="1441.23">Is this for a </tspan><tspan x="1087.62" y="1470.23">Senior Marshal </tspan><tspan x="1090.13" y="1499.23">Authorization?</tspan></text>
+</g>
+<g id="Ot-Q-Senior">
+<path id="Ellipse 1_8" d="M1740.5 1520C1773.62 1520 1803.56 1528.14 1825.19 1541.24C1846.83 1554.35 1860 1572.33 1860 1592C1860 1611.67 1846.83 1629.65 1825.19 1642.76C1803.56 1655.86 1773.62 1664 1740.5 1664C1707.38 1664 1677.44 1655.86 1655.81 1642.76C1634.17 1629.65 1621 1611.67 1621 1592C1621 1572.33 1634.17 1554.35 1655.81 1541.24C1677.44 1528.14 1707.38 1520 1740.5 1520Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this for a Senior Marshal Authorization?_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1677.28" y="1571.23">Is this for a </tspan><tspan x="1655.62" y="1600.23">Senior Marshal </tspan><tspan x="1658.13" y="1629.23">Authorization?</tspan></text>
+</g>
+<g id="Eq-Q-Membership">
+<path id="Ellipse 1_9" d="M3716.5 1254C3749.62 1254 3779.56 1262.14 3801.19 1275.24C3822.83 1288.35 3836 1306.33 3836 1326C3836 1345.67 3822.83 1363.65 3801.19 1376.76C3779.56 1389.86 3749.62 1398 3716.5 1398C3683.38 1398 3653.44 1389.86 3631.81 1376.76C3610.17 1363.65 3597 1345.67 3597 1326C3597 1306.33 3610.17 1288.35 3631.81 1275.24C3653.44 1262.14 3683.38 1254 3716.5 1254Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Do they have an active membership?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="3624.21" y="1305.23">Do they have an </tspan><tspan x="3681.9" y="1334.23">active </tspan><tspan x="3639.65" y="1363.23">membership?</tspan></text>
+</g>
+<g id="Ot-Q-Membership">
+<path id="Ellipse 1_10" d="M2646.5 1423C2679.62 1423 2709.56 1431.14 2731.19 1444.24C2752.83 1457.35 2766 1475.33 2766 1495C2766 1514.67 2752.83 1532.65 2731.19 1545.76C2709.56 1558.86 2679.62 1567 2646.5 1567C2613.38 1567 2583.44 1558.86 2561.81 1545.76C2540.17 1532.65 2527 1514.67 2527 1495C2527 1475.33 2540.17 1457.35 2561.81 1444.24C2583.44 1431.14 2613.38 1423 2646.5 1423Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Do they have an active membership?_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2554.21" y="1474.23">Do they have an </tspan><tspan x="2611.9" y="1503.23">active </tspan><tspan x="2569.65" y="1532.23">membership?</tspan></text>
+</g>
+<g id="Yt-Q-Membership">
+<path id="Ellipse 1_11" d="M742.5 1450C775.623 1450 805.563 1458.14 827.188 1471.24C848.832 1484.35 862 1502.33 862 1522C862 1541.67 848.832 1559.65 827.188 1572.76C805.563 1585.86 775.623 1594 742.5 1594C709.377 1594 679.437 1585.86 657.812 1572.76C636.168 1559.65 623 1541.67 623 1522C623 1502.33 636.168 1484.35 657.812 1471.24C679.437 1458.14 709.377 1450 742.5 1450Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Do they have an active membership?_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="650.207" y="1501.23">Do they have an </tspan><tspan x="707.898" y="1530.23">active </tspan><tspan x="665.652" y="1559.23">membership?</tspan></text>
+</g>
+<g id="Eq-Q-First">
+<path id="Ellipse 1_12" d="M3414.5 885C3447.62 885 3477.56 893.135 3499.19 906.236C3520.83 919.348 3534 937.326 3534 957C3534 976.674 3520.83 994.652 3499.19 1007.76C3477.56 1020.86 3447.62 1029 3414.5 1029C3381.38 1029 3351.44 1020.86 3329.81 1007.76C3308.17 994.652 3295 976.674 3295 957C3295 937.326 3308.17 919.348 3329.81 906.236C3351.44 893.135 3381.38 885 3414.5 885Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this the first authorization they have in this discipline?_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="3332.88" y="921.727">Is this the first </tspan><tspan x="3339.56" y="950.727">authorization </tspan><tspan x="3321.2" y="979.727">they have in this </tspan><tspan x="3354.79" y="1008.73">discipline?</tspan></text>
+</g>
+<g id="Ot-Q-Marshal">
+<path id="Ellipse 1_13" d="M1962.5 1058C1995.62 1058 2025.56 1066.14 2047.19 1079.24C2068.83 1092.35 2082 1110.33 2082 1130C2082 1149.67 2068.83 1167.65 2047.19 1180.76C2025.56 1193.86 1995.62 1202 1962.5 1202C1929.38 1202 1899.44 1193.86 1877.81 1180.76C1856.17 1167.65 1843 1149.67 1843 1130C1843 1110.33 1856.17 1092.35 1877.81 1079.24C1899.44 1066.14 1929.38 1058 1962.5 1058Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this for a marshal authorization?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1899.28" y="1109.23">Is this for a </tspan><tspan x="1917.38" y="1138.23">marshal </tspan><tspan x="1881.48" y="1167.23">authorization?</tspan></text>
+</g>
+<g id="Eq-Q-Marshal">
+<path id="Ellipse 1_14" d="M2999.5 702C3032.62 702 3062.56 710.135 3084.19 723.236C3105.83 736.348 3119 754.326 3119 774C3119 793.674 3105.83 811.652 3084.19 824.764C3062.56 837.865 3032.62 846 2999.5 846C2966.38 846 2936.44 837.865 2914.81 824.764C2893.17 811.652 2880 793.674 2880 774C2880 754.326 2893.17 736.348 2914.81 723.236C2936.44 710.135 2966.38 702 2999.5 702Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this for a marshal authorization?_2" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2936.28" y="753.227">Is this for a </tspan><tspan x="2954.38" y="782.227">marshal </tspan><tspan x="2918.48" y="811.227">authorization?</tspan></text>
+</g>
+<g id="Eq-Q-Senior">
+<path id="Ellipse 1_15" d="M2997.5 1352C3030.62 1352 3060.56 1360.14 3082.19 1373.24C3103.83 1386.35 3117 1404.33 3117 1424C3117 1443.67 3103.83 1461.65 3082.19 1474.76C3060.56 1487.86 3030.62 1496 2997.5 1496C2964.38 1496 2934.44 1487.86 2912.81 1474.76C2891.17 1461.65 2878 1443.67 2878 1424C2878 1404.33 2891.17 1386.35 2912.81 1373.24C2934.44 1360.14 2964.38 1352 2997.5 1352Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this for a Senior Marshal Authorization?_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="2934.28" y="1403.23">Is this for a </tspan><tspan x="2912.62" y="1432.23">Senior Marshal </tspan><tspan x="2915.13" y="1461.23">Authorization?</tspan></text>
+</g>
+<g id="Yt-Fighter-Conc">
+<g id="Rectangle 1_15">
+<rect x="421" y="1272" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="421" y="1272" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="421" y="1272" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Fighter Concurrence_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="451.812" y="1311.23">Awaiting </tspan><tspan x="459.969" y="1340.23">Fighter </tspan><tspan x="426.992" y="1369.23">Concurrence</tspan></text>
+</g>
+<g id="Yt-Second-Marshal">
+<g id="Rectangle 1_16">
+<rect x="1073" y="1053" width="199" height="156" rx="7" fill="#D9D9D9"/>
+<rect x="1073" y="1053" width="199" height="156" rx="7" stroke="black" stroke-width="2"/>
+<rect x="1073" y="1053" width="199" height="156" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Awaiting Second Marshal Concurrence_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1077.96" y="1112.23">Awaiting Second </tspan><tspan x="1127.63" y="1141.23">Marshal </tspan><tspan x="1099.49" y="1170.23">Concurrence</tspan></text>
+</g>
+<g id="Yt-Q-First">
+<path id="Ellipse 1_16" d="M756.5 1058C789.623 1058 819.563 1066.14 841.188 1079.24C862.832 1092.35 876 1110.33 876 1130C876 1149.67 862.832 1167.65 841.188 1180.76C819.563 1193.86 789.623 1202 756.5 1202C723.377 1202 693.437 1193.86 671.812 1180.76C650.168 1167.65 637 1149.67 637 1130C637 1110.33 650.168 1092.35 671.812 1079.24C693.437 1066.14 723.377 1058 756.5 1058Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this the first authorization they have in this discipline?_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="674.883" y="1094.73">Is this the first </tspan><tspan x="681.562" y="1123.73">authorization </tspan><tspan x="663.199" y="1152.73">they have in this </tspan><tspan x="696.785" y="1181.73">discipline?</tspan></text>
+</g>
+<g id="Yt-Q-Marshal">
+<path id="Ellipse 1_17" d="M1173.5 702C1206.62 702 1236.56 710.135 1258.19 723.236C1279.83 736.348 1293 754.326 1293 774C1293 793.674 1279.83 811.652 1258.19 824.764C1236.56 837.865 1206.62 846 1173.5 846C1140.38 846 1110.44 837.865 1088.81 824.764C1067.17 811.652 1054 793.674 1054 774C1054 754.326 1067.17 736.348 1088.81 723.236C1110.44 710.135 1140.38 702 1173.5 702Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="Is this for a marshal authorization?_3" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1110.28" y="753.227">Is this for a </tspan><tspan x="1128.38" y="782.227">marshal </tspan><tspan x="1092.48" y="811.227">authorization?</tspan></text>
+</g>
+<g id="Gn-Q-Discipline">
+<path id="Ellipse 1_18" d="M1958.5 702C1991.62 702 2021.56 710.135 2043.19 723.236C2064.83 736.348 2078 754.326 2078 774C2078 793.674 2064.83 811.652 2043.19 824.764C2021.56 837.865 1991.62 846 1958.5 846C1925.38 846 1895.44 837.865 1873.81 824.764C1852.17 811.652 1839 793.674 1839 774C1839 754.326 1852.17 736.348 1873.81 723.236C1895.44 710.135 1925.38 702 1958.5 702Z" fill="#D9D9D9" stroke="black" stroke-width="2"/>
+<text id="What type of discipline is this authorization for?" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1884.83" y="738.727">What type of </tspan><tspan x="1868.29" y="767.727">discipline is this </tspan><tspan x="1883.56" y="796.727">authorization </tspan><tspan x="1936.24" y="825.727">for?</tspan></text>
+</g>
+<g id="Gn-Start">
+<g id="Rectangle 1_17">
+<rect x="1883" y="371" width="158" height="119" rx="7" fill="#D9D9D9"/>
+<rect x="1883" y="371" width="158" height="119" rx="7" stroke="black" stroke-width="2"/>
+<rect x="1883" y="371" width="158" height="119" rx="7" stroke="black" stroke-opacity="0.2" stroke-width="2"/>
+</g>
+<text id="Start" fill="black" style="white-space: pre" xml:space="preserve" font-family="Inter" font-size="24" letter-spacing="0em"><tspan x="1933.99" y="439.227">Start</tspan></text>
+</g>
+</g>
+</g>
+</svg>
