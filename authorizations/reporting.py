@@ -1,7 +1,7 @@
 from collections import defaultdict
 from datetime import date
 
-from authorizations.models import Authorization, Branch, Discipline, WeaponStyle
+from authorizations.models import Authorization, Branch, Discipline, WeaponStyle, is_minor_from_birthday
 
 
 MARSHAL_STYLE_NAMES = {'Junior Marshal', 'Senior Marshal'}
@@ -196,7 +196,12 @@ def build_current_report_snapshot(as_of=None):
         person_id = auth.person_id
         style_name = auth.style.name
         discipline_name = auth.style.discipline.name
-        is_minor = auth.person.is_current_minor
+        is_minor = is_minor_from_birthday(
+            auth.person.user.birthday,
+            auth.person.user.country,
+            auth.person.user.state_province,
+            today=as_of,
+        )
         region_name = _person_region_name(auth.person)
 
         disc_key = discipline_name

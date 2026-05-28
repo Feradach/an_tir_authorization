@@ -16,6 +16,7 @@
                 {% for person in people %}
                     <option
                         value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}"
+                        data-person-id="{{ person.user_id }}"
                         data-membership="{{ person.user.membership|default_if_none:'' }}"
                         data-membership-expiration="{{ person.user.membership_expiration|date:'Y-m-d' }}"
                     >
@@ -52,7 +53,7 @@
             <select id="marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1">
                 <option value=""></option>
                 {% for person in people %}
-                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}" data-person-id="{{ person.user_id }}">
                         {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
                     </option>
                 {% endfor %}
@@ -63,7 +64,7 @@
             <select id="second_marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1">
                 <option value=""></option>
                 {% for person in people %}
-                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}" data-person-id="{{ person.user_id }}">
                         {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
                     </option>
                 {% endfor %}
@@ -74,7 +75,7 @@
             <select id="concurring_officer_lookup" class="choices-dropdown form-control" data-editor-choice="1">
                 <option value=""></option>
                 {% for person in people %}
-                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}">
+                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}" data-person-id="{{ person.user_id }}">
                         {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
                     </option>
                 {% endfor %}
@@ -95,14 +96,18 @@
     </div>
 
     <input id="editor_person_sca_name" type="hidden">
+    <input id="editor_person_id" type="hidden">
     <input id="editor_person_first_name" type="hidden">
     <input id="editor_person_last_name" type="hidden">
+    <input id="editor_marshal_id" type="hidden">
     <input id="editor_marshal_sca_name" type="hidden">
     <input id="editor_marshal_first_name" type="hidden">
     <input id="editor_marshal_last_name" type="hidden">
+    <input id="editor_second_marshal_id" type="hidden">
     <input id="editor_second_marshal_sca_name" type="hidden">
     <input id="editor_second_marshal_first_name" type="hidden">
     <input id="editor_second_marshal_last_name" type="hidden">
+    <input id="editor_concurring_officer_id" type="hidden">
     <input id="editor_concurring_officer_sca_name" type="hidden">
     <input id="editor_concurring_officer_first_name" type="hidden">
     <input id="editor_concurring_officer_last_name" type="hidden">
@@ -325,18 +330,22 @@
 <script>
     document.addEventListener('DOMContentLoaded', function () {
         const fields = [
+            'person_id',
             'person_sca_name',
             'person_first_name',
             'person_last_name',
             'person_membership',
             'person_membership_expiration',
             'weapon_style',
+            'marshal_id',
             'marshal_sca_name',
             'marshal_first_name',
             'marshal_last_name',
+            'second_marshal_id',
             'second_marshal_sca_name',
             'second_marshal_first_name',
             'second_marshal_last_name',
+            'concurring_officer_id',
             'concurring_officer_sca_name',
             'concurring_officer_first_name',
             'concurring_officer_last_name',
@@ -345,18 +354,22 @@
             'is_minor',
         ];
         const editor = {
+            person_id: document.getElementById('editor_person_id'),
             person_sca_name: document.getElementById('editor_person_sca_name'),
             person_first_name: document.getElementById('editor_person_first_name'),
             person_last_name: document.getElementById('editor_person_last_name'),
             person_membership: document.getElementById('editor_person_membership'),
             person_membership_expiration: document.getElementById('editor_person_membership_expiration'),
             weapon_style: document.getElementById('editor_weapon_style'),
+            marshal_id: document.getElementById('editor_marshal_id'),
             marshal_sca_name: document.getElementById('editor_marshal_sca_name'),
             marshal_first_name: document.getElementById('editor_marshal_first_name'),
             marshal_last_name: document.getElementById('editor_marshal_last_name'),
+            second_marshal_id: document.getElementById('editor_second_marshal_id'),
             second_marshal_sca_name: document.getElementById('editor_second_marshal_sca_name'),
             second_marshal_first_name: document.getElementById('editor_second_marshal_first_name'),
             second_marshal_last_name: document.getElementById('editor_second_marshal_last_name'),
+            concurring_officer_id: document.getElementById('editor_concurring_officer_id'),
             concurring_officer_sca_name: document.getElementById('editor_concurring_officer_sca_name'),
             concurring_officer_first_name: document.getElementById('editor_concurring_officer_first_name'),
             concurring_officer_last_name: document.getElementById('editor_concurring_officer_last_name'),
@@ -404,10 +417,13 @@
             }
         });
 
-        function parsePersonLookup(lookup, scaId, firstId, lastId) {
+        function parsePersonLookup(lookup, idId, scaId, firstId, lastId) {
+            const id = document.getElementById(idId);
             const sca = document.getElementById(scaId);
             const first = document.getElementById(firstId);
             const last = document.getElementById(lastId);
+            const option = lookup && lookup.selectedOptions.length ? lookup.selectedOptions[0] : null;
+            id.value = option ? (option.dataset.personId || '') : '';
             const parts = lookup.value.split('|').map((part) => part.trim());
             if (parts.length === 3) {
                 sca.value = parts[0];
@@ -423,10 +439,10 @@
             editor.person_membership_expiration.value = option ? (option.dataset.membershipExpiration || '') : '';
         }
 
-        function wireLookup(lookupId, scaId, firstId, lastId) {
+        function wireLookup(lookupId, idId, scaId, firstId, lastId) {
             const lookup = document.getElementById(lookupId);
             lookup.addEventListener('change', function () {
-                parsePersonLookup(lookup, scaId, firstId, lastId);
+                parsePersonLookup(lookup, idId, scaId, firstId, lastId);
                 if (lookupId === 'person_lookup') {
                     syncPersonMembershipFields();
                 }
@@ -443,6 +459,9 @@
                 editorChoicesById[lookupId].setChoiceByValue('');
             }
             editor[`${fieldPrefix}_sca_name`].value = '';
+            if (editor[`${fieldPrefix}_id`]) {
+                editor[`${fieldPrefix}_id`].value = '';
+            }
             editor[`${fieldPrefix}_first_name`].value = '';
             editor[`${fieldPrefix}_last_name`].value = '';
         }
@@ -486,6 +505,9 @@
         }
 
         function fieldIsRequiredForRow(fieldName, rowStyle) {
+            if (fieldName.endsWith('_id')) {
+                return false;
+            }
             if (fieldName === 'is_minor') {
                 return false;
             }
@@ -601,24 +623,28 @@
         function addEditorRow() {
             parsePersonLookup(
                 document.getElementById('person_lookup'),
+                'editor_person_id',
                 'editor_person_sca_name',
                 'editor_person_first_name',
                 'editor_person_last_name'
             );
             parsePersonLookup(
                 document.getElementById('marshal_lookup'),
+                'editor_marshal_id',
                 'editor_marshal_sca_name',
                 'editor_marshal_first_name',
                 'editor_marshal_last_name'
             );
             parsePersonLookup(
                 secondMarshalLookup,
+                'editor_second_marshal_id',
                 'editor_second_marshal_sca_name',
                 'editor_second_marshal_first_name',
                 'editor_second_marshal_last_name'
             );
             parsePersonLookup(
                 concurringOfficerLookup,
+                'editor_concurring_officer_id',
                 'editor_concurring_officer_sca_name',
                 'editor_concurring_officer_first_name',
                 'editor_concurring_officer_last_name'
@@ -682,10 +708,10 @@
             syncNewFighterParentNameFields();
         }
 
-        wireLookup('person_lookup', 'editor_person_sca_name', 'editor_person_first_name', 'editor_person_last_name');
-        wireLookup('marshal_lookup', 'editor_marshal_sca_name', 'editor_marshal_first_name', 'editor_marshal_last_name');
-        wireLookup('second_marshal_lookup', 'editor_second_marshal_sca_name', 'editor_second_marshal_first_name', 'editor_second_marshal_last_name');
-        wireLookup('concurring_officer_lookup', 'editor_concurring_officer_sca_name', 'editor_concurring_officer_first_name', 'editor_concurring_officer_last_name');
+        wireLookup('person_lookup', 'editor_person_id', 'editor_person_sca_name', 'editor_person_first_name', 'editor_person_last_name');
+        wireLookup('marshal_lookup', 'editor_marshal_id', 'editor_marshal_sca_name', 'editor_marshal_first_name', 'editor_marshal_last_name');
+        wireLookup('second_marshal_lookup', 'editor_second_marshal_id', 'editor_second_marshal_sca_name', 'editor_second_marshal_first_name', 'editor_second_marshal_last_name');
+        wireLookup('concurring_officer_lookup', 'editor_concurring_officer_id', 'editor_concurring_officer_sca_name', 'editor_concurring_officer_first_name', 'editor_concurring_officer_last_name');
         weaponStyleSelect.addEventListener('change', updateMarshalSignoffFields);
         marshalPromotionCheckbox.addEventListener('change', updateMarshalSignoffFields);
         updateMarshalSignoffFields();

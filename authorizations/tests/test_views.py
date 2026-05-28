@@ -3742,6 +3742,40 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIsNone(entry.concurring_officer)
 
     @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_resolves_selected_marshal_by_id_before_names(self):
+        self.client.force_login(self.ao_user)
+        marshal_user, marshal_person = self.make_person(
+            'legacy_marshal_id_lookup',
+            'Connal MacLagmayn',
+            user_id=16054,
+        )
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_id': [str(self.owner_person.user_id)],
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(marshal_person.user_id)],
+                'marshal_sca_name': ['Connal'],
+                'marshal_first_name': ['Nathan'],
+                'marshal_last_name': ['Brown'],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
+        self.assertEqual(authorization.marshal, marshal_person)
+        self.assertFalse(
+            any('Marshal was not found' in message for message in self.messages_for(response))
+        )
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_senior_marshal_promotion_requires_concurring_officer(self):
         self.client.force_login(self.ao_user)
 

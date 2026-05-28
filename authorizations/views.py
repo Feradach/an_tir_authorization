@@ -601,6 +601,7 @@ class LegacyAuthorizationUploadForm(forms.Form):
 
 
 class LegacyAuthorizationRecoveryForm(forms.Form):
+    person_id = forms.IntegerField(required=False)
     person_sca_name = forms.CharField(max_length=255, required=True)
     person_first_name = forms.CharField(max_length=150, required=True)
     person_last_name = forms.CharField(max_length=150, required=True)
@@ -615,12 +616,15 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
         widget=forms.DateInput(attrs={'type': 'date'}),
     )
     weapon_style = forms.CharField(max_length=255, required=True)
+    marshal_id = forms.IntegerField(required=False)
     marshal_sca_name = forms.CharField(max_length=255, required=True)
     marshal_first_name = forms.CharField(max_length=150, required=True)
     marshal_last_name = forms.CharField(max_length=150, required=True)
+    second_marshal_id = forms.IntegerField(required=False)
     second_marshal_sca_name = forms.CharField(max_length=255, required=False)
     second_marshal_first_name = forms.CharField(max_length=150, required=False)
     second_marshal_last_name = forms.CharField(max_length=150, required=False)
+    concurring_officer_id = forms.IntegerField(required=False)
     concurring_officer_sca_name = forms.CharField(max_length=255, required=False)
     concurring_officer_first_name = forms.CharField(max_length=150, required=False)
     concurring_officer_last_name = forms.CharField(max_length=150, required=False)
@@ -745,18 +749,22 @@ class LegacyRecoveryNewFighterForm(forms.Form):
 
 
 LEGACY_RECOVERY_BATCH_FIELDS = [
+    'person_id',
     'person_sca_name',
     'person_first_name',
     'person_last_name',
     'person_membership',
     'person_membership_expiration',
     'weapon_style',
+    'marshal_id',
     'marshal_sca_name',
     'marshal_first_name',
     'marshal_last_name',
+    'second_marshal_id',
     'second_marshal_sca_name',
     'second_marshal_first_name',
     'second_marshal_last_name',
+    'concurring_officer_id',
     'concurring_officer_sca_name',
     'concurring_officer_first_name',
     'concurring_officer_last_name',
@@ -1081,7 +1089,22 @@ def _find_legacy_style(row: dict, row_number: int):
     return styles[0]
 
 
-def _resolve_legacy_recovery_person(sca_name: str, first_name: str, last_name: str, row_label: str):
+def _resolve_legacy_recovery_person_by_id(person_id: int | None, row_label: str):
+    if not person_id:
+        return None
+    try:
+        return Person.objects.select_related('user', 'branch').get(
+            user_id=person_id,
+            user__merged_into__isnull=True,
+        )
+    except Person.DoesNotExist:
+        raise ValueError(f'{row_label} ID "{person_id}" was not found.')
+
+
+def _resolve_legacy_recovery_person(sca_name: str, first_name: str, last_name: str, row_label: str, person_id: int | None = None):
+    person = _resolve_legacy_recovery_person_by_id(person_id, row_label)
+    if person:
+        return person
     matches = list(
         Person.objects.select_related('user', 'branch').filter(
             sca_name__iexact=sca_name.strip(),
@@ -1121,19 +1144,22 @@ def _legacy_recovery_is_marshal_style(style: WeaponStyle):
 
 
 def _legacy_recovery_optional_signoff(cleaned: dict, prefix: str, label: str, *, required: bool):
+    person_id = cleaned.get(f'{prefix}_id')
     values = [
         (cleaned.get(f'{prefix}_sca_name') or '').strip(),
         (cleaned.get(f'{prefix}_first_name') or '').strip(),
         (cleaned.get(f'{prefix}_last_name') or '').strip(),
     ]
     has_any = any(values)
+    if person_id and not has_any:
+        return _resolve_legacy_recovery_person_by_id(person_id, label)
     if required and not all(values):
         raise ValueError(f'{label} is required for this marshal authorization.')
     if has_any and not all(values):
         raise ValueError(f'{label} requires SCA name, first name, and last name.')
     if not has_any:
         return None
-    return _resolve_legacy_recovery_person(values[0], values[1], values[2], label)
+    return _resolve_legacy_recovery_person(values[0], values[1], values[2], label, person_id)
 
 
 def _legacy_recovery_note_text(style: WeaponStyle, auth_date: date, marshal_promotion=False, second_marshal=None, concurring_officer=None):
@@ -1215,12 +1241,14 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
         cleaned['person_first_name'],
         cleaned['person_last_name'],
         'Person',
+        cleaned.get('person_id'),
     )
     marshal = _resolve_legacy_recovery_person(
         cleaned['marshal_sca_name'],
         cleaned['marshal_first_name'],
         cleaned['marshal_last_name'],
         'Marshal',
+        cleaned.get('marshal_id'),
     )
     style = _find_legacy_recovery_style(cleaned['weapon_style'])
     auth_date = cleaned['auth_date']

@@ -35,6 +35,7 @@ tmp/
 scripts/dump-anonymized.ps1
 antir_authorizations_handoff.md
 production_launch_plan.md
+quarterly_report_runbook.md
 
 # User-uploaded local media
 media/

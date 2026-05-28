@@ -1,8 +1,12 @@
 ﻿
 
-## [1.1.1] - 2026-06-03
+## [1.1.1] - 2026-05-28
 ### Added
 - Added a scrollable, zoomable FAQ flow chart with clickable object highlights showing how authorization statuses move through review.
+- Automated the generation of quarterly reports.
+
+### Fixed
+- Fixed legacy authorization recovery so selected people are matched by their account ID instead of re-checking name text from the batch row.
 
 
 ## [1.1.0] - 2026-05-27

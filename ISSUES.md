@@ -8,7 +8,7 @@
 
 ### Near Term
 
-* Search by legal name.
+* Search by legal name (Maybe, does this expose people's information too much?)
 * Add 2FA to the system. Make it optional for now, possibly mandatory for high access users.
 * Notification when authorization expiration is nearing (with ability to turn them off).
 * Make sure quarterly reports are working and emailing to appropriate people

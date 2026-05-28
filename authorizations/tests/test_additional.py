@@ -1,11 +1,12 @@
 
 from datetime import date, timedelta
 from io import StringIO
+from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
 from django.core import mail
 from django.core.exceptions import ValidationError
-from django.core.management import call_command
+from django.core.management import call_command, CommandError
 from django.db import IntegrityError
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -28,6 +29,7 @@ from authorizations.models import (
     WeaponStyle,
 )
 from authorizations.permissions import validate_reject_authorization
+from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER, build_current_report_snapshot
 from authorizations.views import CreateAuthorizationForm, CreatePersonForm
 
 
@@ -1955,3 +1957,180 @@ class ReportingModelsTests(TestCase):
                 value=652,
                 display_order=2,
             )
+
+
+class GenerateQuarterlyReportCommandTests(TestCase):
+    def snapshot(self, value=17):
+        return {
+            ReportValue.ReportFamily.QUARTERLY_MARSHAL: [
+                {
+                    'region_name': '',
+                    'subject_name': 'Armored Combat',
+                    'metric_name': 'Total Participants',
+                    'value': value,
+                    'display_order': 1,
+                }
+            ],
+            ReportValue.ReportFamily.REGIONAL_BREAKDOWN: [],
+            ReportValue.ReportFamily.EQUESTRIAN: [],
+        }
+
+    def test_manual_generation_creates_period_and_values(self):
+        output = StringIO()
+
+        with patch(
+            'authorizations.management.commands.generate_quarterly_report.build_current_report_snapshot',
+            return_value=self.snapshot(),
+        ) as build_snapshot:
+            call_command(
+                'generate_quarterly_report',
+                '--year',
+                '2026',
+                '--quarter',
+                '2',
+                '--authorization-officer-name',
+                'Officer Example',
+                stdout=output,
+            )
+
+        period = ReportingPeriod.objects.get(year=2026, quarter=2)
+        self.assertEqual(period.authorization_officer_name, 'Officer Example')
+        self.assertEqual(period.report_values.count(), 1)
+        self.assertEqual(period.report_values.get().value, 17)
+        build_snapshot.assert_called_once_with(as_of=date(2026, 6, 30))
+        self.assertIn('Generated stored report for Q2 2026', output.getvalue())
+
+    def test_existing_report_fails_without_force(self):
+        period = ReportingPeriod.objects.create(
+            year=2026,
+            quarter=2,
+            authorization_officer_name='Original Officer',
+        )
+        ReportValue.objects.create(
+            reporting_period=period,
+            report_family=ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+            region_name='',
+            subject_name='Armored Combat',
+            metric_name='Total Participants',
+            value=17,
+            display_order=1,
+        )
+
+        with patch(
+            'authorizations.management.commands.generate_quarterly_report.build_current_report_snapshot',
+            return_value=self.snapshot(21),
+        ) as build_snapshot:
+            with self.assertRaisesMessage(CommandError, 'already has a stored report'):
+                call_command('generate_quarterly_report', '--year', '2026', '--quarter', '2')
+
+        build_snapshot.assert_not_called()
+        period.refresh_from_db()
+        self.assertEqual(period.authorization_officer_name, 'Original Officer')
+        self.assertEqual(period.report_values.get().value, 17)
+
+    def test_force_replaces_existing_report_for_that_period(self):
+        period = ReportingPeriod.objects.create(
+            year=2026,
+            quarter=2,
+            authorization_officer_name='Original Officer',
+        )
+        ReportValue.objects.create(
+            reporting_period=period,
+            report_family=ReportValue.ReportFamily.QUARTERLY_MARSHAL,
+            region_name='',
+            subject_name='Armored Combat',
+            metric_name='Total Participants',
+            value=17,
+            display_order=1,
+        )
+
+        with patch(
+            'authorizations.management.commands.generate_quarterly_report.build_current_report_snapshot',
+            return_value=self.snapshot(21),
+        ):
+            call_command(
+                'generate_quarterly_report',
+                '--year',
+                '2026',
+                '--quarter',
+                '2',
+                '--authorization-officer-name',
+                'Replacement Officer',
+                '--force',
+                stdout=StringIO(),
+            )
+
+        self.assertEqual(ReportingPeriod.objects.filter(year=2026, quarter=2).count(), 1)
+        period.refresh_from_db()
+        self.assertEqual(period.authorization_officer_name, 'Replacement Officer')
+        self.assertEqual(list(period.report_values.values_list('value', flat=True)), [21])
+
+    def test_scheduled_run_noops_when_today_is_not_quarter_end(self):
+        class NonQuarterEndDate(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 5, 28)
+
+        output = StringIO()
+        with patch('authorizations.management.commands.generate_quarterly_report.date', NonQuarterEndDate):
+            with patch(
+                'authorizations.management.commands.generate_quarterly_report.build_current_report_snapshot',
+                return_value=self.snapshot(),
+            ) as build_snapshot:
+                call_command('generate_quarterly_report', stdout=output)
+
+        build_snapshot.assert_not_called()
+        self.assertFalse(ReportingPeriod.objects.exists())
+        self.assertIn('is not the last day of a quarter', output.getvalue())
+
+
+class CurrentReportSnapshotTests(TestCase):
+    def test_minor_counts_use_snapshot_date(self):
+        status_active, _ = AuthorizationStatus.objects.get_or_create(name='Active')
+        branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
+        for region_name in REGION_ORDER:
+            Branch.objects.create(name=region_name, type='Region', region=branch_an_tir)
+        local_branch = Branch.objects.create(
+            name='Central Local',
+            type='Barony',
+            region=Branch.objects.get(name='Central'),
+        )
+
+        discipline_map = {
+            discipline_name: Discipline.objects.create(name=discipline_name)
+            for discipline_name, _ in QUARTERLY_DISCIPLINE_MAP
+        }
+        equestrian = discipline_map['Equestrian']
+        for style_name in EQUESTRIAN_TYPE_ORDER:
+            WeaponStyle.objects.create(name=style_name, discipline=equestrian)
+        armored_style = WeaponStyle.objects.create(
+            name='Weapon & Shield',
+            discipline=discipline_map['Armored Combat'],
+        )
+
+        user = User.objects.create_user(
+            username='historic_minor_report',
+            password='StrongPass!123',
+            email='historic_minor_report@example.com',
+            first_name='Historic',
+            last_name='Minor',
+            birthday=date(2007, 7, 1),
+            country='United States',
+            state_province='Oregon',
+        )
+        person = Person.objects.create(user=user, sca_name='Historic Minor', branch=local_branch)
+        Authorization.objects.create(
+            person=person,
+            style=armored_style,
+            status=status_active,
+            expiration=date(2030, 6, 30),
+            marshal=person,
+        )
+
+        snapshot = build_current_report_snapshot(as_of=date(2025, 6, 30))
+
+        minor_row = next(
+            row for row in snapshot[ReportValue.ReportFamily.QUARTERLY_MARSHAL]
+            if row['subject_name'] == 'Armored Combat' and row['metric_name'] == 'Minors Fighting'
+        )
+        self.assertEqual(minor_row['value'], 1)
