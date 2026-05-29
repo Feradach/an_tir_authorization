@@ -202,16 +202,29 @@ git push origin vX.X.X
 Use the actual release version from `CHANGELOG.md`.
 
 ## Production Rollback
-If the deploy fails before migrations are applied, return to the previous stable release tag and restart:
+If the deploy fails before migrations are applied, return to the previous stable release tag and restart. Checking out a tag puts Git in detached HEAD state; that is expected for a rollback because the server is running an exact checkpoint rather than a branch.
 
 ```bash
 git fetch --tags
 git checkout vX.X.X
+git status -sb
 sudo systemctl restart an_tir_authorizations.service
 systemctl status an_tir_authorizations.service --no-pager
 ```
 
-Use the actual previous stable tag. If migrations already ran, rollback may require a forward fix or restoring from backup; do not assume a code checkout alone is enough.
+Use the actual previous stable tag. `git status -sb` should show `HEAD (no branch)` or detached HEAD. It may also show modified generated `staticfiles/...` files after `collectstatic`; confirm there are no unexpected source-code or changelog modifications before trusting the visual rollback test.
+
+To return production to the current release path after testing or after a forward fix:
+
+```bash
+git switch main
+git pull origin main
+python manage.py collectstatic --noinput
+sudo systemctl restart an_tir_authorizations.service
+systemctl status an_tir_authorizations.service --no-pager
+```
+
+If migrations already ran, rollback may require a forward fix or restoring from backup; do not assume a code checkout alone is enough.
 
 ## Release Hygiene
 - User-visible behavior changes should have a user-facing `CHANGELOG.md` entry under `## [UNRELEASED]` until release time.
