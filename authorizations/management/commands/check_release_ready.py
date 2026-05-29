@@ -15,6 +15,13 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING('Production release gates skipped.'))
             return
 
+        if getattr(settings, 'AUTHZ_TEST_FEATURES', False):
+            self.stdout.write(
+                self.style.WARNING(
+                    'Warning: AUTHZ_TEST_FEATURES is enabled. Disable test-only features before production use.'
+                )
+            )
+
         changelog_path = settings.BASE_DIR / 'CHANGELOG.md'
         if not changelog_path.exists():
             raise CommandError('CHANGELOG.md was not found.')

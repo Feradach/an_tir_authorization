@@ -2298,6 +2298,30 @@ class ReleaseReadinessTests(TestCase):
 
         self.assertIn('Release readiness check passed.', output.getvalue())
 
+    @override_settings(RELEASE_ENV='production', AUTHZ_TEST_FEATURES=True)
+    def test_release_check_warns_when_test_features_are_enabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            changelog_path = Path(temp_dir) / 'CHANGELOG.md'
+            changelog_path.write_text(
+                """
+## [Unreleased]
+### Added
+### Changed
+### Fixed
+
+## [1.1.1] - 2026-05-28
+### Fixed
+- Released item.
+""",
+                encoding='utf-8',
+            )
+            output = StringIO()
+            with override_settings(BASE_DIR=Path(temp_dir)):
+                call_command('check_release_ready', stdout=output)
+
+        self.assertIn('AUTHZ_TEST_FEATURES is enabled', output.getvalue())
+        self.assertIn('Release readiness check passed.', output.getvalue())
+
     @override_settings(RELEASE_ENV='production')
     def test_release_check_blocks_unreleased_entries_in_production(self):
         with tempfile.TemporaryDirectory() as temp_dir:
