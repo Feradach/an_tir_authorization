@@ -373,7 +373,8 @@
             </select>
 
             <label for="weapon-styles-select">Weapon Styles:</label>
-            <select id="weapon-styles-select" name="weapon_styles" class="form-control" size="5" multiple>
+            <!-- Name is intentionally not 'weapon_styles' to avoid duplicate submission; hidden inputs carry selections. -->
+            <select id="weapon-styles-select" name="weapon_styles_select" class="form-control" size="5" multiple>
                 <!-- Dynamically populated by JavaScript -->
             </select>
 

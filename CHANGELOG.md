@@ -4,9 +4,12 @@
 ### Added
 - Added a scrollable, zoomable FAQ flow chart with clickable object highlights showing how authorization statuses move through review.
 - Automated the generation of quarterly reports.
+- Added an authorization audit history that records tracked authorization row changes for future troubleshooting.
 
 ### Fixed
 - Fixed legacy authorization recovery so selected people are matched by their account ID instead of re-checking name text from the batch row.
+- Fixed the fighter-page authorization basket so removed styles are no longer submitted.
+- Marshal authorizations now show as expired when required membership or background-check expiration dates are missing.
 
 
 ## [1.1.0] - 2026-05-27

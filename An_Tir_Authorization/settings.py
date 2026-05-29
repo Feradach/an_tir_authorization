@@ -10,9 +10,12 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
-from pathlib import Path
 import os
 import sys
+import atexit
+import shutil
+import tempfile
+from pathlib import Path
 from dotenv import load_dotenv
 
 
@@ -149,11 +152,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
-
-# Keep test-run uploads isolated from normal media files.
-# This prevents local test runs from mixing with or deleting real uploaded documents.
-if any(arg.startswith('test') for arg in sys.argv):
-    MEDIA_ROOT = BASE_DIR / 'tmp' / 'test-media'
+RUNNING_TESTS = any(arg.startswith('test') for arg in sys.argv)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -174,6 +173,13 @@ except ImportError:
         from .production_settings import *
     except ImportError:
         pass
+
+# Keep test-run uploads isolated from normal media files, even when
+# local_settings.py overrides MEDIA_ROOT for ordinary local development.
+if RUNNING_TESTS:
+    TEST_MEDIA_ROOT = Path(tempfile.mkdtemp(prefix='authz-test-media-'))
+    MEDIA_ROOT = TEST_MEDIA_ROOT
+    atexit.register(shutil.rmtree, TEST_MEDIA_ROOT, ignore_errors=True)
 
 # Optional per-environment security events log path.
 # Set SECURITY_EVENTS_LOG_PATH in local_settings.py (Windows) or production_settings.py (Linux).

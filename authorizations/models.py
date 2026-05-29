@@ -6,7 +6,7 @@ from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
-from django.db.models import Case, When, F, Exists, OuterRef, Q
+from django.db.models import Case, When, F, Exists, OuterRef, Q, Value
 from django.db.models.functions import Coalesce, Least
 
 BRANCH_TYPE_CHOICES = [
@@ -422,16 +422,17 @@ class AuthorizationQuerySet(models.QuerySet):
             models.Q(style__name__in=['Junior Marshal', 'Senior Marshal'])
             & models.Q(style__discipline__name__in=['Youth Armored', 'Youth Rapier'])
         )
+        expired_fallback = Value(date.today() - relativedelta(years=1), output_field=models.DateField())
         base_membership = Least(
             F('expiration'),
-            Coalesce(F('person__user__membership_expiration'), F('expiration')),
+            Coalesce(F('person__user__membership_expiration'), expired_fallback),
         )
         effective_expiration = Case(
             When(
                 youth_marshal,
                 then=Least(
                     base_membership,
-                    Coalesce(F('person__user__background_check_expiration'), base_membership),
+                    Coalesce(F('person__user__background_check_expiration'), expired_fallback),
                 ),
             ),
             When(
@@ -593,16 +594,17 @@ class Authorization(models.Model):
     def effective_expiration(self):
         annotated = getattr(self, 'effective_expiration_date', None)
         if annotated is not None:
+            if isinstance(annotated, str):
+                return date.fromisoformat(annotated)
             return annotated
         if self.style and self.style.name in ['Junior Marshal', 'Senior Marshal']:
-            membership_expiration = self.person.user.membership_expiration
+            expired_fallback = date.today() - relativedelta(years=1)
+            membership_expiration = self.person.user.membership_expiration or expired_fallback
             base_expiration = self.expiration
-            if membership_expiration:
-                base_expiration = min(base_expiration, membership_expiration)
+            base_expiration = min(base_expiration, membership_expiration)
             if self.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
-                background_expiration = self.person.user.background_check_expiration
-                if background_expiration:
-                    return min(base_expiration, background_expiration)
+                background_expiration = self.person.user.background_check_expiration or expired_fallback
+                return min(base_expiration, background_expiration)
             return base_expiration
         return self.expiration
 
@@ -610,6 +612,93 @@ class Authorization(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['person', 'style'], name='unique_person_style')
         ]
+
+
+AUTHORIZATION_AUDIT_EVENT_CHOICES = [
+    ('created', 'Created'),
+    ('updated', 'Updated'),
+    ('renewed', 'Renewed'),
+    ('status_changed', 'Status changed'),
+    ('approved', 'Approved'),
+    ('rejected', 'Rejected'),
+    ('marshal_changed', 'Marshal changed'),
+]
+
+
+class AuthorizationAuditEntry(models.Model):
+    """Append-only history for meaningful Authorization row changes."""
+    authorization = models.ForeignKey(
+        Authorization,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='audit_entries',
+    )
+    person = models.ForeignKey(
+        Person,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='authorization_audit_entries',
+    )
+    style = models.ForeignKey(
+        WeaponStyle,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='authorization_audit_entries',
+    )
+    event_type = models.CharField(max_length=50, choices=AUTHORIZATION_AUDIT_EVENT_CHOICES)
+    changed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='authorization_audit_entries',
+    )
+    changed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    summary = models.CharField(max_length=255, blank=True, default='')
+    changed_fields = models.JSONField(default=list, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    before_person = models.ForeignKey(Person, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    after_person = models.ForeignKey(Person, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    before_style = models.ForeignKey(WeaponStyle, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    after_style = models.ForeignKey(WeaponStyle, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    before_status = models.ForeignKey(AuthorizationStatus, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    after_status = models.ForeignKey(AuthorizationStatus, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    before_expiration = models.DateField(null=True, blank=True)
+    after_expiration = models.DateField(null=True, blank=True)
+    before_marshal = models.ForeignKey(Person, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    after_marshal = models.ForeignKey(Person, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    before_concurring_fighter = models.ForeignKey(Person, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    after_concurring_fighter = models.ForeignKey(Person, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    before_created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    after_created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    before_updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+    after_updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='+')
+
+    class Meta:
+        ordering = ['-changed_at']
+        indexes = [
+            models.Index(fields=['authorization', 'changed_at']),
+            models.Index(fields=['person', 'changed_at']),
+            models.Index(fields=['changed_by', 'changed_at']),
+            models.Index(fields=['event_type', 'changed_at']),
+        ]
+        verbose_name = 'authorization audit entry'
+        verbose_name_plural = 'authorization audit entries'
+
+    def __str__(self):
+        return f'Authorization {self.authorization_id or "-"} {self.event_type} at {self.changed_at}'
+
+    def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            raise ValidationError('Authorization audit entries cannot be updated.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Authorization audit entries cannot be deleted.')
 
 
 class LegacyAuthorizationRecoveryEntry(models.Model):

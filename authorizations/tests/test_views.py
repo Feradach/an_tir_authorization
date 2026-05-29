@@ -648,10 +648,16 @@ class IndexViewTests(ViewTestBase):
         self.assertNotContains(response, 'Upload Society Membership CSV or Excel File')
         self.assertNotContains(response, 'name="membership_csv"')
 
-    def test_index_excludes_system_admin_from_people_dropdown_and_name_lookup(self):
-        system_user, _ = self.make_person(
-            'index_system_admin',
-            'Administrator',
+    def test_index_excludes_staff_from_people_dropdown_and_name_lookup(self):
+        staff_user, _ = self.make_person(
+            'index_staff_admin',
+            'Index Staff Admin',
+        )
+        staff_user.is_staff = True
+        staff_user.save(update_fields=['is_staff'])
+        legacy_id_user, _ = self.make_person(
+            'index_legacy_id_visible',
+            'Index Legacy Id Visible',
             user_id=SYSTEM_USER_IDS[0],
             membership='150500',
         )
@@ -659,15 +665,20 @@ class IndexViewTests(ViewTestBase):
 
         response = self.client.get(reverse('index'))
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn('Administrator', list(response.context['all_people']))
+        self.assertNotIn('Index Staff Admin', list(response.context['all_people']))
+        self.assertIn('Index Legacy Id Visible', list(response.context['all_people']))
 
-        response = self.client.get(reverse('index'), {'sca_name': 'Administrator'})
+        response = self.client.get(reverse('index'), {'sca_name': 'Index Staff Admin'})
         self.assertEqual(response.status_code, 200)
         self.assertNotEqual(
             getattr(response, 'url', None),
-            reverse('fighter', kwargs={'person_id': system_user.id}),
+            reverse('fighter', kwargs={'person_id': staff_user.id}),
         )
         self.assertNotIn('name_matches', response.context)
+
+        response = self.client.get(reverse('index'), {'sca_name': 'Index Legacy Id Visible'})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': legacy_id_user.id}))
 
     def test_non_kao_cannot_change_authorization_officer_sign_off_setting(self):
         user, _ = self.make_person('index_setting_non_kao', 'Index Setting Non KAO')
@@ -1569,7 +1580,9 @@ class RegisterViewTests(ViewTestBase):
             response,
             'Invalid membership information. Please review the',
         )
-        self.assertContains(response, '<a href="/faq/#membership-update">membership FAQ</a> for information on how membership validation works.', html=True)
+        self.assertContains(response, '<a href="/faq/#membership-update">membership FAQ</a>', html=True)
+        self.assertContains(response, 'for information on how membership validation works.')
+        self.assertFalse(User.objects.filter(username='register_membership_not_found').exists())
 
     @override_settings(AUTHZ_TEST_FEATURES=True)
     @patch('authorizations.views.send_mail')
@@ -1583,6 +1596,7 @@ class RegisterViewTests(ViewTestBase):
 
         created_user = User.objects.get(username='register_test_mode_skip')
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse('fighter', kwargs={'person_id': created_user.id}))
         self.assertEqual(
             created_user.waiver_expiration,
             date.fromisoformat(payload['membership_expiration']),
@@ -1752,7 +1766,6 @@ class TombstoneBehaviorTests(ViewTestBase):
             user=cls.ao_user,
             sca_name='Merge AO',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.ao_person,
@@ -1778,7 +1791,6 @@ class TombstoneBehaviorTests(ViewTestBase):
             user=user,
             sca_name=sca_name,
             branch=self.branch_gd,
-            is_minor=False,
         )
         user.merged_into = merged_into
         user.merged_at = timezone.now()
@@ -2163,7 +2175,6 @@ class UserAccountViewTests(ViewTestBase):
             user=cls.owner_user,
             sca_name='Owner of Account',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.child_user = User.objects.create_user(
@@ -2182,7 +2193,6 @@ class UserAccountViewTests(ViewTestBase):
             user=cls.child_user,
             sca_name='Child of Owner',
             branch=cls.branch_gd,
-            is_minor=True,
             parent=cls.owner_person,
         )
 
@@ -2201,7 +2211,6 @@ class UserAccountViewTests(ViewTestBase):
             user=cls.other_user,
             sca_name='Other User',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.ao_user = User.objects.create_user(
@@ -2219,7 +2228,6 @@ class UserAccountViewTests(ViewTestBase):
             user=cls.ao_user,
             sca_name='Authorization Officer',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.ao_person,
@@ -3388,7 +3396,7 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(person.user.state_province, 'Oregon')
         self.assertEqual(person.user.country, 'United States')
         self.assertEqual(person.user.phone_number, '555-0100')
-        self.assertEqual(person.user.waiver_expiration, date(2028, 2, 1))
+        self.assertEqual(person.user.waiver_expiration, date(2029, 2, 1))
         self.assertFalse(person.user.has_usable_password())
         authorization = Authorization.objects.get(person=person, style=self.style_weapon_armored)
         self.assertEqual(authorization.status.name, 'Active')
@@ -4288,7 +4296,6 @@ class SupportingDocumentsViewTests(ViewTestBase):
             user=cls.kao_user,
             sca_name='Docs KAO',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.eq_officer_user = User.objects.create_user(
@@ -4306,7 +4313,6 @@ class SupportingDocumentsViewTests(ViewTestBase):
             user=cls.eq_officer_user,
             sca_name='Docs EQ Officer',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         cls.earl_user = User.objects.create_user(
             username='docs_earl',
@@ -4323,7 +4329,6 @@ class SupportingDocumentsViewTests(ViewTestBase):
             user=cls.earl_user,
             sca_name='Docs Earl Marshal',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.viewer_user = User.objects.create_user(
@@ -4341,7 +4346,6 @@ class SupportingDocumentsViewTests(ViewTestBase):
             user=cls.viewer_user,
             sca_name='Docs Viewer',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.fighter_user = User.objects.create_user(
@@ -4359,7 +4363,6 @@ class SupportingDocumentsViewTests(ViewTestBase):
             user=cls.fighter_user,
             sca_name='Docs Fighter',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         BranchMarshal.objects.create(
@@ -4613,7 +4616,6 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             user=cls.kao_user,
             sca_name='Office KAO',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.kao_person,
@@ -4638,7 +4640,6 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             user=cls.kem_user,
             sca_name='Office KEM',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.kem_person,
@@ -4670,7 +4671,6 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             user=cls.krapier_user,
             sca_name='Office Kingdom Rapier',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.krapier_person,
@@ -4702,7 +4702,6 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             user=cls.candidate_rapier_user,
             sca_name='Office Candidate Rapier',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         Authorization.objects.create(
             person=cls.candidate_rapier_person,
@@ -4727,7 +4726,6 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             user=cls.candidate_armored_user,
             sca_name='Office Candidate Armored',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         Authorization.objects.create(
             person=cls.candidate_armored_person,
@@ -4752,7 +4750,6 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             user=cls.candidate_earl_user,
             sca_name='Office Candidate Earl',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         Authorization.objects.create(
             person=cls.candidate_earl_person,
@@ -4777,7 +4774,6 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             user=cls.candidate_ao_user,
             sca_name='Office Candidate AO',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
     def _appointment_payload(self, person, branch, discipline):
@@ -4794,7 +4790,11 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         gryphon_weapon = WeaponStyle.objects.create(name='Gryphon - Weapon & Shield', discipline=self.discipline_youth_armored)
         dragon_weapon = WeaponStyle.objects.create(name='Dragon - Weapon & Shield', discipline=self.discipline_youth_armored)
         lion_two_handed = WeaponStyle.objects.create(name='Lion - Two-Handed', discipline=self.discipline_youth_armored)
-        youth_marshal_user, youth_marshal = self.make_person('replacement_youth_marshal', 'Replacement Youth Marshal')
+        youth_marshal_user, youth_marshal = self.make_person(
+            'replacement_youth_marshal',
+            'Replacement Youth Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
         self.grant_authorization(youth_marshal, self.style_sm_youth_armored)
         target_user, target = self.make_person(
             'replacement_youth_target',
@@ -5116,7 +5116,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         pending = response.context['pending_authorization_list']['Armored Combat']
         self.assertFalse(pending['can_approve'])
 
-    def test_kingdom_earl_marshal_pending_buttons_follow_stipulations(self):
+    def test_kingdom_earl_marshal_pending_buttons_require_discipline_credentials(self):
         Authorization.objects.create(
             person=self.candidate_armored_person,
             style=self.style_jm_armored,
@@ -5145,7 +5145,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         pending = response.context['pending_authorization_list']
         self.assertTrue(pending['Armored Combat']['can_approve'])
-        self.assertTrue(pending['Rapier Combat']['can_approve'])
+        self.assertFalse(pending['Rapier Combat']['can_approve'])
 
     def test_kingdom_earl_marshal_does_not_see_approve_for_needs_kingdom(self):
         Authorization.objects.create(
@@ -5957,7 +5957,6 @@ class WaiverWorkflowTests(ViewTestBase):
             user=cls.owner_user,
             sca_name='Waiver Owner',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.other_user = User.objects.create_user(
@@ -5975,7 +5974,6 @@ class WaiverWorkflowTests(ViewTestBase):
             user=cls.other_user,
             sca_name='Waiver Other',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.ao_user = User.objects.create_user(
@@ -5993,7 +5991,6 @@ class WaiverWorkflowTests(ViewTestBase):
             user=cls.ao_user,
             sca_name='Waiver AO',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.ao_person,
@@ -6019,7 +6016,6 @@ class WaiverWorkflowTests(ViewTestBase):
             user=cls.minor_user,
             sca_name='Waiver Minor',
             branch=cls.branch_gd,
-            is_minor=True,
             parent_first_name='Parent',
             parent_last_name='Guardian',
         )
@@ -6238,7 +6234,6 @@ class SanctionsWorkflowTests(ViewTestBase):
             user=cls.target_user,
             sca_name='Sanction Target',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.normal_user = User.objects.create_user(
@@ -6256,7 +6251,6 @@ class SanctionsWorkflowTests(ViewTestBase):
             user=cls.normal_user,
             sca_name='Sanction Normal',
             branch=cls.branch_gd,
-            is_minor=False,
         )
 
         cls.ao_user = User.objects.create_user(
@@ -6274,7 +6268,6 @@ class SanctionsWorkflowTests(ViewTestBase):
             user=cls.ao_user,
             sca_name='Sanction AO',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.ao_person,
@@ -6298,7 +6291,6 @@ class SanctionsWorkflowTests(ViewTestBase):
             user=cls.kingdom_armored_user,
             sca_name='Sanction Kingdom Armored',
             branch=cls.branch_gd,
-            is_minor=False,
         )
         BranchMarshal.objects.create(
             person=cls.kingdom_armored_person,

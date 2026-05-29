@@ -5334,7 +5334,7 @@ def add_authorization(request, person_id):
                 status_name = auth.status.name if auth.status else None
                 if status_name and status_name != 'Active':
                     return True
-                effective_expiration = getattr(auth, 'effective_expiration_date', None) or auth.effective_expiration
+                effective_expiration = auth.effective_expiration
                 days_expired = (date.today() - effective_expiration).days
                 return days_expired > 365
 
@@ -5904,6 +5904,10 @@ def user_account(request, user_id):
                 return redirect('user_account', user_id=user_id)
 
             if action == 'self_set_regional':
+                if not user.membership or not user.membership_expiration or user.membership_expiration < date.today():
+                    messages.error(request, 'A current SCA membership (with valid expiration) is required.')
+                    return redirect('user_account', user_id=user_id)
+
                 # Validate requirements only for setting (not removing)
                 # Skip Senior Marshal requirement for Authorization Officer discipline
                 if discipline.name not in [
@@ -5930,10 +5934,6 @@ def user_account(request, user_id):
                         if not has_required:
                             messages.error(request, f'You must hold an active Junior or Senior Marshal in {discipline.name}.')
                             return redirect('user_account', user_id=user_id)
-
-                if not user.membership or not user.membership_expiration or user.membership_expiration < date.today():
-                    messages.error(request, 'A current SCA membership (with valid expiration) is required.')
-                    return redirect('user_account', user_id=user_id)
 
                 # Authorization Officer may only select the Kingdom (An Tir)
                 if discipline.name in [

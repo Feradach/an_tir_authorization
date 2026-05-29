@@ -6,4 +6,5 @@ class AuthConfig(AppConfig):
     name = 'authorizations'
 
     def ready(self):
+        import authorizations.signals
         import authorizations.security.signals

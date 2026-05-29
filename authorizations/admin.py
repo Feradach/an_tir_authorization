@@ -9,6 +9,7 @@ from .models import (
     AuthorizationStatus,
     Person,
     Authorization,
+    AuthorizationAuditEntry,
     BranchMarshal,
     AuthorizationNote,
     LegacyAuthorizationRecoveryEntry,
@@ -121,6 +122,35 @@ class AuthorizationAdmin(admin.ModelAdmin):
     )
     ordering = ('person__sca_name', 'style__discipline__name', 'style__name')
     autocomplete_fields = ('person', 'style', 'status', 'marshal', 'concurring_fighter')
+
+
+@admin.register(AuthorizationAuditEntry)
+class AuthorizationAuditEntryAdmin(admin.ModelAdmin):
+    list_display = ('authorization', 'person', 'style', 'event_type', 'changed_by', 'changed_at', 'summary')
+    list_filter = ('event_type', 'style__discipline', 'style')
+    search_fields = (
+        'authorization__id',
+        'person__sca_name',
+        'person__user__username',
+        'person__user__email',
+        'style__name',
+        'style__discipline__name',
+        'changed_by__username',
+        'changed_by__email',
+        'changed_by__person__sca_name',
+        'summary',
+    )
+    readonly_fields = tuple(field.name for field in AuthorizationAuditEntry._meta.fields)
+    ordering = ('-changed_at',)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(BranchMarshal)

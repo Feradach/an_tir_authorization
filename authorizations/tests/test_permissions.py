@@ -194,6 +194,11 @@ class MembershipCurrentTests(AuthorizationTestBase):
 
 
 class EffectiveExpirationTests(AuthorizationTestBase):
+    def _date_value(self, value):
+        if isinstance(value, str):
+            return date.fromisoformat(value)
+        return value
+
     def test_non_marshal_effective_expiration_equals_base_expiration(self):
         _, fighter = self.make_person('fighter_non_marshal', 'Fighter Non-Marshal')
         base_exp = date.today() + relativedelta(years=3)
@@ -223,6 +228,18 @@ class EffectiveExpirationTests(AuthorizationTestBase):
 
         self.assertEqual(auth.effective_expiration, user.membership_expiration)
 
+    def test_marshal_effective_expiration_without_membership_is_expired(self):
+        user, fighter = self.make_person(
+            'fighter_marshal_no_membership',
+            'Fighter Marshal No Membership',
+            membership='',
+            membership_expiration=None,
+        )
+        base_exp = date.today() + relativedelta(years=2)
+        auth = self.grant_authorization(fighter, self.style_jm_armored, expiration=base_exp)
+
+        self.assertEqual(auth.effective_expiration, date.today() - relativedelta(years=1))
+
     def test_youth_marshal_effective_expiration_is_limited_by_background_check(self):
         user, fighter = self.make_person(
             'fighter_youth_marshal',
@@ -234,6 +251,18 @@ class EffectiveExpirationTests(AuthorizationTestBase):
         auth = self.grant_authorization(fighter, self.style_sm_youth_armored, expiration=base_exp)
 
         self.assertEqual(auth.effective_expiration, user.background_check_expiration)
+
+    def test_youth_marshal_effective_expiration_without_background_check_is_expired(self):
+        user, fighter = self.make_person(
+            'fighter_youth_marshal_no_background',
+            'Fighter Youth Marshal No Background',
+            membership_expiration=date.today() + relativedelta(years=2),
+            background_check_expiration=None,
+        )
+        base_exp = date.today() + relativedelta(years=2)
+        auth = self.grant_authorization(fighter, self.style_sm_youth_armored, expiration=base_exp)
+
+        self.assertEqual(auth.effective_expiration, date.today() - relativedelta(years=1))
 
     def test_queryset_annotation_supports_filter_and_sort(self):
         user_a, fighter_a = self.make_person(
@@ -276,6 +305,57 @@ class EffectiveExpirationTests(AuthorizationTestBase):
             .values_list('id', flat=True)
         )
         self.assertEqual(filtered_ids, [auth_b.id])
+
+    def test_queryset_annotation_expires_missing_membership_and_background_check(self):
+        _, no_membership_fighter = self.make_person(
+            'fighter_sort_no_membership',
+            'Fighter Sort No Membership',
+            membership='',
+            membership_expiration=None,
+        )
+        _, no_background_fighter = self.make_person(
+            'fighter_sort_no_background',
+            'Fighter Sort No Background',
+            membership_expiration=date.today() + relativedelta(years=2),
+            background_check_expiration=None,
+        )
+        no_membership_auth = self.grant_authorization(
+            no_membership_fighter,
+            self.style_jm_armored,
+            expiration=date.today() + relativedelta(years=2),
+        )
+        no_background_auth = self.grant_authorization(
+            no_background_fighter,
+            self.style_sm_youth_armored,
+            expiration=date.today() + relativedelta(years=2),
+        )
+
+        expirations = {
+            auth.id: self._date_value(auth.effective_expiration_date)
+            for auth in Authorization.objects.with_effective_expiration().filter(
+                id__in=[no_membership_auth.id, no_background_auth.id],
+            )
+        }
+
+        self.assertEqual(expirations[no_membership_auth.id], date.today() - relativedelta(years=1))
+        self.assertEqual(expirations[no_background_auth.id], date.today() - relativedelta(years=1))
+
+    def test_annotated_effective_expiration_property_returns_date(self):
+        _, fighter = self.make_person(
+            'fighter_annotated_date',
+            'Fighter Annotated Date',
+            membership_expiration=date.today() + timedelta(days=90),
+        )
+        auth = self.grant_authorization(
+            fighter,
+            self.style_jm_armored,
+            expiration=date.today() + relativedelta(years=2),
+        )
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertIsInstance(annotated_auth.effective_expiration, date)
+        self.assertLess(annotated_auth.effective_expiration, auth.expiration)
 
 
 class AuthorizationExpirationCalculationTests(AuthorizationTestBase):
@@ -446,7 +526,11 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertEqual(msg, 'Must be at least 16 years old to become authorized in Armored Combat.')
 
     def test_youth_marshal_no_longer_requires_background_check_at_proposal_time(self):
-        marshal_user, marshal = self.make_person('youth_marshal', 'Youth Marshal')
+        marshal_user, marshal = self.make_person(
+            'youth_marshal',
+            'Youth Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
         self.grant_authorization(marshal, self.style_sm_youth_armored)
 
         _, fighter = self.make_person(
@@ -460,7 +544,11 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertTrue(ok)
 
     def test_youth_authorization_must_match_age_category(self):
-        marshal_user, marshal = self.make_person('youth_category_marshal', 'Youth Category Marshal')
+        marshal_user, marshal = self.make_person(
+            'youth_category_marshal',
+            'Youth Category Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
         self.grant_authorization(marshal, self.style_sm_youth_armored)
         _, fighter = self.make_person(
             'youth_category_target',
@@ -474,7 +562,11 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertIn('only for Lion youth', msg)
 
     def test_youth_rapier_category_secondary_accepts_matching_single_sword(self):
-        marshal_user, marshal = self.make_person('youth_rapier_marshal', 'Youth Rapier Marshal')
+        marshal_user, marshal = self.make_person(
+            'youth_rapier_marshal',
+            'Youth Rapier Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
         self.grant_authorization(marshal, self.style_sm_youth_rapier)
         _, fighter = self.make_person(
             'youth_rapier_target',

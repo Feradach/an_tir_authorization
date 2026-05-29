@@ -28,6 +28,15 @@ YOUTH_AGE_OUT_YEARS = {
 }
 YOUTH_CATEGORY_PREFIXES = tuple(YOUTH_AGE_CATEGORIES.keys())
 
+
+def _coerce_date(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    return value
+
+
 EQUESTRIAN_STYLE_ALIASES = {
     'Ground Crew - Junior': {'Ground Crew - Junior', 'Junior Ground Crew'},
     'Ground Crew - Senior': {'Ground Crew - Senior', 'Senior Ground Crew'},
@@ -192,7 +201,7 @@ def _marshal_status_expiration_for_office(person: Person, discipline: Discipline
             style__name__in=['Junior Marshal', 'Senior Marshal'],
         )
 
-    return query.aggregate(Max('effective_expiration_date'))['effective_expiration_date__max']
+    return _coerce_date(query.aggregate(Max('effective_expiration_date'))['effective_expiration_date__max'])
 
 
 def marshal_office_effective_expiration(office: BranchMarshal, today: Optional[date] = None):
@@ -772,6 +781,7 @@ def authorization_requires_concurrence(person: Person, style: WeaponStyle, today
         status__name='Active',
         has_active_sanction=False,
     ).aggregate(Max('effective_expiration_date'))['effective_expiration_date__max']
+    max_effective = _coerce_date(max_effective)
     if not max_effective:
         return True
     return max_effective < cutoff

@@ -13,6 +13,7 @@ from django.urls import reverse
 
 from authorizations.models import (
     Authorization,
+    AuthorizationAuditEntry,
     AuthorizationNote,
     AuthorizationStatus,
     AuthorizationPortalSetting,
@@ -223,7 +224,7 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
         self.assertEqual(created.status, self.status_active)
         self.assertEqual(response.status_code, 200)
 
-    def test_staff_authorization_officer_can_authorize_without_senior_marshal_status(self):
+    def test_staff_authorization_officer_cannot_authorize_without_senior_marshal_status(self):
         staff_user, staff_person = self.make_person('addauth_staff_ao', 'AddAuth Staff AO')
         staff_user.is_staff = True
         staff_user.save()
@@ -246,10 +247,12 @@ class AddAuthorizationSecurityTests(AdditionalCoverageBase):
             follow=True,
         )
 
-        created = Authorization.objects.get(person=target_person, style=self.style_weapon_armored)
-        self.assertEqual(created.marshal, staff_person)
-        self.assertEqual(created.status, self.status_active)
         self.assertEqual(response.status_code, 200)
+        self.assertFalse(Authorization.objects.filter(person=target_person, style=self.style_weapon_armored).exists())
+        self.assertContains(
+            response,
+            'AddAuth Staff AO is not a senior marshal in Armored Combat and cannot authorize authorizations.',
+        )
 
     def test_staff_authorization_officer_form_shows_all_authorization_disciplines(self):
         staff_user, _ = self.make_person('addauth_staff_form_ao', 'AddAuth Staff Form AO')
@@ -1261,6 +1264,65 @@ class ConcurrenceFlowTests(AdditionalCoverageBase):
 
 @override_settings(AUTHZ_TEST_FEATURES=False)
 class ModelValidationAndConstraintTests(AdditionalCoverageBase):
+    def test_authorization_audit_entry_created_on_authorization_create(self):
+        user, person = self.make_person('audit_create_user', 'Audit Create User')
+        auth = Authorization.objects.create(
+            person=person,
+            style=self.style_weapon_armored,
+            status=self.status_active,
+            marshal=person,
+            expiration=date.today() + relativedelta(years=1),
+            created_by=user,
+            updated_by=user,
+        )
+
+        entry = AuthorizationAuditEntry.objects.get(authorization=auth)
+        self.assertEqual(entry.event_type, 'created')
+        self.assertEqual(entry.person, person)
+        self.assertEqual(entry.style, self.style_weapon_armored)
+        self.assertEqual(entry.changed_by, user)
+        self.assertEqual(entry.after_status, self.status_active)
+        self.assertEqual(entry.after_marshal, person)
+        self.assertIn('status_id', entry.changed_fields)
+
+    def test_authorization_audit_entry_records_before_and_after_on_update(self):
+        user, person = self.make_person('audit_update_user', 'Audit Update User')
+        auth = self.grant_authorization(person, self.style_weapon_armored)
+        AuthorizationAuditEntry.objects.filter(authorization=auth).delete()
+
+        auth.status = self.status_rejected
+        auth.updated_by = user
+        auth.save()
+
+        entry = AuthorizationAuditEntry.objects.get(authorization=auth)
+        self.assertEqual(entry.event_type, 'rejected')
+        self.assertEqual(entry.changed_by, user)
+        self.assertEqual(entry.before_status, self.status_active)
+        self.assertEqual(entry.after_status, self.status_rejected)
+        self.assertIn('status_id', entry.changed_fields)
+        self.assertIn('updated_by_id', entry.changed_fields)
+
+    def test_authorization_audit_ignores_noop_save(self):
+        _, person = self.make_person('audit_noop_user', 'Audit Noop User')
+        auth = self.grant_authorization(person, self.style_weapon_armored)
+        AuthorizationAuditEntry.objects.filter(authorization=auth).delete()
+
+        auth.save()
+
+        self.assertFalse(AuthorizationAuditEntry.objects.filter(authorization=auth).exists())
+
+    def test_authorization_audit_entry_is_immutable(self):
+        _, person = self.make_person('audit_immutable_user', 'Audit Immutable User')
+        auth = self.grant_authorization(person, self.style_weapon_armored)
+        entry = AuthorizationAuditEntry.objects.get(authorization=auth)
+
+        entry.summary = 'Changed summary'
+        with self.assertRaises(ValidationError):
+            entry.save()
+
+        with self.assertRaises(ValidationError):
+            entry.delete()
+
     def test_person_save_treats_missing_birthday_as_adult(self):
         user = User.objects.create_user(
             username='person_minor_no_bday',
