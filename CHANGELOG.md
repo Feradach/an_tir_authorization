@@ -16,9 +16,6 @@
 
 
 ## [1.1.1] - 2026-05-28
-### Major Changes
-- Testing to see if the release check works.
-
 ### Added
 - Added a scrollable, zoomable FAQ flow chart with clickable object highlights showing how authorization statuses move through review.
 - Automated the generation of quarterly reports.
