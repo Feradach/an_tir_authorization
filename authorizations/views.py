@@ -30,6 +30,7 @@ from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
+from .changelog import build_changelog_sections
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
 from collections import defaultdict
@@ -5279,6 +5280,20 @@ def add_authorization(request, person_id):
             def routes_to_kingdom_review(style: WeaponStyle) -> bool:
                 return sign_off_required or kingdom_review_status_name_for_style(style) == KINGDOM_EQUESTRIAN_WAIVER_STATUS
 
+            def current_renewal_bypasses_kao_verification(authorization: Authorization) -> bool:
+                return (
+                    sign_off_required
+                    and authorization.status
+                    and authorization.status.name == 'Active'
+                    and authorization.expiration >= date.today()
+                    and kingdom_review_status_name_for_style(authorization.style) != KINGDOM_EQUESTRIAN_WAIVER_STATUS
+                )
+
+            def existing_authorization_routes_to_kingdom_review(authorization: Authorization) -> bool:
+                if not routes_to_kingdom_review(authorization.style):
+                    return False
+                return not current_renewal_bypasses_kao_verification(authorization)
+
             pending_key = f'pending_authorization_{person_id}'
             is_pending_submit = request.POST.get('pending_authorization') == '1'
             pending_concurring_fighter_user_id = None
@@ -5505,7 +5520,7 @@ def add_authorization(request, person_id):
                                     if requires_concurrence(update_auth.style):
                                         if concurring_fighter:
                                             update_auth.concurring_fighter = concurring_fighter
-                                            if routes_to_kingdom_review(update_auth.style):
+                                            if existing_authorization_routes_to_kingdom_review(update_auth):
                                                 update_auth.status = kingdom_review_status_for_style(update_auth.style)
                                                 if update_auth.status == needs_kingdom_equestrian_waiver_status:
                                                     messages.success(
@@ -5535,7 +5550,7 @@ def add_authorization(request, person_id):
                                             messages.success(request, f'Authorization for {update_auth.style.name} requires concurrence from another authorized fighter.')
                                     else:
                                         update_auth.concurring_fighter = None
-                                        if routes_to_kingdom_review(update_auth.style):
+                                        if existing_authorization_routes_to_kingdom_review(update_auth):
                                             update_auth.status = kingdom_review_status_for_style(update_auth.style)
                                             if update_auth.status == needs_kingdom_equestrian_waiver_status:
                                                 messages.success(
@@ -8050,48 +8065,11 @@ def _render_changelog_markdown(text):
 
 
 def _build_changelog_major_versions(text):
-    if not text:
-        return []
-
-    version_heading_re = re.compile(r'^##\s+\[?(\d+)(?:\.\d+)*(?:\])?.*$', re.MULTILINE)
-    matches = list(version_heading_re.finditer(text))
-    if not matches:
-        return [SimpleNamespace(major='All', html=_render_changelog_markdown(text))]
-
-    grouped_sections = []
-    current_major = None
-    current_parts = []
-
-    for index, match in enumerate(matches):
-        major = match.group(1)
-        section_start = match.start()
-        section_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        section = text[section_start:section_end].strip()
-
-        if current_major is None:
-            current_major = major
-
-        if major != current_major:
-            grouped_sections.append(
-                SimpleNamespace(
-                    major=current_major,
-                    html=_render_changelog_markdown('\n\n'.join(current_parts)),
-                )
-            )
-            current_major = major
-            current_parts = []
-
-        current_parts.append(section)
-
-    if current_parts:
-        grouped_sections.append(
-            SimpleNamespace(
-                major=current_major,
-                html=_render_changelog_markdown('\n\n'.join(current_parts)),
-            )
-        )
-
-    return grouped_sections
+    return build_changelog_sections(
+        text,
+        include_unreleased=settings.RELEASE_ENV != 'production',
+        render_markdown=_render_changelog_markdown,
+    )
 
 
 def roadmap_view(request):

@@ -1,6 +1,8 @@
 
 from datetime import date, timedelta
 from io import StringIO
+from pathlib import Path
+import tempfile
 from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
@@ -32,6 +34,7 @@ from authorizations.models import (
 from authorizations.permissions import validate_reject_authorization
 from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER, build_current_report_snapshot
 from authorizations.views import CreateAuthorizationForm, CreatePersonForm
+from authorizations.changelog import unreleased_has_displayable_entries
 
 
 class AdditionalCoverageBase(TestCase):
@@ -515,7 +518,7 @@ class AuthorizationOfficerSignOffFlagTests(AdditionalCoverageBase):
         self.assertEqual(created.status, self.status_kingdom)
         self.assertEqual(response.status_code, 200)
 
-    def test_sign_off_enabled_existing_non_marshal_update_is_needs_kingdom_approval(self):
+    def test_sign_off_enabled_current_existing_non_marshal_update_stays_active(self):
         acting_user, acting_person = self.make_person('signoff_upd_actor', 'Signoff Upd Actor')
         self.grant_authorization(acting_person, self.style_sm_armored)
 
@@ -529,6 +532,42 @@ class AuthorizationOfficerSignOffFlagTests(AdditionalCoverageBase):
             self.style_weapon_armored,
             status=self.status_active,
             marshal=acting_person,
+        )
+        original_expiration = existing.expiration
+
+        self.login(acting_user)
+        self._set_sign_off(True)
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': target_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+            },
+            follow=True,
+        )
+
+        existing.refresh_from_db()
+        self.assertEqual(existing.status, self.status_active)
+        self.assertGreater(existing.expiration, original_expiration)
+        self.assertNotEqual(existing.status, self.status_kingdom)
+        self.assertEqual(response.status_code, 200)
+
+    def test_sign_off_enabled_expired_existing_non_marshal_update_is_needs_kingdom_approval(self):
+        acting_user, acting_person = self.make_person('signoff_exp_actor', 'Signoff Exp Actor')
+        self.grant_authorization(acting_person, self.style_sm_armored)
+
+        target_user, target_person = self.make_person(
+            'signoff_exp_target',
+            'Signoff Exp Target',
+            waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        existing = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_active,
+            marshal=acting_person,
+            expiration=date.today() - timedelta(days=1),
         )
 
         self.login(acting_user)
@@ -2196,3 +2235,85 @@ class CurrentReportSnapshotTests(TestCase):
             if row['subject_name'] == 'Armored Combat' and row['metric_name'] == 'Minors Fighting'
         )
         self.assertEqual(minor_row['value'], 1)
+
+
+class ReleaseReadinessTests(TestCase):
+    def test_unreleased_scaffold_without_entries_is_empty(self):
+        changelog = """
+## [Unreleased]
+### Added
+
+### Changed
+<!-- Add upcoming changes here. -->
+### Fixed
+
+## [1.1.1] - 2026-05-28
+### Fixed
+- Released item.
+"""
+
+        self.assertFalse(unreleased_has_displayable_entries(changelog))
+
+    def test_unreleased_bullet_counts_as_displayable_entry(self):
+        changelog = """
+## [Unreleased]
+### Fixed
+- Upcoming fix.
+
+## [1.1.1] - 2026-05-28
+### Fixed
+- Released item.
+"""
+
+        self.assertTrue(unreleased_has_displayable_entries(changelog))
+
+    @override_settings(RELEASE_ENV='')
+    def test_release_check_skips_non_production_environment(self):
+        output = StringIO()
+
+        call_command('check_release_ready', stdout=output)
+
+        self.assertIn('Production release gates skipped.', output.getvalue())
+
+    @override_settings(RELEASE_ENV='production')
+    def test_release_check_allows_empty_unreleased_scaffold(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            changelog_path = Path(temp_dir) / 'CHANGELOG.md'
+            changelog_path.write_text(
+                """
+## [Unreleased]
+### Added
+### Changed
+### Fixed
+
+## [1.1.1] - 2026-05-28
+### Fixed
+- Released item.
+""",
+                encoding='utf-8',
+            )
+            output = StringIO()
+            with override_settings(BASE_DIR=Path(temp_dir)):
+                call_command('check_release_ready', stdout=output)
+
+        self.assertIn('Release readiness check passed.', output.getvalue())
+
+    @override_settings(RELEASE_ENV='production')
+    def test_release_check_blocks_unreleased_entries_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            changelog_path = Path(temp_dir) / 'CHANGELOG.md'
+            changelog_path.write_text(
+                """
+## [Unreleased]
+### Fixed
+- Upcoming fix.
+
+## [1.1.1] - 2026-05-28
+### Fixed
+- Released item.
+""",
+                encoding='utf-8',
+            )
+            with override_settings(BASE_DIR=Path(temp_dir)):
+                with self.assertRaisesMessage(CommandError, 'CHANGELOG.md has unreleased entries.'):
+                    call_command('check_release_ready')

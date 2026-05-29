@@ -40,7 +40,7 @@ Instructions for coding agents working in this repository. Keep changes focused,
 
 ## Release Hygiene
 - Follow the deployment and branch policy in `deployment_workflow.md`.
-- For user-visible behavior changes, add an entry to `CHANGELOG.md`. Entry should be added as if it is talking to an end user, not a developer. For instance, it should not reference any internal implementation details.
+- For user-visible behavior changes, add an entry to the `## [UNRELEASED]` section of `CHANGELOG.md`. Entry should be added as if it is talking to an end user, not a developer. For instance, it should not reference any internal implementation details.
 - For security-sensitive changes (auth, recovery, permissions), include tests in the same change.
 
 ## Avoid

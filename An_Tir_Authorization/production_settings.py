@@ -30,6 +30,7 @@ AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT = os.environ.get(
     'AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT',
     '0',
 ).strip().lower() in ('1', 'true', 'yes', 'on')
+RELEASE_ENV = os.environ.get('RELEASE_ENV', '').strip().lower()
 
 SITE_URL = os.environ.get("SITE_URL")
 

@@ -318,6 +318,162 @@ Remove the temporary droplet copy:
 rm /tmp/an-tir-auth-backup.key
 ```
 
+## Local Offline Backup Viewing Procedure
+
+Use this when you have an offline encrypted backup saved on your local computer and want to inspect it without touching production.
+
+This procedure restores the selected backup into the local scratch database:
+
+```text
+an_tir_authorizations_restore_test
+```
+
+Do not restore an offline backup directly into the local development database unless you intentionally want to replace your local working data.
+
+### Preconditions
+
+- MySQL is installed and running locally.
+- The scratch database `an_tir_authorizations_restore_test` exists locally, or you have permission to create it.
+- You have the encrypted backup file, for example:
+
+```text
+an-tir-authorizations-db-YYYYMMDD-antir-authorizations.sql.gz.enc
+```
+
+- You have the matching backup key file:
+
+```text
+an-tir-auth-backup.key
+```
+
+### 1. Set Local Paths
+
+Run from PowerShell on the local computer. Update these paths for the backup you want to inspect.
+
+```powershell
+$BackupFile = "C:\Users\Don Room\CascadeProjects\an_tir_authorization\backups\an-tir-authorizations-db-YYYYMMDD-antir-authorizations.sql.gz.enc"
+$KeyFile = "D:\AI and Technology\Programming\An_Tir_Authorizations_project\offline_backups\an-tir-auth-backup.key"
+$RestoreDb = "an_tir_authorizations_restore_test"
+$MysqlUser = "root"
+$OpenSslExe = "C:\Program Files\Git\usr\bin\openssl.exe"
+$GzipExe = "C:\Program Files\Git\usr\bin\gzip.exe"
+$TempDir = "$env:TEMP\an_tir_authorizations_restore_test"
+$EncryptedSqlGz = Join-Path $TempDir "restore.sql.gz"
+$SqlFile = Join-Path $TempDir "restore.sql"
+$RewrittenSqlFile = Join-Path $TempDir "restore-to-test-db.sql"
+New-Item -ItemType Directory -Force -Path $TempDir
+```
+
+Replace `root` with the local MySQL user you normally use if needed. The `-p` flag in later commands makes MySQL prompt for that user's password.
+
+The example OpenSSL and gzip paths are the Git for Windows defaults. If those files are not present, install Git for Windows or update `$OpenSslExe` and `$GzipExe` to the local paths for those tools.
+
+### 2. Prepare The Scratch Database
+
+This wipes any prior restore-test contents before loading the selected backup.
+
+When it asks for the password, enter the password for the MySQL user rather than the specific database.
+
+```powershell
+mysql -u $MysqlUser -p -e "DROP DATABASE IF EXISTS $RestoreDb; CREATE DATABASE $RestoreDb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+### 3. Decrypt And Decompress The Backup Temporarily
+
+This creates temporary decrypted files under your Windows temp directory. They are removed at the end of this procedure.
+
+```powershell
+& $OpenSslExe enc -d -aes-256-cbc -pbkdf2 -pass file:"$KeyFile" -in "$BackupFile" -out "$EncryptedSqlGz"
+& $GzipExe -dc "$EncryptedSqlGz" > "$SqlFile"
+```
+
+### 4. Rewrite The Dump To Use The Scratch Database
+
+The production backup may contain `CREATE DATABASE` and `USE` statements for `an_tir_authorizations`. Rewrite those statements so the import targets only `an_tir_authorizations_restore_test`.
+
+```powershell
+$reader = [System.IO.StreamReader]::new($SqlFile)
+$writer = [System.IO.StreamWriter]::new($RewrittenSqlFile, $false, [System.Text.UTF8Encoding]::new($false))
+try {
+    while (($line = $reader.ReadLine()) -ne $null) {
+        $line = $line -replace 'CREATE DATABASE .*`an_tir_authorizations`.*', "CREATE DATABASE IF NOT EXISTS ``$RestoreDb``;"
+        $line = $line -replace 'USE `an_tir_authorizations`;', "USE ``$RestoreDb``;"
+        $writer.WriteLine($line)
+    }
+}
+finally {
+    $reader.Close()
+    $writer.Close()
+}
+```
+
+### 5. Import The Backup Into The Scratch Database
+
+```powershell
+$ImportCommand = 'mysql -u ' + $MysqlUser + ' -p < "' + $RewrittenSqlFile + '"'
+cmd /c $ImportCommand
+```
+
+### 6. Verify And Inspect The Restored Backup
+
+Check that tables were restored:
+
+```powershell
+mysql -u $MysqlUser -p -e "SHOW TABLES;" $RestoreDb
+```
+
+Check key row counts:
+
+```powershell
+mysql -u $MysqlUser -p -e "SELECT COUNT(*) AS users FROM authorizations_user;" $RestoreDb
+mysql -u $MysqlUser -p -e "SELECT COUNT(*) AS people FROM authorizations_person;" $RestoreDb
+mysql -u $MysqlUser -p -e "SELECT COUNT(*) AS authorizations FROM authorizations_authorization;" $RestoreDb
+```
+
+To browse the data, point your local MySQL client at:
+
+```text
+database: an_tir_authorizations_restore_test
+```
+
+Keep this database read-only in practice. It is for inspection and restore verification, not for application use.
+
+STOP!! 
+This is where you can inspect the database and verify the backup is correct. The next steps remove it.
+
+### 7. Wipe The Restored Data When Done
+
+When you are done inspecting the backup, drop and recreate the scratch database so the backup contents are no longer present in an open database.
+
+```powershell
+mysql -u $MysqlUser -p -e "DROP DATABASE IF EXISTS $RestoreDb; CREATE DATABASE $RestoreDb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+Confirm it is empty:
+
+```powershell
+mysql -u $MysqlUser -p -e "SHOW TABLES;" $RestoreDb
+```
+
+Expected result:
+- no tables are listed.
+
+### 8. Remove Temporary Decrypted Files
+
+Delete the temporary decrypted working files:
+
+```powershell
+Remove-Item -LiteralPath $EncryptedSqlGz, $SqlFile, $RewrittenSqlFile -Force -ErrorAction SilentlyContinue
+```
+
+Confirm the temporary folder no longer contains decrypted restore files:
+
+```powershell
+Get-ChildItem -Force $TempDir
+```
+
+Only the original encrypted offline backup and separately stored key should remain.
+
 ## Failure Modes And Responses
 
 ### Local Backup Fails

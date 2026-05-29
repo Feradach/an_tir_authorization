@@ -4567,6 +4567,21 @@ class RoadmapViewTests(ViewTestBase):
         self.assertContains(response, 'Version 1')
         self.assertContains(response, 'Version 0')
 
+    @override_settings(RELEASE_ENV='')
+    def test_roadmap_shows_unreleased_changelog_outside_production(self):
+        response = self.client.get(reverse('roadmap'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Version Unreleased')
+
+    @override_settings(RELEASE_ENV='production')
+    def test_roadmap_hides_unreleased_changelog_in_production(self):
+        response = self.client.get(reverse('roadmap'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Version Unreleased')
+        self.assertNotContains(response, 'Renewing an active, unexpired authorization no longer moves it')
+
     def test_changelog_standalone_route_is_removed(self):
         response = self.client.get('/changelog/')
 

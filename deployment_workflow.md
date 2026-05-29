@@ -13,7 +13,7 @@ The normal progression is:
 
 1. Local development
 2. PythonAnywhere staging/test site
-3. Production
+3. DigitalOcean production
 
 Local validation should happen before code is pushed for normal release work. Staging validation should happen before a change is considered ready for the Wednesday production release.
 
@@ -100,8 +100,123 @@ python -m dotenv run -- python manage.py collectstatic --noinput
 
 Smoke test the hosted site after reload. At minimum, check that the site loads, login works, key authorization workflows behave correctly, permission-gated pages still enforce access, and account recovery/login-instruction behavior remains safe.
 
+## Staging Deploy to PythonAnywhere
+
+To edit the .env file
+```bash
+nano .env
+```
+
+1. Close any existing consoles and start up a new one from the [web app page](https://www.pythonanywhere.com/user/feradach/webapps/#tab_id_feradach_pythonanywhere_com). In the console pull the code:
+
+```bash
+git pull
+```
+
+2. If neccessary, deploy core changes:
+
+```bash
+python -m pip install -r requirements.txt
+python -m dotenv run -- python manage.py check
+python -m dotenv run -- python manage.py migrate
+python -m dotenv run -- python manage.py collectstatic --noinput
+```
+
+3. Restart the server and try to load the page.
+
+## Production Deploy to DigitalOcean
+Before production deployment, promote shipped `CHANGELOG.md` entries out of `## [UNRELEASED]` and into the numbered release section. Production should have `RELEASE_ENV=production` in its environment so the release check blocks unreleased changelog entries.
+
+To edit the .env file
+```bash
+nano /home/antir/apps/an_tir_authorizations/.env
+```
+
+1. SSH into the server and enter the app directory:
+
+```bash
+ssh antir@138.68.242.105
+cd /home/antir/apps/an_tir_authorizations
+```
+
+2. Activate the virtual environment:
+
+```bash
+source venv/bin/activate
+```
+
+3. Confirm the current branch:
+
+```bash
+git status -sb
+```
+
+If the server is on the wrong branch:
+
+```bash
+git branch -r
+git checkout main
+git status -sb
+```
+
+4. Pull the code that already passed local and staging validation:
+
+```bash
+git pull origin main
+```
+
+5. Run pre-deploy checks:
+
+```bash
+python manage.py check
+python manage.py migrate --check
+python manage.py check_release_ready
+```
+
+If `check_release_ready` fails, do not continue the production deploy. Fix the changelog/release issue locally, push again, then pull again on the server.
+
+6. Install requirements, apply migrations, and collect static files as needed:
+
+```bash
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py collectstatic --noinput
+```
+
+7. Restart and verify the service:
+
+```bash
+sudo systemctl restart an_tir_authorizations.service
+systemctl status an_tir_authorizations.service --no-pager
+```
+
+The service should report `active`. Also smoke test the public site before tagging the release.
+
+8. After production is verified, tag the exact deployed commit and push the tag:
+
+```bash
+git tag -a vX.X.X -m "Release vX.X.X"
+git push origin vX.X.X
+```
+
+Use the actual release version from `CHANGELOG.md`.
+
+## Production Rollback
+If the deploy fails before migrations are applied, return to the previous stable release tag and restart:
+
+```bash
+git fetch --tags
+git checkout vX.X.X
+sudo systemctl restart an_tir_authorizations.service
+systemctl status an_tir_authorizations.service --no-pager
+```
+
+Use the actual previous stable tag. If migrations already ran, rollback may require a forward fix or restoring from backup; do not assume a code checkout alone is enough.
+
 ## Release Hygiene
-- User-visible behavior changes should have a user-facing `CHANGELOG.md` entry.
+- User-visible behavior changes should have a user-facing `CHANGELOG.md` entry under `## [UNRELEASED]` until release time.
+- Production release versions are marked by Git tags such as `v1.1.2` after the deployed site is verified.
+- Do not move or reuse pushed release tags. Use the next patch version for hotfixes.
 - Security-sensitive changes must include targeted tests.
 - Do not deploy late if there is no time to monitor and fix issues.
 - If a production deploy breaks a critical workflow and the fix is not obvious quickly, roll back rather than debugging live for an extended period.

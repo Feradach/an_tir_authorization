@@ -42,6 +42,9 @@ AUTHZ_TEST_FEATURES = _env_truthy('AUTHZ_TEST_FEATURES', '0')
 # vetted historical authorization records.
 AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT = _env_truthy('AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT', '0')
 
+# Release environment. Only "production" currently has special behavior.
+RELEASE_ENV = os.environ.get('RELEASE_ENV', '').strip().lower()
+
 # For sending login emails
 EMAIL_BACKEND = 'django.core.mail.backends.filebased.EmailBackend'
 EMAIL_FILE_PATH = BASE_DIR /'tmp/app-emails'

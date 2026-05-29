@@ -1,4 +1,15 @@
 ﻿
+## [UNRELEASED]
+### Major Changes
+
+### Added
+
+### Changed
+
+### Fixed
+
+### Removed
+
 
 ## [1.1.1] - 2026-05-28
 ### Added
@@ -10,6 +21,7 @@
 - Fixed legacy authorization recovery so selected people are matched by their account ID instead of re-checking name text from the batch row.
 - Fixed the fighter-page authorization basket so removed styles are no longer submitted.
 - Marshal authorizations now show as expired when required membership or background-check expiration dates are missing.
+- Renewing an active, unexpired authorization no longer moves it into Kingdom Authorization Officer review when verification is enabled.
 
 
 ## [1.1.0] - 2026-05-27
@@ -23,7 +35,6 @@
 - Password fields now include a show/hide control so users can check what they typed.
 - Tightened authorization officer interface.
 - Added a Kingdom Equestrian Authorization Officer role for kingdom-level review of equestrian authorizations.
-
 
 ### Changed
 - Kingdom Authorization Officer review is now limited to non-equestrian authorizations; equestrian kingdom waiver review belongs to the Kingdom Equestrian Authorization Officer.
