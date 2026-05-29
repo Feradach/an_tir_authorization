@@ -148,6 +148,72 @@ class AdditionalCoverageBase(TestCase):
         return [m.message for m in response.context['messages']]
 
 
+class ActivatePendingWaiverAuthorizationsCommandTests(AdditionalCoverageBase):
+    def test_dry_run_reports_matching_authorizations_without_changing_status(self):
+        user, person = self.make_person(
+            'pending_waiver_repair_dry_run',
+            'Pending Waiver Repair Dry Run',
+            waiver_expiration=date.today() + timedelta(days=30),
+        )
+        authorization = self.grant_authorization(
+            person,
+            self.style_weapon_armored,
+            status=self.status_pending_waiver,
+        )
+        out = StringIO()
+
+        call_command('activate_pending_waiver_authorizations', stdout=out)
+
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status, self.status_pending_waiver)
+        self.assertIn('Found 1 Awaiting Waiver authorization', out.getvalue())
+        self.assertIn(f'authorization_id={authorization.id} person_id={person.pk} user_id={user.id}', out.getvalue())
+        self.assertIn('Dry run only.', out.getvalue())
+
+    def test_apply_activates_only_authorizations_for_current_waivers(self):
+        _, current_person = self.make_person(
+            'pending_waiver_repair_apply',
+            'Pending Waiver Repair Apply',
+            waiver_expiration=date.today() + timedelta(days=30),
+        )
+        _, expired_person = self.make_person(
+            'pending_waiver_repair_expired',
+            'Pending Waiver Repair Expired',
+            waiver_expiration=date.today() - timedelta(days=1),
+        )
+        _, no_waiver_person = self.make_person(
+            'pending_waiver_repair_none',
+            'Pending Waiver Repair None',
+            waiver_expiration=None,
+        )
+        current_authorization = self.grant_authorization(
+            current_person,
+            self.style_weapon_armored,
+            status=self.status_pending_waiver,
+        )
+        expired_authorization = self.grant_authorization(
+            expired_person,
+            self.style_weapon_armored,
+            status=self.status_pending_waiver,
+        )
+        no_waiver_authorization = self.grant_authorization(
+            no_waiver_person,
+            self.style_weapon_armored,
+            status=self.status_pending_waiver,
+        )
+        out = StringIO()
+
+        call_command('activate_pending_waiver_authorizations', '--apply', stdout=out)
+
+        current_authorization.refresh_from_db()
+        expired_authorization.refresh_from_db()
+        no_waiver_authorization.refresh_from_db()
+        self.assertEqual(current_authorization.status, self.status_active)
+        self.assertEqual(expired_authorization.status, self.status_pending_waiver)
+        self.assertEqual(no_waiver_authorization.status, self.status_pending_waiver)
+        self.assertIn('Marked 1 authorization(s) Active.', out.getvalue())
+
+
 class AddAuthorizationSecurityTests(AdditionalCoverageBase):
     def test_non_authorization_officer_cannot_spoof_marshal_id(self):
         acting_user, acting_person = self.make_person('addauth_actor', 'AddAuth Actor')

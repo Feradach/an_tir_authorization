@@ -447,16 +447,7 @@ def is_kingdom_earl_marshal(user):
 
 def waiver_signed(user):
     """Checks if the user has signed a waiver."""
-    print("checking waiver inside the function")
-    waiver_signed = False
-    print("user: ", user)
-    print("user waiver expiration: ", user.waiver_expiration)
-    print("user membership expiration: ", user.membership_expiration)
-    if user.waiver_expiration and user.waiver_expiration > date.today():
-        waiver_signed = True
-    elif user.membership_expiration and user.membership_expiration > date.today():
-        waiver_signed = True
-    return waiver_signed
+    return bool(user.waiver_expiration and user.waiver_expiration > date.today())
 
 def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_fighter: Optional[User] = None):
     """Will need marshal, fighter, style.

@@ -2764,10 +2764,58 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.owner_user.waiver_expiration, new_expiration)
 
+    def test_account_update_roster_waiver_activates_pending_waiver_authorizations(self):
+        self.client.login(username=self.owner_user.username, password='StrongPass!123')
+        self.owner_user.waiver_expiration = None
+        self.owner_user.save(update_fields=['waiver_expiration'])
+        authorization = Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_weapon_armored,
+            status=self.status_pending_waiver,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=self.ao_person,
+        )
+        new_expiration = date.today() + relativedelta(years=2)
+        new_membership = '7337337340'
+        self.seed_membership_roster(
+            new_membership,
+            'Owner',
+            'User',
+            new_expiration,
+            has_society_waiver=True,
+        )
+        payload = self.account_update_payload(
+            self.owner_user,
+            self.owner_person,
+            membership=new_membership,
+            membership_expiration=new_expiration.isoformat(),
+            first_name='Owner',
+            last_name='User',
+        )
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            payload,
+            follow=True,
+        )
+
+        self.owner_user.refresh_from_db()
+        authorization.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.waiver_expiration, new_expiration)
+        self.assertEqual(authorization.status, self.status_active)
+
     def test_account_update_membership_does_not_extend_waiver_when_roster_waiver_not_yes(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
         self.owner_user.waiver_expiration = None
         self.owner_user.save(update_fields=['waiver_expiration'])
+        authorization = Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_weapon_armored,
+            status=self.status_pending_waiver,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=self.ao_person,
+        )
         new_expiration = date.today() + relativedelta(years=2)
         new_membership = '7447447447'
         self.seed_membership_roster(
@@ -2793,8 +2841,13 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.owner_user.refresh_from_db()
+        authorization.refresh_from_db()
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(self.owner_user.waiver_expiration)
+        self.assertEqual(authorization.status, self.status_pending_waiver)
+
+        account_response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
+        self.assertContains(account_response, reverse('sign_waiver', kwargs={'user_id': self.owner_user.id}))
 
     @override_settings(AUTHZ_TEST_FEATURES=True)
     def test_account_update_skips_roster_validation_in_test_mode(self):

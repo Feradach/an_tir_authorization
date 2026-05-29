@@ -15,6 +15,12 @@
 ### Removed
 
 
+## [1.1.2] - 2026-05-29
+### Fixed
+- Fixed a bug where pending waiver authorizations were not being cleared when the Membership information was entered.
+- Renewing an active, unexpired authorization no longer moves it into Kingdom Authorization Officer review when verification is enabled.
+
+
 ## [1.1.1] - 2026-05-28
 ### Added
 - Added a scrollable, zoomable FAQ flow chart with clickable object highlights showing how authorization statuses move through review.
@@ -25,7 +31,6 @@
 - Fixed legacy authorization recovery so selected people are matched by their account ID instead of re-checking name text from the batch row.
 - Fixed the fighter-page authorization basket so removed styles are no longer submitted.
 - Marshal authorizations now show as expired when required membership or background-check expiration dates are missing.
-- Renewing an active, unexpired authorization no longer moves it into Kingdom Authorization Officer review when verification is enabled.
 
 
 ## [1.1.0] - 2026-05-27

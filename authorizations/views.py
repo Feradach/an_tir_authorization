@@ -574,6 +574,8 @@ def _refresh_user_membership_expirations_from_roster(rows, imported_by, source_f
         user.updated_by = imported_by
         user.save()
         _record_membership_roster_waiver(user, roster_entry=roster_entry, recorded_by=imported_by)
+        if user.waiver_expiration and user.waiver_expiration > date.today():
+            _activate_pending_waiver_authorizations(user, updated_by=imported_by)
         updated_count += 1
 
         if hasattr(user, 'person') and user.person:
@@ -3494,33 +3496,43 @@ def _finalize_waiver_signed(request_user: User, target_user: User):
     return _apply_waiver_coverage(request_user, target_user)
 
 
-def _apply_waiver_coverage(request_user: User, target_user: User):
+def _activate_pending_waiver_authorizations(target_user: User, *, updated_by: Optional[User] = None):
     pending_qs = Authorization.objects.filter(person__user=target_user, status__name='Awaiting Waiver')
-    if pending_qs.exists():
-        max_exp = pending_qs.aggregate(latest=Max('expiration'))['latest']
-        activates_senior_ground_crew = pending_qs.filter(
+    if not pending_qs.exists():
+        return 0, None
+    max_exp = pending_qs.aggregate(latest=Max('expiration'))['latest']
+    activates_senior_ground_crew = pending_qs.filter(
+        style__discipline__name='Equestrian',
+        style__name__in=_SENIOR_GROUND_CREW_STYLES,
+    ).exists()
+    active_status = AuthorizationStatus.objects.get(name='Active')
+    update_values = {'status': active_status}
+    if updated_by:
+        update_values['updated_by'] = updated_by
+    activated_count = pending_qs.update(**update_values)
+    if activates_senior_ground_crew:
+        inactive_status = _get_or_create_status_by_name('Inactive')
+        Authorization.objects.filter(
+            person__user=target_user,
             style__discipline__name='Equestrian',
-            style__name__in=_SENIOR_GROUND_CREW_STYLES,
-        ).exists()
-        try:
-            active_status = AuthorizationStatus.objects.get(name='Active')
-        except AuthorizationStatus.DoesNotExist:
-            return False, 'System error: Active status not found.'
-        pending_qs.update(status=active_status)
-        if activates_senior_ground_crew:
-            inactive_status = _get_or_create_status_by_name('Inactive')
-            Authorization.objects.filter(
-                person__user=target_user,
-                style__discipline__name='Equestrian',
-                style__name__in=_JUNIOR_GROUND_CREW_STYLES,
-            ).update(status=inactive_status, updated_by=request_user)
-        target_user.waiver_expiration = max_exp
+            style__name__in=_JUNIOR_GROUND_CREW_STYLES,
+        ).update(status=inactive_status, updated_by=updated_by)
+    return activated_count, max_exp
+
+
+def _apply_waiver_coverage(request_user: User, target_user: User):
+    try:
+        activated_count, max_exp = _activate_pending_waiver_authorizations(target_user, updated_by=request_user)
+    except AuthorizationStatus.DoesNotExist:
+        return False, 'System error: Active status not found.'
+    if activated_count:
+        if max_exp and (not target_user.waiver_expiration or target_user.waiver_expiration < max_exp):
+            target_user.waiver_expiration = max_exp
         target_user.save()
         return True, 'Waiver signed and authorizations activated.'
-    else:
-        target_user.waiver_expiration = date.today() + relativedelta(years=1)
-        target_user.save()
-        return True, 'Waiver signed for one year.'
+    target_user.waiver_expiration = date.today() + relativedelta(years=1)
+    target_user.save()
+    return True, 'Waiver signed for one year.'
 
 
 ADULT_WAIVER_VERSION = 'adult-portal-2026-05'
@@ -6039,6 +6051,9 @@ def user_account(request, user_id):
 
             user.save()
             _record_membership_roster_waiver(user, recorded_by=request.user)
+            activated_waiver_count = 0
+            if user.waiver_expiration and user.waiver_expiration > date.today():
+                activated_waiver_count, _ = _activate_pending_waiver_authorizations(user, updated_by=request.user)
             if (
                 is_kingdom_authorization_officer(request.user)
                 and user.background_check_expiration
@@ -6077,6 +6092,8 @@ def user_account(request, user_id):
                 )
 
             messages.success(request, 'Your information has been updated successfully.')
+            if activated_waiver_count:
+                messages.success(request, 'Pending waiver authorizations have been activated.')
             return redirect('index')
         else:
             messages.error(request, 'Please correct the errors with the form.')
