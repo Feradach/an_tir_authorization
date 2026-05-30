@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from io import StringIO
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
@@ -33,7 +34,7 @@ from authorizations.models import (
 )
 from authorizations.permissions import validate_reject_authorization
 from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER, build_current_report_snapshot
-from authorizations.views import CreateAuthorizationForm, CreatePersonForm
+from authorizations.views import CreateAuthorizationForm, CreatePersonForm, _apply_profile_form_to_user_and_person
 from authorizations.changelog import unreleased_has_displayable_entries
 
 
@@ -212,6 +213,62 @@ class ActivatePendingWaiverAuthorizationsCommandTests(AdditionalCoverageBase):
         self.assertEqual(expired_authorization.status, self.status_pending_waiver)
         self.assertEqual(no_waiver_authorization.status, self.status_pending_waiver)
         self.assertIn('Marked 1 authorization(s) Active.', out.getvalue())
+
+
+class ProfileFormWaiverActivationTests(AdditionalCoverageBase):
+    def test_profile_update_roster_waiver_activates_pending_waiver_authorizations(self):
+        actor_user, _ = self.make_person('profile_waiver_actor', 'Profile Waiver Actor')
+        target_user, target_person = self.make_person(
+            'profile_waiver_target',
+            'Profile Waiver Target',
+            membership=None,
+            membership_expiration=None,
+            waiver_expiration=None,
+        )
+        authorization = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_pending_waiver,
+        )
+        membership_expiration = date.today() + relativedelta(years=2)
+        MembershipRosterEntry.objects.create(
+            membership_number='77997799',
+            first_name=target_user.first_name,
+            last_name=target_user.last_name,
+            membership_expiration=membership_expiration,
+            has_society_waiver=True,
+        )
+        profile_form = SimpleNamespace(cleaned_data={
+            'email': target_user.email,
+            'username': target_user.username,
+            'first_name': target_user.first_name,
+            'last_name': target_user.last_name,
+            'membership': '77997799',
+            'membership_expiration': membership_expiration,
+            'address': target_user.address,
+            'address2': target_user.address2,
+            'city': target_user.city,
+            'state_province': target_user.state_province,
+            'postal_code': target_user.postal_code,
+            'country': target_user.country,
+            'phone_number': target_user.phone_number,
+            'birthday': target_user.birthday,
+            'background_check_expiration': target_user.background_check_expiration,
+            'sca_name': target_person.sca_name,
+            'title': target_person.title,
+            'branch': target_person.branch,
+            'parent_id': target_person.parent,
+            'parent_sca_name': target_person.parent_sca_name,
+            'parent_first_name': target_person.parent_first_name,
+            'parent_last_name': target_person.parent_last_name,
+        })
+
+        _apply_profile_form_to_user_and_person(profile_form, target_user, target_person, actor_user)
+
+        target_user.refresh_from_db()
+        authorization.refresh_from_db()
+        self.assertEqual(target_user.waiver_expiration, membership_expiration)
+        self.assertEqual(authorization.status, self.status_active)
 
 
 class AddAuthorizationSecurityTests(AdditionalCoverageBase):

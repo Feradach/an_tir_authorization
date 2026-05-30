@@ -7095,6 +7095,9 @@ def _apply_profile_form_to_user_and_person(profile_form, user: User, person: Per
     user.background_check_expiration = cleaned.get('background_check_expiration')
     user.updated_by = acting_user
     user.save()
+    _record_membership_roster_waiver(user, recorded_by=acting_user)
+    if user.waiver_expiration and user.waiver_expiration > date.today():
+        _activate_pending_waiver_authorizations(user, updated_by=acting_user)
     if (
         user.background_check_expiration
         and user.background_check_expiration != previous_background_check_expiration
