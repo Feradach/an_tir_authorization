@@ -1029,12 +1029,13 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         self.assertFalse(ok)
         self.assertEqual(msg, 'You cannot concur with your own authorization.')
 
-    def test_regional_approval_requires_same_region_when_fighter_branch_is_region(self):
+    def test_regional_approval_allows_same_discipline_regional_marshal_from_other_region_when_fighter_branch_is_region(self):
         proposer_user, proposer = self.make_person('regional_proposer', 'Regional Proposer')
         approver_user, approver = self.make_person('regional_wrong_approver', 'Regional Wrong Approver')
         _, fighter = self.make_person('regional_target', 'Regional Target', branch=self.region_summits)
 
         self.appoint(approver, self.region_tir_righ, self.discipline_armored)
+        self.grant_authorization(approver, self.style_sm_armored)
         needs_regional = self.grant_authorization(
             fighter,
             self.style_sm_armored,
@@ -1050,15 +1051,18 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         ok, msg = approve_authorization(request)
 
-        self.assertFalse(ok)
-        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+        needs_regional.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Combat Senior Marshal authorization approved!')
+        self.assertEqual(needs_regional.status, self.status_active)
 
-    def test_regional_approval_requires_same_region_when_fighter_branch_is_local_branch(self):
+    def test_regional_approval_allows_same_discipline_regional_marshal_from_other_region_when_fighter_branch_is_local_branch(self):
         proposer_user, proposer = self.make_person('regional_local_proposer', 'Regional Local Proposer')
         approver_user, approver = self.make_person('regional_local_wrong', 'Regional Local Wrong')
         _, fighter = self.make_person('regional_local_target', 'Regional Local Target', branch=self.branch_gd)
 
         self.appoint(approver, self.region_tir_righ, self.discipline_armored)
+        self.grant_authorization(approver, self.style_sm_armored)
         needs_regional = self.grant_authorization(
             fighter,
             self.style_sm_armored,
@@ -1074,8 +1078,10 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
 
         ok, msg = approve_authorization(request)
 
-        self.assertFalse(ok)
-        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+        needs_regional.refresh_from_db()
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Armored Combat Senior Marshal authorization approved!')
+        self.assertEqual(needs_regional.status, self.status_active)
 
     def test_regional_earl_marshal_can_do_regional_confirmation_any_discipline_in_region(self):
         proposer_user, proposer = self.make_person('regional_earl_prop', 'Regional Earl Prop')
@@ -1126,7 +1132,10 @@ class ApproveAuthorizationTests(AuthorizationTestBase):
         ok, msg = approve_authorization(request)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'You must be a regional marshal in the same region as the fighter to approve this authorization.')
+        self.assertEqual(
+            msg,
+            'You must be a regional marshal in this discipline, or a regional Earl Marshal in the fighter region, to approve this authorization.',
+        )
 
     def test_kingdom_earl_marshal_can_do_regional_confirmation_any_region(self):
         proposer_user, proposer = self.make_person('kingdom_earl_prop', 'Kingdom Earl Prop')

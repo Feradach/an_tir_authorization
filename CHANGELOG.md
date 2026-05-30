@@ -4,12 +4,14 @@
 
 
 ### Added
-
+- Added a form for requestiong new features.
 
 ### Changed
 
 
 ### Fixed
+- Regional marshals can now approve senior marshal promotions in their discipline even when the fighter is from another region.
+- Fixed bug where submitting multiple authorization styles at once would sometimes skip some of them.
 
 
 ### Removed

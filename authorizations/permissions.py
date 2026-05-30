@@ -350,6 +350,27 @@ def is_regional_marshal(user, discipline=None, region=None):
 
     return _has_active_office(query)
 
+
+def _can_regionally_approve_authorization(user, discipline, fighter_region=None):
+    """Regional-step approval may be done by any regional marshal in the discipline."""
+    if is_kingdom_earl_marshal(user):
+        return True
+
+    if is_kingdom_marshal(user, discipline):
+        return True
+
+    regional_discipline_office = BranchMarshal.objects.filter(
+        person__user=user,
+        branch__in=Branch.objects.regions(),
+        discipline__name=discipline,
+        end_date__gte=date.today(),
+    )
+    if _has_active_office(regional_discipline_office):
+        return True
+
+    return bool(fighter_region and is_regional_marshal(user, 'Earl Marshal', fighter_region))
+
+
 def is_kingdom_marshal(user, discipline=None):
     """
     Checks if the user is a current Kingdom Marshal for the given discipline or is the Earl Marshal.
@@ -1168,19 +1189,18 @@ def approve_authorization(request):
                     return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization pending background check.'
                 return True, f'{authorization.style.discipline.name} {authorization.style.name} authorization approved!'
 
-    # Rule 5: If the authorization is out for regional approval, you need to be the correct regional marshal to approve it (exception that Armored Combat can approve Missile Combat).
+    # Rule 5: If the authorization is out for regional approval, you need to be a regional marshal
+    # in the discipline. Regional Earl Marshals retain same-region approval authority.
     elif authorization.status.name == 'Awaiting Regional Marshal Approval':
-        if not auth_region:
-            _log_unresolved_authorization_region('regional approval', authorization, request_user)
-            return False, 'Could not determine the fighter region for regional approval.'
-        if not is_regional_marshal(marshal, region=auth_region):
-            return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
         if authorization.style.discipline.name == 'Missile Combat':
-            if not is_regional_marshal(marshal, 'Missile Combat', auth_region) and not is_regional_marshal(marshal, 'Armored Combat', auth_region):
+            if (
+                not _can_regionally_approve_authorization(marshal, 'Missile Combat', auth_region)
+                and not _can_regionally_approve_authorization(marshal, 'Armored Combat', auth_region)
+            ):
                 return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
         else:
-            if not is_regional_marshal(marshal, discipline, auth_region):
-                return False, 'You must be a regional marshal in this discipline to approve this authorization.'
+            if not _can_regionally_approve_authorization(marshal, discipline, auth_region):
+                return False, 'You must be a regional marshal in this discipline, or a regional Earl Marshal in the fighter region, to approve this authorization.'
         # Rule 5: If the regional marshal approves a senior marshal, it becomes active (or pending waiver).
         if sign_off_required or authorization.style.discipline.name == 'Equestrian':
             authorization.status = kingdom_review_status_for(authorization)
@@ -1343,17 +1363,15 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
         return True, 'OK'
 
     if authorization.status.name == 'Awaiting Regional Marshal Approval':
-        if not auth_region:
-            _log_unresolved_authorization_region('regional approval validation', authorization, request_user)
-            return False, 'Could not determine the fighter region for regional approval.'
-        if not is_regional_marshal(marshal, region=auth_region):
-            return False, 'You must be a regional marshal in the same region as the fighter to approve this authorization.'
         if authorization.style.discipline.name == 'Missile Combat':
-            if not is_regional_marshal(marshal, 'Missile Combat', auth_region) and not is_regional_marshal(marshal, 'Armored Combat', auth_region):
+            if (
+                not _can_regionally_approve_authorization(marshal, 'Missile Combat', auth_region)
+                and not _can_regionally_approve_authorization(marshal, 'Armored Combat', auth_region)
+            ):
                 return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
         else:
-            if not is_regional_marshal(marshal, discipline, auth_region):
-                return False, 'You must be a regional marshal in this discipline to approve this authorization.'
+            if not _can_regionally_approve_authorization(marshal, discipline, auth_region):
+                return False, 'You must be a regional marshal in this discipline, or a regional Earl Marshal in the fighter region, to approve this authorization.'
         if sign_off_required or authorization.style.discipline.name == 'Equestrian':
             return True, 'OK'
         if authorization.style.name in ['Junior Marshal', 'Senior Marshal']:

@@ -5588,7 +5588,6 @@ def add_authorization(request, person_id):
                                     deactivate_replaced_youth_authorizations(update_auth)
                                 if update_auth.style.name in ['Junior Marshal', 'Senior Marshal']:
                                     record_note(update_auth, 'marshal_proposed')
-                                selected_styles.remove(style_id)
 
                             else:
                                 style = WeaponStyle.objects.get(id=style_id)

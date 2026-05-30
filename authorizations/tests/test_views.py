@@ -5422,6 +5422,51 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         )
         self.assertEqual(created_auth.marshal, ct_marshal_person)
 
+    def test_basket_processes_new_style_after_existing_style_renewal(self):
+        style_two_handed = WeaponStyle.objects.create(
+            name='Two-Handed',
+            discipline=self.discipline_armored,
+        )
+        self.grant_authorization(
+            self.candidate_armored_person,
+            self.style_weapon_armored,
+            status=self.status_active,
+            marshal=self.kem_person,
+        )
+        self.candidate_armored_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_armored_user.save()
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [
+                    str(self.style_weapon_armored.id),
+                    str(style_two_handed.id),
+                ],
+                'marshal_id': str(self.kem_user.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            Authorization.objects.filter(
+                person=self.candidate_armored_person,
+                style=self.style_weapon_armored,
+                status=self.status_active,
+            ).exists()
+        )
+        self.assertTrue(
+            Authorization.objects.filter(
+                person=self.candidate_armored_person,
+                style=style_two_handed,
+                status=self.status_active,
+            ).exists()
+        )
+
     def test_kao_cannot_be_appointed_to_second_regional_office(self):
         self.client.login(username=self.kao_user.username, password='StrongPass!123')
 
@@ -5850,6 +5895,46 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         pending = response.context['pending_authorization_list']['Armored Combat']
         self.assertFalse(pending['can_reject'])
+
+    def test_out_of_region_regional_marshal_gets_approve_button_for_needs_regional_same_discipline(self):
+        regional_user, regional_person = self.make_person(
+            'office_out_region_armored',
+            'Office Out Region Armored',
+            branch=self.branch_lg,
+        )
+        BranchMarshal.objects.create(
+            person=regional_person,
+            branch=self.region_tir_righ,
+            discipline=self.discipline_armored,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=regional_person,
+            style=self.style_sm_armored,
+            status=self.status_active,
+            marshal=regional_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        target_user, target_person = self.make_person(
+            'office_out_region_target',
+            'Office Out Region Target',
+            branch=self.branch_gd,
+        )
+        Authorization.objects.create(
+            person=target_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=regional_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': target_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        pending = response.context['pending_authorization_list']['Armored Combat']
+        self.assertTrue(pending['can_approve'])
 
     def test_kingdom_discipline_marshal_can_end_lower_same_discipline_office(self):
         appointment = BranchMarshal.objects.create(
