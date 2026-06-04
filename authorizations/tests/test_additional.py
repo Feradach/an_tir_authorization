@@ -1,6 +1,7 @@
 
 from datetime import date, timedelta
 from io import StringIO
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -2638,7 +2639,8 @@ class ReleaseReadinessTests(TestCase):
                     EMAIL_HOST_PASSWORD='password',
                 ),
             ):
-                call_command('check_release_ready', stdout=output)
+                with patch.dict(os.environ, {'GMAIL_TOKEN_FILE': ''}):
+                    call_command('check_release_ready', stdout=output)
 
         self.assertIn('Warning: GMAIL_TOKEN_FILE is not set', output.getvalue())
         self.assertIn('Release readiness check passed.', output.getvalue())
@@ -2671,9 +2673,38 @@ class ReleaseReadinessTests(TestCase):
                     EMAIL_HOST_PASSWORD='',
                 ),
             ):
-                call_command('check_release_ready', stdout=output)
+                with patch.dict(
+                    os.environ,
+                    {'EMAIL_HOST': '', 'EMAIL_HOST_USER': '', 'EMAIL_HOST_PASSWORD': ''},
+                ):
+                    call_command('check_release_ready', stdout=output)
 
         self.assertIn('Warning: EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD not set', output.getvalue())
+        self.assertIn('Release readiness check passed.', output.getvalue())
+
+    @patch.dict(
+        os.environ,
+        {
+            'EMAIL_HOST': 'smtp.gmail.com',
+            'EMAIL_HOST_USER': 'antir.authorization.database@gmail.com',
+            'EMAIL_HOST_PASSWORD': 'app-password',
+        },
+    )
+    def test_release_check_does_not_warn_for_unused_smtp_credentials_when_env_has_values(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            output = StringIO()
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(
+                    EMAIL_HOST='',
+                    EMAIL_HOST_USER='',
+                    EMAIL_HOST_PASSWORD='',
+                ),
+            ):
+                call_command('check_release_ready', stdout=output)
+
+        self.assertNotIn('EMAIL_HOST_USER, EMAIL_HOST_PASSWORD not set', output.getvalue())
         self.assertIn('Release readiness check passed.', output.getvalue())
 
     def test_release_check_blocks_sqlite_database_in_production(self):

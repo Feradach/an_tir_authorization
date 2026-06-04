@@ -1,3 +1,4 @@
+import os
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -101,7 +102,7 @@ class Command(BaseCommand):
 
         if email_delivery_mode == 'gmail' and not getattr(settings, 'GMAIL_TOKEN_FILE', ''):
             errors.append('GMAIL_TOKEN_FILE must be set when EMAIL_DELIVERY_MODE=gmail.')
-        elif email_delivery_mode != 'gmail' and not getattr(settings, 'GMAIL_TOKEN_FILE', ''):
+        elif email_delivery_mode != 'gmail' and not os.environ.get('GMAIL_TOKEN_FILE'):
             warnings.append('GMAIL_TOKEN_FILE is not set. This is okay unless EMAIL_DELIVERY_MODE is changed to gmail.')
 
         if email_delivery_mode == 'smtp':
@@ -115,12 +116,12 @@ class Command(BaseCommand):
         elif email_delivery_mode != 'smtp':
             missing_smtp_settings = [
                 env_name
-                for setting_name, env_name in (
-                    ('EMAIL_HOST', 'EMAIL_HOST'),
-                    ('EMAIL_HOST_USER', 'EMAIL_HOST_USER'),
-                    ('EMAIL_HOST_PASSWORD', 'EMAIL_HOST_PASSWORD'),
+                for env_name in (
+                    'EMAIL_HOST',
+                    'EMAIL_HOST_USER',
+                    'EMAIL_HOST_PASSWORD',
                 )
-                if not getattr(settings, setting_name, '')
+                if not os.environ.get(env_name)
             ]
             if missing_smtp_settings:
                 warnings.append(
