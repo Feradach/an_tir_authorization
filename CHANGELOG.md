@@ -4,20 +4,27 @@
 
 
 ### Added
-- Added a form for requestiong new features.
-- Added seneschal roles.
-- Added a Kingdom Seneschal role with the ability to upload mmebership documents and read notes.
+
 
 ### Changed
 
 
 ### Fixed
-- Regional marshals can now approve senior marshal promotions in their discipline even when the fighter is from another region.
-- Fixed bug where submitting multiple authorization styles at once would sometimes skip some of them.
-- Legacy authorization recovery now inactivates same-discipline Junior Marshal authorizations when adding a Senior Marshal, and blocks adding Junior Marshal when an active Senior Marshal already exists.
 
 
 ### Removed
+
+
+## [1.1.3] - 2026-06-04
+### Added
+- Added a form for requestiong new features.
+- Added seneschal roles.
+- Added a Kingdom Seneschal role with the ability to upload mmebership documents and read notes.
+
+### Fixed
+- Regional marshals can now approve senior marshal promotions in their discipline even when the fighter is from another region.
+- Fixed bug where submitting multiple authorization styles at once would sometimes skip some of them.
+- Legacy authorization recovery now inactivates same-discipline Junior Marshal authorizations when adding a Senior Marshal, and blocks adding Junior Marshal when an active Senior Marshal already exists.
 
 
 ## [1.1.2] - 2026-05-29
