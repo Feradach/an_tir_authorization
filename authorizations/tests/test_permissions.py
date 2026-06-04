@@ -29,6 +29,7 @@ from authorizations.permissions import (
     is_kingdom_authorization_officer,
     is_kingdom_equestrian_authorization_officer,
     is_kingdom_marshal,
+    is_kingdom_seneschal,
     is_regional_marshal,
     is_senior_marshal,
     membership_is_current,
@@ -54,8 +55,14 @@ class AuthorizationTestBase(TestCase):
         cls.branch_an_tir = Branch.objects.create(name='An Tir', type='Kingdom')
         cls.region_summits = Branch.objects.create(name='Summits', type='Region', region=cls.branch_an_tir)
         cls.region_tir_righ = Branch.objects.create(name='Tir Righ', type='Region', region=cls.branch_an_tir)
+        cls.principality_summits = Branch.objects.create(name='Principality of the Summits', type='Principality', region=cls.branch_an_tir)
+        cls.principality_tir_righ = Branch.objects.create(name='Principality of Tir Righ', type='Principality', region=cls.branch_an_tir)
         cls.branch_gd = Branch.objects.create(name='Barony of Glyn Dwfn', type='Barony', region=cls.region_summits)
         cls.branch_lg = Branch.objects.create(name='Barony of Lions Gate', type='Barony', region=cls.region_tir_righ)
+        cls.branch_summits_shire = Branch.objects.create(name='Shire of Test Summits', type='Shire', region=cls.principality_summits)
+        cls.branch_tir_righ_shire = Branch.objects.create(name='Shire of Test Tir Righ', type='Shire', region=cls.principality_tir_righ)
+        cls.branch_inlands = Branch.objects.create(name='Inlands', type='Region', region=cls.branch_an_tir)
+        cls.branch_other = Branch.objects.create(name='Special Other', type='Other', region=cls.branch_an_tir)
 
         # Disciplines
         cls.discipline_armored = Discipline.objects.create(name='Armored Combat')
@@ -66,6 +73,7 @@ class AuthorizationTestBase(TestCase):
         cls.discipline_siege = Discipline.objects.create(name='Siege')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
         cls.discipline_equestrian_auth_officer = Discipline.objects.create(name='Equestrian Authorization Officer')
+        cls.discipline_seneschal, _ = Discipline.objects.get_or_create(name='Seneschal')
         cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
 
         # Styles
@@ -481,6 +489,14 @@ class MarshalRoleCheckTests(AuthorizationTestBase):
 
         self.assertFalse(is_kingdom_authorization_officer(user))
         self.assertTrue(is_kingdom_equestrian_authorization_officer(user))
+
+    def test_kingdom_seneschal_is_not_kingdom_marshal(self):
+        user, person = self.make_person('kingdom_seneschal', 'Kingdom Seneschal')
+        self.appoint(person, self.branch_an_tir, self.discipline_seneschal)
+
+        self.assertTrue(is_kingdom_seneschal(user))
+        self.assertFalse(is_kingdom_marshal(user))
+        self.assertFalse(is_kingdom_authorization_officer(user))
 
     def test_earl_marshal_office_does_not_grant_senior_marshal_status(self):
         user, marshal = self.make_person('earl_no_sm', 'Earl No SM')
@@ -1386,6 +1402,228 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
             ).exists()
         )
 
+    def test_authorization_officer_can_appoint_kingdom_seneschal_without_marshal_authorization(self):
+        ao_user, ao_person = self.make_person('appoint_ao_seneschal', 'Appoint AO Seneschal')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        _, candidate = self.make_person('appoint_seneschal_candidate', 'Appoint Seneschal Candidate')
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.branch_an_tir.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Kingdom Seneschal appointed.')
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=candidate,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_seneschal,
+            ).exists()
+        )
+
+    def test_admin_can_appoint_principality_seneschal_without_marshal_authorization(self):
+        admin_user, _ = self.make_person('appoint_admin_seneschal', 'Appoint Admin Seneschal')
+        admin_user.is_staff = True
+        admin_user.save()
+        _, candidate = self.make_person('appoint_principality_seneschal', 'Appoint Principality Seneschal')
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.principality_summits.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = admin_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Principality of the Summits Seneschal appointed.')
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=candidate,
+                branch=self.principality_summits,
+                discipline=self.discipline_seneschal,
+            ).exists()
+        )
+
+    def test_kingdom_seneschal_can_appoint_principality_and_local_seneschals(self):
+        kingdom_user, kingdom_person = self.make_person('appoint_kingdom_seneschal', 'Appoint Kingdom Seneschal')
+        self.appoint(kingdom_person, self.branch_an_tir, self.discipline_seneschal)
+        _, principality_candidate = self.make_person('appoint_principality_by_ks', 'Appoint Principality By KS')
+        _, local_candidate = self.make_person('appoint_local_by_ks', 'Appoint Local By KS')
+
+        principality_request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': principality_candidate.sca_name,
+                'branch': self.principality_tir_righ.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        principality_request.user = kingdom_user
+        local_request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': local_candidate.sca_name,
+                'branch': self.branch_summits_shire.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        local_request.user = kingdom_user
+
+        principality_ok, _ = appoint_branch_marshal(principality_request)
+        local_ok, _ = appoint_branch_marshal(local_request)
+
+        self.assertTrue(principality_ok)
+        self.assertTrue(local_ok)
+
+    def test_principality_seneschal_can_appoint_local_seneschal_in_own_principality_only(self):
+        principality_user, principality_person = self.make_person(
+            'appoint_principality_seneschal_scope',
+            'Appoint Principality Scope',
+        )
+        self.appoint(principality_person, self.principality_summits, self.discipline_seneschal)
+        _, own_candidate = self.make_person('appoint_own_local_seneschal', 'Appoint Own Local Seneschal')
+        _, other_candidate = self.make_person('appoint_other_local_seneschal', 'Appoint Other Local Seneschal')
+
+        own_request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': own_candidate.sca_name,
+                'branch': self.branch_summits_shire.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        own_request.user = principality_user
+        other_request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': other_candidate.sca_name,
+                'branch': self.branch_tir_righ_shire.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        other_request.user = principality_user
+
+        own_ok, _ = appoint_branch_marshal(own_request)
+        other_ok, other_msg = appoint_branch_marshal(other_request)
+
+        self.assertTrue(own_ok)
+        self.assertFalse(other_ok)
+        self.assertEqual(other_msg, 'You do not have authority to appoint this marshal office.')
+
+    def test_principality_seneschal_cannot_appoint_principality_seneschal(self):
+        principality_user, principality_person = self.make_person(
+            'appoint_principality_seneschal_peer',
+            'Appoint Principality Peer',
+        )
+        self.appoint(principality_person, self.principality_summits, self.discipline_seneschal)
+        _, candidate = self.make_person('appoint_principality_peer_candidate', 'Appoint Principality Peer Candidate')
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.principality_tir_righ.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = principality_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You do not have authority to appoint this marshal office.')
+
+    def test_region_and_other_branches_cannot_have_seneschals(self):
+        admin_user, _ = self.make_person('appoint_admin_invalid_seneschal', 'Appoint Admin Invalid')
+        admin_user.is_staff = True
+        admin_user.save()
+        _, region_candidate = self.make_person('appoint_region_seneschal', 'Appoint Region Seneschal')
+        _, other_candidate = self.make_person('appoint_other_seneschal', 'Appoint Other Seneschal')
+
+        region_request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': region_candidate.sca_name,
+                'branch': self.branch_inlands.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        region_request.user = admin_user
+        other_request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': other_candidate.sca_name,
+                'branch': self.branch_other.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        other_request.user = admin_user
+
+        region_ok, region_msg = appoint_branch_marshal(region_request)
+        other_ok, other_msg = appoint_branch_marshal(other_request)
+
+        self.assertFalse(region_ok)
+        self.assertFalse(other_ok)
+        self.assertEqual(
+            region_msg,
+            'Seneschal offices may only be appointed for kingdom, principality, or local branches.',
+        )
+        self.assertEqual(
+            other_msg,
+            'Seneschal offices may only be appointed for kingdom, principality, or local branches.',
+        )
+
+    def test_kingdom_earl_marshal_cannot_appoint_kingdom_seneschal(self):
+        earl_user, earl_person = self.make_person('appoint_earl_seneschal', 'Appoint Earl Seneschal')
+        self.grant_authorization(earl_person, self.style_sm_armored)
+        self.appoint(earl_person, self.branch_an_tir, self.discipline_earl_marshal)
+        _, candidate = self.make_person('appoint_seneschal_candidate_blocked', 'Appoint Seneschal Blocked')
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person': candidate.sca_name,
+                'branch': self.branch_an_tir.name,
+                'discipline': self.discipline_seneschal.name,
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = earl_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'You do not have authority to appoint this marshal office.')
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=candidate,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_seneschal,
+            ).exists()
+        )
+
     def test_regional_branch_marshal_requires_senior_marshal(self):
         ao_user, ao_person = self.make_person('appoint_ao_user_regional', 'Appoint AO User Regional')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
@@ -1559,3 +1797,28 @@ class DeactivateSupersededJuniorMarshalsCommandTests(AuthorizationTestBase):
         self.assertEqual(senior_auth.status, self.status_active)
         self.assertEqual(unrelated_junior.status, self.status_active)
         self.assertIn('Marked 1 Junior Marshal authorization', out.getvalue())
+
+    def test_apply_ignores_junior_when_senior_marshal_is_not_fully_active(self):
+        pending_statuses = [
+            self.status_pending,
+            self.status_regional,
+            self.status_kingdom,
+        ]
+        junior_authorizations = []
+        for index, status in enumerate(pending_statuses, start=1):
+            _, fighter = self.make_person(f'pending_senior_{index}', f'Pending Senior {index}')
+            junior_authorizations.append(
+                self.grant_authorization(fighter, self.style_jm_armored, status=self.status_active)
+            )
+            self.grant_authorization(fighter, self.style_sm_armored, status=status)
+        out = StringIO()
+
+        call_command('deactivate_superseded_junior_marshals', '--apply', stdout=out)
+
+        for junior_auth in junior_authorizations:
+            junior_auth.refresh_from_db()
+            self.assertEqual(junior_auth.status, self.status_active)
+        self.assertIn(
+            'No active Junior Marshal authorizations are superseded by active Senior Marshal authorizations.',
+            out.getvalue(),
+        )

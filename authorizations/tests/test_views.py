@@ -79,6 +79,7 @@ class ViewTestBase(TestCase):
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
         cls.discipline_equestrian_auth_officer = Discipline.objects.create(name='Equestrian Authorization Officer')
         cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
+        cls.discipline_seneschal, _ = Discipline.objects.get_or_create(name='Seneschal')
 
         cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
         cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
@@ -524,6 +525,22 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Upload Society Membership CSV or Excel File')
         self.assertContains(response, 'name="membership_csv"')
         self.assertContains(response, 'Last upload:')
+
+    def test_index_kingdom_seneschal_sees_membership_upload_controls(self):
+        seneschal_user, seneschal_person = self.make_person(
+            'index_membership_seneschal_view',
+            'Index Membership Seneschal View',
+        )
+        self.appoint(seneschal_person, self.branch_an_tir, self.discipline_seneschal)
+        self.client.login(username=seneschal_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Upload Society Membership CSV or Excel File')
+        self.assertContains(response, 'name="membership_csv"')
+        self.assertContains(response, 'Last upload:')
+        self.assertNotContains(response, 'Require Kingdom Authorization Officer Verification')
 
     def test_index_senior_marshal_sees_create_account_link_without_merge_accounts(self):
         marshal_user, marshal_person = self.make_person('index_senior_marshal', 'Index Senior Marshal')
@@ -3037,6 +3054,34 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(metadata.row_count, 2)
         self.assertEqual(metadata.source_filename, 'members.csv')
 
+    def test_kingdom_seneschal_can_upload_membership_roster(self):
+        seneschal_user, seneschal_person = self.make_person(
+            'membership_roster_seneschal',
+            'Membership Roster Seneschal',
+        )
+        self.appoint(seneschal_person, self.branch_an_tir, self.discipline_seneschal)
+        self.client.login(username=seneschal_user.username, password='StrongPass!123')
+        upload = SimpleUploadedFile(
+            'members.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date\n'
+                '222222,Fresh,Member,2/2/2031\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('index')},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(MembershipRosterEntry.objects.filter(membership_number='222222').exists())
+        metadata = MembershipRosterImport.objects.get(pk=1)
+        self.assertEqual(metadata.row_count, 1)
+        self.assertEqual(metadata.imported_by, seneschal_user)
+
     def test_ao_upload_membership_roster_extends_matching_user_expiration_and_records_note(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
         self.owner_user.membership = '222222'
@@ -3803,6 +3848,66 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIsNone(entry.concurring_officer)
 
     @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_senior_marshal_deactivates_same_discipline_junior_marshal(self):
+        junior_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_jm_armored,
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        junior_authorization.refresh_from_db()
+        self.assertEqual(junior_authorization.status.name, 'Inactive')
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
+    def test_legacy_recovery_refuses_junior_marshal_when_senior_marshal_is_active(self):
+        self.grant_authorization(
+            self.owner_person,
+            self.style_sm_armored,
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('legacy_authorization_recovery'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'already has an active Senior Marshal authorization in Armored Combat',
+        )
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_jm_armored).exists())
+
+    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_resolves_selected_marshal_by_id_before_names(self):
         self.client.force_login(self.ao_user)
         marshal_user, marshal_person = self.make_person(
@@ -4383,6 +4488,22 @@ class SupportingDocumentsViewTests(ViewTestBase):
             sca_name='Docs Earl Marshal',
             branch=cls.branch_gd,
         )
+        cls.seneschal_user = User.objects.create_user(
+            username='docs_seneschal',
+            password='StrongPass!123',
+            email='docs_seneschal@example.com',
+            first_name='Docs',
+            last_name='Seneschal',
+            membership='9001000006',
+            membership_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.seneschal_person = Person.objects.create(
+            user=cls.seneschal_user,
+            sca_name='Docs Seneschal',
+            branch=cls.branch_gd,
+        )
 
         cls.viewer_user = User.objects.create_user(
             username='docs_viewer',
@@ -4436,6 +4557,13 @@ class SupportingDocumentsViewTests(ViewTestBase):
             person=cls.earl_person,
             branch=cls.branch_an_tir,
             discipline=cls.discipline_earl_marshal,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + relativedelta(years=1),
+        )
+        BranchMarshal.objects.create(
+            person=cls.seneschal_person,
+            branch=cls.branch_an_tir,
+            discipline=cls.discipline_seneschal,
             start_date=date.today() - timedelta(days=1),
             end_date=date.today() + relativedelta(years=1),
         )
@@ -4557,6 +4685,79 @@ class SupportingDocumentsViewTests(ViewTestBase):
             response,
             reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
         )
+
+    def test_kingdom_seneschal_sees_all_documents(self):
+        self.client.login(username=self.seneschal_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('supporting_documents'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
+        )
+        self.assertContains(
+            response,
+            reverse('supporting_document_file', kwargs={'document_id': self.bg_document.id}),
+        )
+        self.assertContains(response, 'id="id_bg_person_id"')
+
+    def test_kingdom_seneschal_can_upload_background_check_for_fighter(self):
+        self.client.login(username=self.seneschal_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('supporting_documents'),
+            {
+                'action': 'upload_supporting_document',
+                'document_type': SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                'bg_person_id': str(self.fighter_person.user_id),
+                'document_file': SimpleUploadedFile(
+                    'seneschal-bg.pdf',
+                    b'seneschal-bg-content',
+                    content_type='application/pdf',
+                ),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            any(
+                f'Background check proof uploaded for {self.fighter_person.sca_name}.' in message
+                for message in self.messages_for(response)
+            )
+        )
+        uploaded = SupportingDocument.objects.filter(uploaded_by=self.seneschal_user).latest('uploaded_at')
+        self.assertEqual(uploaded.document_type, SupportingDocument.DocumentType.BACKGROUND_CHECK)
+        self.assertTrue(
+            SupportingDocumentPerson.objects.filter(
+                document=uploaded,
+                person=self.fighter_person,
+            ).exists()
+        )
+
+    def test_kingdom_seneschal_can_read_but_not_write_fighter_notes(self):
+        UserNote.objects.create(
+            person=self.fighter_person,
+            created_by=self.kao_user,
+            note_type='officer_note',
+            note='Officer-only fighter note.',
+        )
+        AuthorizationNote.objects.create(
+            authorization=self.eq_pending_auth,
+            created_by=self.kao_user,
+            action='marshal_rejected',
+            office='Kingdom Authorization Officer',
+            note='Kingdom review action note.',
+        )
+        self.client.login(username=self.seneschal_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.fighter_person.user_id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Officer-only fighter note.')
+        self.assertContains(response, 'Kingdom review action note.')
+        self.assertNotContains(response, 'Update Comments')
 
     def test_kao_can_open_supporting_document_file(self):
         self.client.login(username=self.kao_user.username, password='StrongPass!123')

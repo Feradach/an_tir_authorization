@@ -15,25 +15,41 @@ import sys
 import atexit
 import shutil
 import tempfile
+from email.utils import getaddresses
 from pathlib import Path
 from dotenv import load_dotenv
+import pymysql
 
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+load_dotenv(Path(__file__).with_name("sql_details.env"))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'default-development-key')
-DEBUG = True
-ALLOWED_HOSTS = []
-
-# Feature flags (default off unless overridden)
 def _env_truthy(name: str, default: str = '0') -> bool:
     return os.environ.get(name, default).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _env_list(name: str, default: str = '') -> list[str]:
+    return [value.strip() for value in os.environ.get(name, default).split(',') if value.strip()]
+
+
+def _env_email_addresses(name: str) -> list[tuple[str, str]]:
+    return [(display_name, email) for display_name, email in getaddresses(_env_list(name)) if email]
+
+
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'default-development-key')
+DEBUG = _env_truthy('DJANGO_DEBUG', 'True')
+ALLOWED_HOSTS = _env_list('DJANGO_ALLOWED_HOSTS')
+CSRF_TRUSTED_ORIGINS = _env_list('CSRF_TRUSTED_ORIGINS')
+SITE_URL = os.environ.get('SITE_URL', 'http://127.0.0.1:8000')
+ADMINS = _env_email_addresses('DJANGO_ADMIN_EMAILS')
+MANAGERS = ADMINS
 
 # Gate test-only behavior (e.g., public register, test sections)
 AUTHZ_TEST_FEATURES = _env_truthy('AUTHZ_TEST_FEATURES', '0')
@@ -46,8 +62,34 @@ AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT = _env_truthy('AUTHZ_ENABLE_LEGACY_AUTH
 RELEASE_ENV = os.environ.get('RELEASE_ENV', '').strip().lower()
 
 # For sending login emails
-EMAIL_BACKEND = 'django.core.mail.backends.filebased.EmailBackend'
-EMAIL_FILE_PATH = BASE_DIR /'tmp/app-emails'
+EMAIL_DELIVERY_MODE = os.environ.get('EMAIL_DELIVERY_MODE', 'file').strip().lower()
+if EMAIL_DELIVERY_MODE == 'file':
+    EMAIL_BACKEND = 'django.core.mail.backends.filebased.EmailBackend'
+elif EMAIL_DELIVERY_MODE == 'gmail':
+    EMAIL_BACKEND = 'authorizations.email_backends.GmailAPIBackend'
+elif EMAIL_DELIVERY_MODE == 'smtp':
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+else:
+    raise RuntimeError('EMAIL_DELIVERY_MODE must be one of: file, gmail, smtp.')
+
+EMAIL_FILE_PATH = os.environ.get('EMAIL_FILE_PATH') or str(Path.home() / 'mail_outbox')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', '')
+SERVER_EMAIL = os.environ.get('SERVER_EMAIL') or DEFAULT_FROM_EMAIL
+if EMAIL_BACKEND != 'django.core.mail.backends.filebased.EmailBackend' and not DEFAULT_FROM_EMAIL:
+    raise RuntimeError('DEFAULT_FROM_EMAIL must be set when production email sending is enabled.')
+
+if EMAIL_BACKEND == 'authorizations.email_backends.GmailAPIBackend':
+    GMAIL_TOKEN_FILE = os.environ.get('GMAIL_TOKEN_FILE')
+    if not GMAIL_TOKEN_FILE:
+        raise RuntimeError('GMAIL_TOKEN_FILE must be set when using the Gmail API email backend.')
+elif EMAIL_BACKEND == 'django.core.mail.backends.smtp.EmailBackend':
+    EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.gmail.com')
+    EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
+    EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
+    EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+    EMAIL_USE_TLS = _env_truthy('EMAIL_USE_TLS', 'True')
+    EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '30'))
+    DEFAULT_FROM_EMAIL = DEFAULT_FROM_EMAIL or f'Antir Database <{EMAIL_HOST_USER}>'
 
 #Custom user model
 AUTH_USER_MODEL = 'authorizations.User'
@@ -74,6 +116,8 @@ MIDDLEWARE = [
     'authorizations.middleware.MaintenanceLockMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+if _env_truthy('USE_WHITENOISE', 'False'):
+    MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
 ROOT_URLCONF = 'An_Tir_Authorization.urls'
 
@@ -98,20 +142,38 @@ TEMPLATES = [
 WSGI_APPLICATION = 'An_Tir_Authorization.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
+DB_ENGINE = os.environ.get('DB_ENGINE') or 'django.db.backends.sqlite3'
+if DB_ENGINE == 'django.db.backends.mysql':
+    pymysql.install_as_MySQLdb()
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': DB_ENGINE,
+        'NAME': os.environ.get('DB_NAME', str(BASE_DIR / 'db.sqlite3')),
+        'USER': os.environ.get('DB_USER', ''),
+        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+        'HOST': os.environ.get('DB_HOST', ''),
+        'PORT': os.environ.get('DB_PORT', ''),
     }
 }
 
+if DB_ENGINE == 'django.db.backends.mysql':
+    DATABASES['default']['OPTIONS'] = {
+        'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        'charset': 'utf8mb4',
+    }
+
+DEFAULT_TEST_DB_NAME = os.environ.get('DB_TEST_NAME')
+if DEFAULT_TEST_DB_NAME:
+    DATABASES['default']['TEST'] = {'NAME': DEFAULT_TEST_DB_NAME}
+
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'unique-snowflake',
+        'BACKEND': os.environ.get(
+            'DJANGO_CACHE_BACKEND',
+            'django.core.cache.backends.locmem.LocMemCache',
+        ),
+        'LOCATION': os.environ.get('DJANGO_CACHE_LOCATION', 'unique-snowflake'),
     }
 }
 
@@ -139,7 +201,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/Los_Angeles'
 
 USE_I18N = True
 
@@ -154,8 +216,19 @@ STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT') or str(BASE_DIR / 'media'))
 RUNNING_TESTS = any(arg.startswith('test') for arg in sys.argv)
+
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = _env_truthy('USE_X_FORWARDED_HOST', 'False')
+SECURE_SSL_REDIRECT = _env_truthy('SECURE_SSL_REDIRECT', 'False')
+SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _env_truthy('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'False')
+SECURE_HSTS_PRELOAD = _env_truthy('SECURE_HSTS_PRELOAD', 'False')
+CSRF_COOKIE_SECURE = _env_truthy('CSRF_COOKIE_SECURE', 'False')
+SESSION_COOKIE_SECURE = _env_truthy('SESSION_COOKIE_SECURE', 'False')
+SECURE_CONTENT_TYPE_NOSNIFF = _env_truthy('SECURE_CONTENT_TYPE_NOSNIFF', 'True')
+SECURE_BROWSER_XSS_FILTER = _env_truthy('SECURE_BROWSER_XSS_FILTER', 'True')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -169,25 +242,14 @@ MESSAGE_TAGS = {
     message_constants.ERROR: 'danger',
 }
 
-try:
-    from .local_settings import *
-except ImportError:
-    try:
-        from .production_settings import *
-    except ImportError:
-        pass
-
-# Keep test-run uploads isolated from normal media files, even when
-# local_settings.py overrides MEDIA_ROOT for ordinary local development.
+# Keep test-run uploads isolated from normal media files.
 if RUNNING_TESTS:
     TEST_MEDIA_ROOT = Path(tempfile.mkdtemp(prefix='authz-test-media-'))
     MEDIA_ROOT = TEST_MEDIA_ROOT
     atexit.register(shutil.rmtree, TEST_MEDIA_ROOT, ignore_errors=True)
 
 # Optional per-environment security events log path.
-# Set SECURITY_EVENTS_LOG_PATH in local_settings.py (Windows) or production_settings.py (Linux).
-if 'SECURITY_EVENTS_LOG_PATH' not in globals():
-    SECURITY_EVENTS_LOG_PATH = None
+SECURITY_EVENTS_LOG_PATH = os.environ.get('SECURITY_EVENTS_LOG_PATH') or None
 
 LOGGING = {
     'version': 1,

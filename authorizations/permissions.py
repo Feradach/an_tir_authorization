@@ -15,6 +15,12 @@ KINGDOM_APPROVAL_STATUS = 'Awaiting Kingdom Authorization Officer Review'
 KINGDOM_EQUESTRIAN_WAIVER_STATUS = 'Awaiting Equestrian Authorization Officer Review'
 KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE = 'Authorization Officer'
 KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE = 'Equestrian Authorization Officer'
+SENESCHAL_DISCIPLINE = 'Seneschal'
+NON_MARSHAL_OFFICER_DISCIPLINES = [
+    KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+    KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+    SENESCHAL_DISCIPLINE,
+]
 YOUTH_DISCIPLINE_NAMES = ['Youth Armored', 'Youth Rapier']
 YOUTH_AGE_CATEGORIES = {
     'Lion': (6, 9),
@@ -237,6 +243,21 @@ def _has_active_office(query):
             return True
     return False
 
+
+def _has_active_non_marshal_office(query):
+    today = date.today()
+    offices = query.select_related('person__user')
+    for office in offices:
+        user = getattr(office.person, 'user', None) if office.person else None
+        if (
+            user
+            and membership_is_current(user)
+            and office.start_date <= today
+            and office.end_date >= today
+        ):
+            return True
+    return False
+
 def is_senior_marshal(user, discipline=None):
     """
     Checks if the user has an active Senior Marshal status for the given discipline.
@@ -387,6 +408,8 @@ def is_kingdom_marshal(user, discipline=None):
 
     if discipline:
         query = query.filter(discipline__name=discipline)
+    else:
+        query = query.exclude(discipline__name__in=NON_MARSHAL_OFFICER_DISCIPLINES)
 
     return _has_active_office(query)
 
@@ -430,6 +453,83 @@ def is_kingdom_equestrian_authorization_officer(user):
     )
 
     return _has_active_office(query)
+
+
+def is_branch_seneschal(user, branch=None):
+    """
+    Checks whether the user has an active Seneschal appointment.
+
+    Seneschals are executive branch officers, not marshals. Keep this helper
+    separate from marshal authority checks so future branch reports can grant
+    branch-scoped read access without accidentally granting authorization,
+    sanction, or marshal-office write privileges.
+    """
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+
+    query = BranchMarshal.objects.filter(
+        person__user=user,
+        discipline__name=SENESCHAL_DISCIPLINE,
+        end_date__gte=date.today(),
+    )
+    if branch is not None:
+        if isinstance(branch, Branch):
+            query = query.filter(branch=branch)
+        else:
+            query = query.filter(branch__name=branch)
+
+    return _has_active_non_marshal_office(query)
+
+
+def is_kingdom_seneschal(user):
+    """Checks whether the user is the current Kingdom Seneschal for An Tir."""
+    return is_branch_seneschal(user, 'An Tir')
+
+
+def is_principality_seneschal(user):
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+
+    query = BranchMarshal.objects.filter(
+        person__user=user,
+        branch__type='Principality',
+        discipline__name=SENESCHAL_DISCIPLINE,
+        end_date__gte=date.today(),
+    )
+    return _has_active_non_marshal_office(query)
+
+
+def can_branch_have_seneschal(branch: Branch) -> bool:
+    if not branch:
+        return False
+    if branch.name == 'An Tir' and branch.type == 'Kingdom':
+        return True
+    if branch.type == 'Principality':
+        return True
+    return branch.type not in ['Kingdom', 'Principality', 'Region', 'Other']
+
+
+def can_manage_seneschal_office(user: User, branch: Branch) -> bool:
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if not can_branch_have_seneschal(branch):
+        return False
+
+    if branch.name == 'An Tir' and branch.type == 'Kingdom':
+        return is_kingdom_authorization_officer(user)
+
+    if is_kingdom_authorization_officer(user) or is_kingdom_seneschal(user):
+        return True
+
+    if branch.type == 'Principality':
+        return False
+
+    parent_region = branch.region
+    return bool(
+        parent_region
+        and parent_region.type == 'Principality'
+        and is_branch_seneschal(user, parent_region)
+    )
 
 
 def is_equestrian_authorization(authorization):
@@ -862,6 +962,10 @@ def _format_authorization_note_office(office: BranchMarshal) -> str:
         return 'Kingdom Authorization Officer'
     if discipline.name == KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE and branch.name == 'An Tir':
         return 'Kingdom Equestrian Authorization Officer'
+    if discipline.name == SENESCHAL_DISCIPLINE:
+        if branch.name == 'An Tir':
+            return 'Kingdom Seneschal'
+        return f'{branch.name} Seneschal'
     if discipline.name == 'Earl Marshal' and branch.name == 'An Tir':
         return 'Kingdom Earl Marshal'
     if branch.name == 'An Tir':
@@ -1445,8 +1549,11 @@ def can_manage_branch_marshal_office(user: User, branch: Branch, discipline: Dis
     branch_name = branch.name
     discipline_name = discipline.name
 
-    # Only the Kingdom Authorization Officer can manage Authorization Officer offices,
-    # and those offices may only exist at Kingdom level.
+    if discipline_name == SENESCHAL_DISCIPLINE:
+        return can_manage_seneschal_office(user, branch)
+
+    # Only the Kingdom Authorization Officer can manage Authorization Officer
+    # offices, and those offices may only exist at Kingdom level.
     if discipline_name in [
         KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
         KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
@@ -1486,6 +1593,8 @@ def can_manage_any_branch_marshal_office(user: User) -> bool:
         or is_kingdom_equestrian_authorization_officer(user)
         or is_kingdom_earl_marshal(user)
         or is_kingdom_marshal(user)
+        or is_kingdom_seneschal(user)
+        or is_principality_seneschal(user)
     )
 
 @login_required
@@ -1505,12 +1614,15 @@ def appoint_branch_marshal(request):
     except (TypeError, ValueError):
         return False, 'Invalid start date'
 
-    if branch.type == 'Other':
-        return False, 'Selected branch type is not eligible for marshal appointments.'
-
     # Must be a current member.
     if not membership_is_current(person.user):
         return False, 'Must be a current member to be a branch marshal.'
+
+    if discipline.name == SENESCHAL_DISCIPLINE:
+        if not can_branch_have_seneschal(branch):
+            return False, 'Seneschal offices may only be appointed for kingdom, principality, or local branches.'
+    elif branch.type == 'Other':
+        return False, 'Selected branch type is not eligible for marshal appointments.'
 
     # Rule 0: Must have appointment authority for this office.
     if not can_manage_branch_marshal_office(request.user, branch, discipline):
@@ -1550,10 +1662,11 @@ def appoint_branch_marshal(request):
     if discipline.name == 'Earl Marshal' and not branch.is_region():
         return False, 'Earl Marshal offices may only be appointed at regional or kingdom level.'
 
-    # Rule 3: Authorization Officer appointment does not require marshal authorization.
+    # Rule 3: Non-marshal officer appointments do not require marshal authorization.
     if discipline.name in [
         KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
         KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+        SENESCHAL_DISCIPLINE,
     ]:
         BranchMarshal.objects.create(
             person=person,

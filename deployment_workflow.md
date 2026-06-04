@@ -173,7 +173,7 @@ python manage.py migrate --check
 python manage.py check_release_ready
 ```
 
-If `check_release_ready` fails, do not continue the production deploy. Fix the changelog/release issue locally, push again, then pull again on the server.
+If `check_release_ready` fails, do not continue the production deploy. Fix the reported configuration or changelog issue, push again if code changed, then rerun the check on the server.
 
 6. Install requirements, apply migrations, and collect static files as needed:
 

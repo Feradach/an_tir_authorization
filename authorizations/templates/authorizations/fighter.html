@@ -430,9 +430,10 @@
     </div>
 </div>
 
-{% if can_manage_officer_comments %}
+{% if can_view_officer_comments %}
 <div class="card mt-3 mb-3">
     <h4>Officer Comments</h4>
+    {% if can_manage_officer_comments %}
     <form method="post" action="">
         {% csrf_token %}
         <input type="hidden" name="action" value="update_comments">
@@ -441,6 +442,7 @@
         </div>
         <button type="submit" class="btn btn-primary mt-2">Update Comments</button>
     </form>
+    {% endif %}
     {% if officer_notes %}
         <div class="table-responsive mt-3">
             <table class="table table-sm">

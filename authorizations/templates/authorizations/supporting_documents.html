@@ -144,9 +144,24 @@
                     </div>
 
                     <div id="bg_document_fields" class="border rounded p-3 d-none">
+                        {% if can_upload_background_check_for_anyone %}
+                            <div class="form-group mb-3">
+                                <label for="id_bg_person_id">Fighter</label>
+                                <select id="id_bg_person_id" name="bg_person_id" class="form-control">
+                                    <option value="">Select fighter</option>
+                                    {% for selected_person in all_people %}
+                                        <option value="{{ selected_person.user_id }}">{{ selected_person.sca_name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        {% endif %}
                         <p class="mb-0">
                             This background-check proof will be attached to
-                            <strong>{% if upload_person %}{{ upload_person.sca_name }}{% else %}your account{% endif %}</strong>.
+                            {% if can_upload_background_check_for_anyone %}
+                                the selected fighter.
+                            {% else %}
+                                <strong>{% if upload_person %}{{ upload_person.sca_name }}{% else %}your account{% endif %}</strong>.
+                            {% endif %}
                         </p>
                     </div>
 
@@ -207,6 +222,7 @@
         const supportingDocumentForm = document.getElementById('supporting_document_form');
         const documentTypeSelect = document.getElementById('id_upload_document_type');
         const jurisdictionSelect = document.getElementById('id_upload_jurisdiction');
+        const bgPersonSelect = document.getElementById('id_bg_person_id');
         const eqPeopleSelect = document.getElementById('id_eq_person_ids');
         const eqAuthorizationSelect = document.getElementById('id_eq_authorization_ids');
         const bgFields = document.getElementById('bg_document_fields');
@@ -338,9 +354,15 @@
             eqFields.classList.toggle('d-none', !isEquestrianWaiver);
 
             jurisdictionSelect.required = isEquestrianWaiver;
+            if (bgPersonSelect) {
+                bgPersonSelect.required = isBackgroundCheck;
+            }
             eqPeopleSelect.required = isEquestrianWaiver;
             eqAuthorizationSelect.required = isEquestrianWaiver;
 
+            if (!isBackgroundCheck && bgPersonSelect) {
+                bgPersonSelect.value = '';
+            }
             if (!isEquestrianWaiver) {
                 jurisdictionSelect.value = '';
                 if (eqPeopleChoices) {

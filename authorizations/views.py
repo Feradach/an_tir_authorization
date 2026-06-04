@@ -29,7 +29,7 @@ from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .changelog import build_changelog_sections
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
@@ -1146,6 +1146,32 @@ def _legacy_recovery_is_marshal_style(style: WeaponStyle):
     return style.name in ['Junior Marshal', 'Senior Marshal']
 
 
+def _legacy_recovery_active_senior_marshal_exists(person: Person, style: WeaponStyle):
+    return Authorization.objects.filter(
+        person=person,
+        style__discipline=style.discipline,
+        style__name='Senior Marshal',
+        status__name='Active',
+        expiration__gte=date.today(),
+    ).exists()
+
+
+def _legacy_recovery_deactivate_superseded_junior_marshal(person: Person, style: WeaponStyle, actor: User):
+    if style.name != 'Senior Marshal':
+        return
+    inactive_status = _get_or_create_status_by_name('Inactive')
+    Authorization.objects.filter(
+        person=person,
+        style__discipline=style.discipline,
+        style__name='Junior Marshal',
+        status__name='Active',
+    ).update(
+        status=inactive_status,
+        updated_by=actor,
+        updated_at=timezone.now(),
+    )
+
+
 def _legacy_recovery_optional_signoff(cleaned: dict, prefix: str, label: str, *, required: bool):
     person_id = cleaned.get(f'{prefix}_id')
     values = [
@@ -1292,6 +1318,11 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
 
     active_status = _get_or_create_status_by_name('Active')
     expiration = _legacy_recovery_authorization_expiration(style, auth_date, is_minor)
+    if style.name == 'Junior Marshal' and _legacy_recovery_active_senior_marshal_exists(person, style):
+        raise ValueError(
+            f'{person.sca_name} already has an active Senior Marshal authorization in {style.discipline.name}. '
+            'Do not add a Junior Marshal authorization in the same discipline.'
+        )
     if existing_authorization and existing_authorization.expiration and expiration <= existing_authorization.expiration:
         raise ValueError(
             f'{person.sca_name} already has {style.discipline.name} - {style.name} through '
@@ -1335,6 +1366,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
                     created_by=actor,
                     updated_by=actor,
                 )
+            _legacy_recovery_deactivate_superseded_junior_marshal(person, style, actor)
             recovery_entry = LegacyAuthorizationRecoveryEntry.objects.create(
                 person=person,
                 style=style,
@@ -1831,7 +1863,18 @@ def _handle_supporting_document_upload(request, *, default_person=None, next_url
     if document_type == SupportingDocument.DocumentType.BACKGROUND_CHECK:
         if jurisdiction:
             return False, 'Jurisdiction is only used for Equestrian Event Waiver uploads.'
-        if not default_person:
+        target_person = default_person
+        selected_person_id = (request.POST.get('bg_person_id') or '').strip()
+        if selected_person_id:
+            if not _can_upload_background_check_for_anyone(request.user):
+                return False, 'You can only upload background-check proof for your own account.'
+            target_person = Person.objects.filter(
+                user_id=selected_person_id,
+                user__merged_into__isnull=True,
+            ).first()
+            if not target_person:
+                return False, 'Selected fighter was not found.'
+        if not target_person:
             return False, 'Background check uploads require an account owner.'
         _assign_unique_supporting_document_filename(uploaded_file, document_type)
         with transaction.atomic():
@@ -1842,11 +1885,11 @@ def _handle_supporting_document_upload(request, *, default_person=None, next_url
             )
             SupportingDocumentPerson.objects.create(
                 document=document,
-                person=default_person,
+                person=target_person,
             )
         return (
             True,
-            f'Background check proof uploaded for {default_person.sca_name}. '
+            f'Background check proof uploaded for {target_person.sca_name}. '
             'It is now available for Kingdom review.',
         )
 
@@ -1943,7 +1986,7 @@ def _handle_supporting_document_upload(request, *, default_person=None, next_url
 def _user_can_view_note(user, note) -> bool:
     if not user or not user.is_authenticated:
         return False
-    if is_kingdom_authorization_officer(user) or is_kingdom_earl_marshal(user):
+    if is_kingdom_authorization_officer(user) or is_kingdom_earl_marshal(user) or is_kingdom_seneschal(user):
         return True
 
     authorization = getattr(note, 'authorization', None)
@@ -2036,6 +2079,7 @@ def _can_view_all_supporting_documents(user) -> bool:
         is_kingdom_authorization_officer(user)
         or is_kingdom_equestrian_authorization_officer(user)
         or is_kingdom_earl_marshal(user)
+        or is_kingdom_seneschal(user)
     ):
         return True
     if not hasattr(user, 'person'):
@@ -2051,6 +2095,10 @@ def _can_view_all_supporting_documents(user) -> bool:
         if effective and effective >= date.today():
             return True
     return False
+
+
+def _can_upload_background_check_for_anyone(user) -> bool:
+    return is_kingdom_seneschal(user)
 
 
 def _supporting_documents_queryset_for_viewer(user):
@@ -2705,6 +2753,7 @@ def index(request):
     kingdom_earl_marshal = is_kingdom_marshal(request.user, 'Earl Marshal')
     auth_officer = is_kingdom_authorization_officer(request.user)
     equestrian_auth_officer = is_kingdom_equestrian_authorization_officer(request.user)
+    kingdom_seneschal = is_kingdom_seneschal(request.user)
     can_manage_sanctions = _can_access_sanctions(request.user)
     can_view_supporting_documents = _can_view_supporting_documents(request.user)
     can_manage_lock = can_manage_maintenance_lock(request.user)
@@ -2987,7 +3036,12 @@ def index(request):
         'maintenance_lock_message': maintenance_message,
         'can_manage_maintenance_lock': can_manage_lock,
         'active_logged_in_users': active_logged_in_users() if can_manage_lock else [],
-        'membership_roster_import': MembershipRosterImport.objects.first() if auth_officer else None,
+        'can_upload_membership_roster': auth_officer or kingdom_seneschal,
+        'membership_roster_import': (
+            MembershipRosterImport.objects.first()
+            if auth_officer or kingdom_seneschal
+            else None
+        ),
         'legacy_authorization_import_enabled': auth_officer and legacy_authorization_import_enabled(),
         'pending_authorization_action': pending_authorization_action,
     }
@@ -4322,6 +4376,7 @@ def fighter(request, person_id):
     auth_officer = is_kingdom_authorization_officer(request.user) if request.user.is_authenticated else False
     equestrian_auth_officer = is_kingdom_equestrian_authorization_officer(request.user) if request.user.is_authenticated else False
     earl_marshal = is_kingdom_earl_marshal(request.user) if request.user.is_authenticated else False
+    kingdom_seneschal = is_kingdom_seneschal(request.user) if request.user.is_authenticated else False
     can_manage_sanctions = _can_access_sanctions(request.user) if request.user.is_authenticated else False
     has_active_marshal_office = BranchMarshal.objects.filter(
         person=person,
@@ -4332,6 +4387,7 @@ def fighter(request, person_id):
         and not has_active_marshal_office
     ) if request.user.is_authenticated else False
     can_manage_officer_comments = auth_officer or earl_marshal
+    can_view_officer_comments = can_manage_officer_comments or kingdom_seneschal
 
     # If there is a post, confirm that they are authenticated.
     if request.method == 'POST':
@@ -4656,6 +4712,7 @@ def fighter(request, person_id):
             is_kingdom_authorization_officer(request.user)
             or is_kingdom_equestrian_authorization_officer(request.user)
             or is_kingdom_earl_marshal(request.user)
+            or is_kingdom_seneschal(request.user)
             or is_kingdom_marshal(request.user)
             or is_regional_marshal(request.user)
         )
@@ -4928,7 +4985,7 @@ def fighter(request, person_id):
         selected_submit_as_user_id = pending_authorization_action.get('submit_as_user_id')
 
     officer_notes = []
-    if can_manage_officer_comments:
+    if can_view_officer_comments:
         officer_notes = list(
             UserNote.objects.select_related('created_by__person')
             .filter(person=person, note_type='officer_note')
@@ -4953,6 +5010,7 @@ def fighter(request, person_id):
             'can_manage_sanctions': can_manage_sanctions,
             'can_manage_marshal_offices': can_manage_marshal_offices,
             'can_manage_officer_comments': can_manage_officer_comments,
+            'can_view_officer_comments': can_view_officer_comments,
             'officer_notes': officer_notes,
             'branch_officers': branch_officers,
             'branch_choices': branch_choices,
@@ -5928,6 +5986,12 @@ def user_account(request, user_id):
             if discipline.name == 'Earl Marshal' and not branch.is_region():
                 messages.error(request, 'Earl Marshal offices may only be appointed at regional or kingdom level.')
                 return redirect('user_account', user_id=user_id)
+            if discipline.name == SENESCHAL_DISCIPLINE and not can_branch_have_seneschal(branch):
+                messages.error(
+                    request,
+                    'Seneschal offices may only be appointed for kingdom, principality, or local branches.',
+                )
+                return redirect('user_account', user_id=user_id)
 
             if action == 'self_set_regional':
                 if not user.membership or not user.membership_expiration or user.membership_expiration < date.today():
@@ -5939,6 +6003,7 @@ def user_account(request, user_id):
                 if discipline.name not in [
                     KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
                     KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+                    SENESCHAL_DISCIPLINE,
                 ]:
                     if branch.type in ['Kingdom', 'Principality', 'Region']:
                         # Regional/kingdom appointment requires Senior Marshal
@@ -6273,7 +6338,7 @@ def reject_authorization(request, authorization):
 
 @login_required
 def upload_membership_roster(request):
-    if not is_kingdom_authorization_officer(request.user):
+    if not (is_kingdom_authorization_officer(request.user) or is_kingdom_seneschal(request.user)):
         raise PermissionDenied
     if request.method != 'POST':
         return redirect('index')
@@ -6505,6 +6570,7 @@ def supporting_documents(request):
         'can_view_all_documents': can_view_all_documents,
         'is_authenticated': request.user.is_authenticated,
         'can_upload_supporting_documents': request.user.is_authenticated and hasattr(request.user, 'person'),
+        'can_upload_background_check_for_anyone': _can_upload_background_check_for_anyone(request.user),
         'can_upload_equestrian_for_anyone': (
             request.user.is_authenticated and (
                 is_kingdom_authorization_officer(request.user)

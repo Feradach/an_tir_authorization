@@ -63,6 +63,7 @@ class AdditionalCoverageBase(TestCase):
         cls.discipline_youth_armored = Discipline.objects.create(name='Youth Armored')
         cls.discipline_auth_officer = Discipline.objects.create(name='Authorization Officer')
         cls.discipline_earl_marshal = Discipline.objects.create(name='Earl Marshal')
+        cls.discipline_seneschal, _ = Discipline.objects.get_or_create(name='Seneschal')
 
         cls.style_sm_armored = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_armored)
         cls.style_jm_armored = WeaponStyle.objects.create(name='Junior Marshal', discipline=cls.discipline_armored)
@@ -1953,6 +1954,57 @@ class UserSelfAppointmentEdgeTests(AdditionalCoverageBase):
             ).exists()
         )
 
+    def test_seneschal_discipline_can_self_set_at_kingdom_without_marshal_authorization(self):
+        self.login(self.owner_user)
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'self_set_regional',
+                'branch_id': str(self.branch_an_tir.id),
+                'discipline_id': str(self.discipline_seneschal.id),
+            },
+            follow=True,
+        )
+
+        self.assertNotIn(
+            'You must hold an active Senior Marshal in Seneschal.',
+            self.messages_for(response),
+        )
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=self.owner_person,
+                branch=self.branch_an_tir,
+                discipline=self.discipline_seneschal,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_seneschal_discipline_rejects_region_branch_type(self):
+        self.login(self.owner_user)
+
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'self_set_regional',
+                'branch_id': str(self.region_summits.id),
+                'discipline_id': str(self.discipline_seneschal.id),
+            },
+            follow=True,
+        )
+
+        self.assertIn(
+            'Seneschal offices may only be appointed for kingdom, principality, or local branches.',
+            self.messages_for(response),
+        )
+        self.assertFalse(
+            BranchMarshal.objects.filter(
+                person=self.owner_person,
+                discipline=self.discipline_seneschal,
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
 
 class CreatePersonFormEdgeTests(AdditionalCoverageBase):
     def form_payload(self, **overrides):
@@ -2361,6 +2413,61 @@ class CurrentReportSnapshotTests(TestCase):
 
 
 class ReleaseReadinessTests(TestCase):
+    def production_ready_settings(self, **overrides):
+        production_settings = {
+            'RELEASE_ENV': 'production',
+            'DEBUG': False,
+            'SECRET_KEY': 'production-secret-for-test',
+            'ALLOWED_HOSTS': ['authorizations.thebusinessduck.com'],
+            'CSRF_TRUSTED_ORIGINS': ['https://authorizations.thebusinessduck.com'],
+            'SITE_URL': 'https://authorizations.thebusinessduck.com',
+            'EMAIL_DELIVERY_MODE': 'gmail',
+            'EMAIL_BACKEND': 'authorizations.email_backends.GmailAPIBackend',
+            'DEFAULT_FROM_EMAIL': 'Antir Database <antir.authorization.database@gmail.com>',
+            'SERVER_EMAIL': 'Antir Database <antir.authorization.database@gmail.com>',
+            'GMAIL_TOKEN_FILE': 'etc/gmail-prod-token.json',
+            'EMAIL_HOST': 'smtp.example.com',
+            'EMAIL_HOST_USER': 'mailer@example.com',
+            'EMAIL_HOST_PASSWORD': 'password',
+            'ADMINS': [('Production Alerts', 'alerts@example.com')],
+            'DATABASES': {
+                'default': {
+                    'ENGINE': 'django.db.backends.mysql',
+                    'NAME': 'production_db',
+                    'USER': 'production_user',
+                    'PASSWORD': 'production_password',
+                    'HOST': 'production-db.example.internal',
+                    'PORT': '3306',
+                }
+            },
+            'CACHES': {
+                'default': {
+                    'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+                    'LOCATION': 'django_cache',
+                }
+            },
+            'USE_X_FORWARDED_HOST': True,
+            'SECURE_SSL_REDIRECT': True,
+            'SECURE_HSTS_SECONDS': 31536000,
+            'CSRF_COOKIE_SECURE': True,
+            'SESSION_COOKIE_SECURE': True,
+            'SECURE_CONTENT_TYPE_NOSNIFF': True,
+            'MEDIA_ROOT': Path('/srv/an_tir/media'),
+            'MIDDLEWARE': [
+                'django.middleware.security.SecurityMiddleware',
+                'whitenoise.middleware.WhiteNoiseMiddleware',
+                'django.contrib.sessions.middleware.SessionMiddleware',
+                'django.middleware.common.CommonMiddleware',
+                'django.middleware.csrf.CsrfViewMiddleware',
+                'django.contrib.auth.middleware.AuthenticationMiddleware',
+                'django.contrib.messages.middleware.MessageMiddleware',
+                'authorizations.middleware.MaintenanceLockMiddleware',
+                'django.middleware.clickjacking.XFrameOptionsMiddleware',
+            ],
+        }
+        production_settings.update(overrides)
+        return production_settings
+
     def test_unreleased_scaffold_without_entries_is_empty(self):
         changelog = """
 ## [Unreleased]
@@ -2398,7 +2505,6 @@ class ReleaseReadinessTests(TestCase):
 
         self.assertIn('Production release gates skipped.', output.getvalue())
 
-    @override_settings(RELEASE_ENV='production')
     def test_release_check_allows_empty_unreleased_scaffold(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             changelog_path = Path(temp_dir) / 'CHANGELOG.md'
@@ -2416,13 +2522,12 @@ class ReleaseReadinessTests(TestCase):
                 encoding='utf-8',
             )
             output = StringIO()
-            with override_settings(BASE_DIR=Path(temp_dir)):
+            with override_settings(BASE_DIR=Path(temp_dir), **self.production_ready_settings()):
                 call_command('check_release_ready', stdout=output)
 
         self.assertIn('Release readiness check passed.', output.getvalue())
 
-    @override_settings(RELEASE_ENV='production', AUTHZ_TEST_FEATURES=True)
-    def test_release_check_warns_when_test_features_are_enabled(self):
+    def test_release_check_blocks_when_test_features_are_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             changelog_path = Path(temp_dir) / 'CHANGELOG.md'
             changelog_path.write_text(
@@ -2439,13 +2544,26 @@ class ReleaseReadinessTests(TestCase):
                 encoding='utf-8',
             )
             output = StringIO()
-            with override_settings(BASE_DIR=Path(temp_dir)):
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(AUTHZ_TEST_FEATURES=True),
+            ):
+                with self.assertRaisesMessage(CommandError, 'AUTHZ_TEST_FEATURES must be disabled'):
+                    call_command('check_release_ready', stdout=output)
+
+    def test_release_check_warns_when_legacy_import_is_enabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            output = StringIO()
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True),
+            ):
                 call_command('check_release_ready', stdout=output)
 
-        self.assertIn('AUTHZ_TEST_FEATURES is enabled', output.getvalue())
+        self.assertIn('Warning: AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT is enabled', output.getvalue())
         self.assertIn('Release readiness check passed.', output.getvalue())
 
-    @override_settings(RELEASE_ENV='production')
     def test_release_check_blocks_unreleased_entries_in_production(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             changelog_path = Path(temp_dir) / 'CHANGELOG.md'
@@ -2461,6 +2579,143 @@ class ReleaseReadinessTests(TestCase):
 """,
                 encoding='utf-8',
             )
-            with override_settings(BASE_DIR=Path(temp_dir)):
+            with override_settings(BASE_DIR=Path(temp_dir), **self.production_ready_settings()):
                 with self.assertRaisesMessage(CommandError, 'CHANGELOG.md has unreleased entries.'):
+                    call_command('check_release_ready')
+
+    def test_release_check_blocks_debug_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(BASE_DIR=Path(temp_dir), **self.production_ready_settings(DEBUG=True)):
+                with self.assertRaisesMessage(CommandError, 'DJANGO_DEBUG must be False'):
+                    call_command('check_release_ready')
+
+    def test_release_check_blocks_missing_csrf_origins_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(CSRF_TRUSTED_ORIGINS=[]),
+            ):
+                with self.assertRaisesMessage(CommandError, 'CSRF_TRUSTED_ORIGINS must include'):
+                    call_command('check_release_ready')
+
+    def test_release_check_blocks_file_email_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(
+                    EMAIL_DELIVERY_MODE='file',
+                    EMAIL_BACKEND='django.core.mail.backends.filebased.EmailBackend',
+                ),
+            ):
+                with self.assertRaisesMessage(CommandError, 'EMAIL_DELIVERY_MODE must not be file'):
+                    call_command('check_release_ready')
+
+    def test_release_check_blocks_missing_gmail_token_when_using_gmail_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(GMAIL_TOKEN_FILE=''),
+            ):
+                with self.assertRaisesMessage(CommandError, 'GMAIL_TOKEN_FILE must be set'):
+                    call_command('check_release_ready')
+
+    def test_release_check_warns_for_unused_missing_gmail_token_when_using_smtp_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            output = StringIO()
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(
+                    EMAIL_DELIVERY_MODE='smtp',
+                    EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+                    GMAIL_TOKEN_FILE='',
+                    EMAIL_HOST='smtp.example.com',
+                    EMAIL_HOST_USER='mailer@example.com',
+                    EMAIL_HOST_PASSWORD='password',
+                ),
+            ):
+                call_command('check_release_ready', stdout=output)
+
+        self.assertIn('Warning: GMAIL_TOKEN_FILE is not set', output.getvalue())
+        self.assertIn('Release readiness check passed.', output.getvalue())
+
+    def test_release_check_blocks_missing_smtp_credentials_when_using_smtp_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(
+                    EMAIL_DELIVERY_MODE='smtp',
+                    EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend',
+                    EMAIL_HOST='',
+                    EMAIL_HOST_USER='',
+                    EMAIL_HOST_PASSWORD='',
+                ),
+            ):
+                with self.assertRaisesMessage(CommandError, 'EMAIL_HOST must be set when EMAIL_DELIVERY_MODE=smtp'):
+                    call_command('check_release_ready')
+
+    def test_release_check_warns_for_unused_missing_smtp_credentials_when_using_gmail_mode(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            output = StringIO()
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(
+                    EMAIL_HOST='',
+                    EMAIL_HOST_USER='',
+                    EMAIL_HOST_PASSWORD='',
+                ),
+            ):
+                call_command('check_release_ready', stdout=output)
+
+        self.assertIn('Warning: EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD not set', output.getvalue())
+        self.assertIn('Release readiness check passed.', output.getvalue())
+
+    def test_release_check_blocks_sqlite_database_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(
+                    DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': 'db.sqlite3'}},
+                ),
+            ):
+                with self.assertRaisesMessage(CommandError, 'DB_ENGINE must not be SQLite'):
+                    call_command('check_release_ready')
+
+    def test_release_check_blocks_local_memory_cache_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(
+                    CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
+                ),
+            ):
+                with self.assertRaisesMessage(CommandError, 'DJANGO_CACHE_BACKEND must not use local-memory'):
+                    call_command('check_release_ready')
+
+    def test_release_check_blocks_insecure_site_url_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(SITE_URL='http://authorizations.thebusinessduck.com'),
+            ):
+                with self.assertRaisesMessage(CommandError, 'SITE_URL must be a production HTTPS URL'):
+                    call_command('check_release_ready')
+
+    def test_release_check_blocks_missing_whitenoise_in_production(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
+            with override_settings(
+                BASE_DIR=Path(temp_dir),
+                **self.production_ready_settings(MIDDLEWARE=['django.middleware.security.SecurityMiddleware']),
+            ):
+                with self.assertRaisesMessage(CommandError, 'USE_WHITENOISE must be True'):
                     call_command('check_release_ready')
