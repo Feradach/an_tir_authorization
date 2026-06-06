@@ -1,5 +1,6 @@
 from dateutil.relativedelta import relativedelta
 import csv
+from difflib import SequenceMatcher
 import uuid
 import zipfile
 import xml.etree.ElementTree as ET
@@ -2421,6 +2422,149 @@ def _sanction_extension_note(existing_note, note, end_date, updated_by):
     return f'{existing_note}\n\n{entry}' if existing_note else entry
 
 
+def _person_lookup_label(person: Person) -> str:
+    user = person.user
+    mundane_name = user.get_full_name().strip()
+    details = []
+    if user.membership:
+        details.append(f'Member #{user.membership}')
+    if mundane_name:
+        details.append(mundane_name)
+    suffix = f" ({', '.join(details)})" if details else ''
+    return f'{person.sca_name}{suffix}'
+
+
+def _person_lookup_name_score(query: str, person: Person) -> float:
+    normalized_query = re.sub(r'\s+', ' ', query.casefold()).strip()
+    if not normalized_query:
+        return 0
+    user = person.user
+    names = [
+        person.sca_name,
+        user.first_name,
+        user.last_name,
+        user.get_full_name(),
+    ]
+    best_score = 0
+    for name in names:
+        normalized_name = re.sub(r'\s+', ' ', (name or '').casefold()).strip()
+        if not normalized_name:
+            continue
+        best_score = max(best_score, SequenceMatcher(None, normalized_query, normalized_name).ratio())
+        name_tokens = normalized_name.split()
+        query_tokens = normalized_query.split()
+        for token in name_tokens:
+            best_score = max(best_score, SequenceMatcher(None, normalized_query, token).ratio())
+        if query_tokens and name_tokens:
+            token_scores = [
+                max(SequenceMatcher(None, query_token, name_token).ratio() for name_token in name_tokens)
+                for query_token in query_tokens
+            ]
+            best_score = max(best_score, sum(token_scores) / len(token_scores))
+    return best_score
+
+
+def _kingdom_officer_can_add_for_discipline(user: User, discipline: Discipline) -> bool:
+    if not discipline:
+        return False
+    if user.is_staff:
+        return True
+    if discipline.name == 'Equestrian':
+        return is_kingdom_equestrian_authorization_officer(user)
+    return is_kingdom_authorization_officer(user)
+
+
+def _kingdom_officer_scope_error_for_discipline(discipline: Discipline) -> str:
+    if discipline and discipline.name == 'Equestrian':
+        return 'Only the Kingdom Equestrian Authorization Officer can add equestrian authorizations.'
+    return 'Only the Kingdom Authorization Officer can add non-equestrian authorizations.'
+
+
+def _ordered_authorization_basket_style_ids(style_ids: list[int], styles_by_id: dict[int, WeaponStyle]) -> list[int]:
+    """Order selected styles so known prerequisite authorizations are created first."""
+    selected_ids = []
+    seen_ids = set()
+    for style_id in style_ids:
+        if style_id in seen_ids:
+            continue
+        selected_ids.append(style_id)
+        seen_ids.add(style_id)
+
+    selected_id_set = set(selected_ids)
+    selected_by_key = {}
+    for style_id in selected_ids:
+        style = styles_by_id.get(style_id)
+        if style and style.discipline:
+            selected_by_key[(style.discipline.name, style.name)] = style_id
+
+    def selected_style_id(discipline_name, style_name):
+        return selected_by_key.get((discipline_name, style_name))
+
+    def dependencies_for(style: WeaponStyle):
+        if not style or not style.discipline:
+            return []
+        discipline_name = style.discipline.name
+        style_name = style.name
+        dependencies = []
+
+        if discipline_name == 'Rapier Combat' and style_name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
+            dependencies.append(selected_style_id('Rapier Combat', 'Single Sword'))
+
+        if discipline_name == 'Youth Rapier':
+            base_name = youth_base_style_name(style_name)
+            if base_name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
+                category = youth_age_category_for_style_name(style_name)
+                if category:
+                    dependencies.append(selected_style_id('Youth Rapier', f'{category} - Single Sword'))
+                dependencies.append(selected_style_id('Youth Rapier', 'Single Sword'))
+
+        if discipline_name == 'Cut & Thrust' and style_name == 'Spear':
+            dependencies.extend(
+                dependency_id
+                for dependency_id in selected_ids
+                if dependency_id != style.id
+                and (dependency_style := styles_by_id.get(dependency_id))
+                and dependency_style.discipline
+                and dependency_style.discipline.name == 'Cut & Thrust'
+                and dependency_style.name not in ['Spear', 'Junior Marshal', 'Senior Marshal']
+            )
+
+        if discipline_name == 'Equestrian':
+            if style_name == 'Mounted Gaming':
+                dependencies.append(selected_style_id('Equestrian', 'General Riding'))
+            if style_name in ['Mounted Archery', 'Crest Combat', 'Mounted Crest Combat', 'Jousting', 'Foam-Tipped Jousting']:
+                dependencies.append(selected_style_id('Equestrian', 'Mounted Gaming'))
+            if style_name in ['Mounted Heavy Combat', 'Mounted Combat']:
+                dependencies.append(selected_style_id('Equestrian', 'General Riding'))
+                dependencies.append(selected_style_id('Equestrian', 'Mounted Gaming'))
+
+        return [dependency_id for dependency_id in dependencies if dependency_id in selected_id_set]
+
+    dependency_map = {
+        style_id: dependencies_for(styles_by_id.get(style_id))
+        for style_id in selected_ids
+    }
+    ordered = []
+    temporary = set()
+    permanent = set()
+
+    def visit(style_id):
+        if style_id in permanent:
+            return
+        if style_id in temporary:
+            return
+        temporary.add(style_id)
+        for dependency_id in dependency_map.get(style_id, []):
+            visit(dependency_id)
+        temporary.remove(style_id)
+        permanent.add(style_id)
+        ordered.append(style_id)
+
+    for style_id in selected_ids:
+        visit(style_id)
+    return ordered
+
+
 @login_required
 def validate_authorization_rules(request):
     if request.method != 'POST':
@@ -2433,7 +2577,11 @@ def validate_authorization_rules(request):
 
     authorizing_marshal = request.user
     marshal_id = request.POST.get('marshal_id')
-    if marshal_id and is_kingdom_authorization_officer(request.user):
+    requested_marshal_override = bool(marshal_id)
+    if marshal_id and (
+        is_kingdom_authorization_officer(request.user)
+        or is_kingdom_equestrian_authorization_officer(request.user)
+    ):
         try:
             authorizing_marshal = User.objects.get(id=marshal_id)
         except User.DoesNotExist:
@@ -2442,6 +2590,15 @@ def validate_authorization_rules(request):
     person = get_object_or_404(Person, user_id=person_id)
 
     for style_id in style_ids:
+        style = get_object_or_404(WeaponStyle.objects.select_related('discipline'), id=style_id)
+        if requested_marshal_override and (
+            is_kingdom_authorization_officer(request.user)
+            or is_kingdom_equestrian_authorization_officer(request.user)
+        ) and not _kingdom_officer_can_add_for_discipline(request.user, style.discipline):
+            return JsonResponse({
+                'ok': False,
+                'message': _kingdom_officer_scope_error_for_discipline(style.discipline),
+            })
         is_valid, mssg = authorization_follows_rules(
             marshal=authorizing_marshal,
             existing_fighter=person,
@@ -2451,6 +2608,64 @@ def validate_authorization_rules(request):
             return JsonResponse({'ok': False, 'message': mssg}, status=200)
 
     return JsonResponse({'ok': True})
+
+
+@login_required
+def officer_person_lookup(request):
+    if not (
+        is_kingdom_authorization_officer(request.user)
+        or is_kingdom_equestrian_authorization_officer(request.user)
+    ):
+        return JsonResponse({'ok': False, 'message': 'Permission denied.'}, status=403)
+
+    query = (request.GET.get('q') or '').strip()
+    if len(query) < 2:
+        return JsonResponse({'ok': True, 'results': []})
+
+    purpose = (request.GET.get('purpose') or 'active').strip()
+    scoped_people = _exclude_system_people(
+        Person.objects.select_related('user').filter(user__merged_into__isnull=True)
+    )
+    if purpose == 'senior_marshal':
+        scoped_people = scoped_people.filter(
+            authorization__in=Authorization.objects.effectively_active().filter(
+                style__name='Senior Marshal',
+            )
+        )
+    else:
+        scoped_people = scoped_people.filter(
+            authorization__in=Authorization.objects.effectively_active()
+        )
+    scoped_people = scoped_people.distinct()
+
+    exact_people = list(scoped_people.filter(
+        Q(sca_name__icontains=query)
+        | Q(user__first_name__icontains=query)
+        | Q(user__last_name__icontains=query)
+        | Q(user__membership__icontains=query)
+    ).order_by('sca_name', 'user__last_name', 'user__first_name')[:20])
+
+    people = exact_people
+    if len(people) < 20:
+        existing_user_ids = {person.user_id for person in people}
+        fuzzy_candidates = []
+        for person in scoped_people.exclude(user_id__in=existing_user_ids):
+            score = _person_lookup_name_score(query, person)
+            if score >= 0.72:
+                fuzzy_candidates.append((score, person.sca_name.casefold(), person.user_id, person))
+        fuzzy_candidates.sort(key=lambda row: (-row[0], row[1], row[2]))
+        people.extend(person for _, _, _, person in fuzzy_candidates[:20 - len(people)])
+
+    return JsonResponse({
+        'ok': True,
+        'results': [
+            {
+                'user_id': person.user_id,
+                'label': _person_lookup_label(person),
+            }
+            for person in people
+        ],
+    })
 
 
 @login_required
@@ -4655,16 +4870,14 @@ def fighter(request, person_id):
             else:
                 status_to_set = active_status if waiver_current(authorization.person.user) else pending_waiver_status
 
-            new_expiration = calculate_authorization_expiration(authorization.person, authorization.style)
             authorization.concurring_fighter = concurring_person
-            authorization.expiration = new_expiration
             authorization.status = status_to_set
             authorization.updated_by = submit_as_user
             authorization.save()
 
             if not sign_off_required and status_to_set == active_status:
-                if (not authorization.person.user.waiver_expiration) or (authorization.person.user.waiver_expiration < new_expiration):
-                    authorization.person.user.waiver_expiration = new_expiration
+                if (not authorization.person.user.waiver_expiration) or (authorization.person.user.waiver_expiration < authorization.expiration):
+                    authorization.person.user.waiver_expiration = authorization.expiration
                     authorization.person.user.save()
 
             if status_to_set == needs_kingdom_equestrian_waiver_status:
@@ -4740,6 +4953,44 @@ def fighter(request, person_id):
         style__name__in=_SENIOR_GROUND_CREW_STYLES,
     ).exists()
 
+    def can_view_actual_authorization_expiration(auth):
+        if not request.user.is_authenticated:
+            return False
+        if request.user.id == person.user_id:
+            return True
+        if person.parent_id and request.user.id == person.parent_id:
+            return True
+        if auth.style.discipline.name == 'Equestrian':
+            return equestrian_auth_officer
+        return auth_officer
+
+    def actual_expiration_detail(auth):
+        if (
+            auth.expiration
+            and auth.effective_expiration
+            and auth.effective_expiration < auth.expiration
+            and auth.style.name not in ['Junior Marshal', 'Senior Marshal']
+            and can_view_actual_authorization_expiration(auth)
+        ):
+            return {
+                'style': auth.style.name,
+                'expiration': auth.expiration,
+            }
+        return None
+
+    limited_authorization_list = Authorization.objects.with_effective_expiration().select_related(
+        'person__branch__region',
+        'style__discipline',
+        'concurring_fighter',
+    ).filter(
+        person_id=person_id,
+        status__name='Active',
+        expiration__gte=date.today(),
+        effective_expiration_date__lt=date.today(),
+    ).exclude(
+        style__name__in=['Junior Marshal', 'Senior Marshal'],
+    ).order_by('style__discipline__name', 'effective_expiration_date', 'style__name')
+
     grouped_authorizations = {}
     for auth in authorization_list:
         discipline_name = auth.style.discipline.name
@@ -4755,6 +5006,7 @@ def fighter(request, person_id):
             marshal_renewal = auth.expiration
             if auth.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
                 marshal_renewal_requires_bg = True
+        actual_expiration = actual_expiration_detail(auth)
         if discipline_name not in grouped_authorizations:
             if discipline_name == 'Equestrian':
                 equestrian = True
@@ -4770,6 +5022,7 @@ def fighter(request, person_id):
                 'earliest_expiration': auth.effective_expiration,
                 'marshal_renewal': marshal_renewal,
                 'marshal_renewal_requires_bg': marshal_renewal_requires_bg,
+                'actual_expirations': [actual_expiration] if actual_expiration else [],
                 'styles': [auth.style.name],
             }
         else:
@@ -4783,9 +5036,30 @@ def fighter(request, person_id):
                     grouped_authorizations[discipline_name]['marshal_renewal'] = marshal_renewal
                 if marshal_renewal_requires_bg:
                     grouped_authorizations[discipline_name]['marshal_renewal_requires_bg'] = True
+            if actual_expiration:
+                grouped_authorizations[discipline_name]['actual_expirations'].append(actual_expiration)
             style_name = auth.style.name
             if style_name not in grouped_authorizations[discipline_name]['styles']:
                 grouped_authorizations[discipline_name]['styles'].append(style_name)
+
+    limited_authorizations = {}
+    for auth in limited_authorization_list:
+        actual_expiration = actual_expiration_detail(auth)
+        if not actual_expiration:
+            continue
+        discipline_name = auth.style.discipline.name
+        if discipline_name not in limited_authorizations:
+            limited_authorizations[discipline_name] = {
+                'styles': [auth.style.name],
+                'actual_expirations': [actual_expiration],
+                'earliest_effective_expiration': auth.effective_expiration,
+            }
+        else:
+            if auth.style.name not in limited_authorizations[discipline_name]['styles']:
+                limited_authorizations[discipline_name]['styles'].append(auth.style.name)
+            limited_authorizations[discipline_name]['actual_expirations'].append(actual_expiration)
+            if auth.effective_expiration < limited_authorizations[discipline_name]['earliest_effective_expiration']:
+                limited_authorizations[discipline_name]['earliest_effective_expiration'] = auth.effective_expiration
 
     pending_authorizations = {}
     pending_authorization_groups_by_status = {}
@@ -4934,6 +5208,7 @@ def fighter(request, person_id):
             {
                 'person': person,
                 'authorization_list': grouped_authorizations,
+                'limited_authorization_list': limited_authorizations,
                 'pending_authorization_list': pending_authorizations,
                 'pending_authorization_groups': pending_authorization_groups,
                 'equestrian': equestrian,
@@ -4957,11 +5232,20 @@ def fighter(request, person_id):
     regional_marshal = is_regional_marshal(request.user)
     pending_note_required = False
     pending_concurring_fighter_user_id = None
+    pending_authorizing_marshal_user_id = None
+    pending_authorization_date = None
     pending_key = f'pending_authorization_{person_id}'
     pending = _get_pending_session(request, pending_key)
     if pending and pending.get('person_id') == person_id:
         pending_style_ids = pending.get('style_ids', [])
         pending_concurring_fighter_user_id = pending.get('concurring_fighter_user_id')
+        pending_authorizing_marshal_user_id = pending.get('authorizing_marshal_id')
+        pending_authorization_date_raw = pending.get('authorization_date')
+        if pending_authorization_date_raw:
+            try:
+                pending_authorization_date = date.fromisoformat(pending_authorization_date_raw)
+            except (TypeError, ValueError):
+                pending_authorization_date = None
         created_at = pending.get('created_at')
         if created_at:
             try:
@@ -4981,8 +5265,23 @@ def fighter(request, person_id):
             pending_note_required = any(int(style_id) in marshal_style_ids for style_id in pending_style_ids)
     pending_authorization_action = _get_pending_session(request, 'pending_authorization_action')
     selected_submit_as_user_id = None
+    selected_submit_as_label = ''
     if pending_authorization_action and pending_authorization_action.get('action') in ['approve_authorization', 'reject_authorization']:
         selected_submit_as_user_id = pending_authorization_action.get('submit_as_user_id')
+    if selected_submit_as_user_id:
+        selected_submit_as_person = Person.objects.select_related('user').filter(
+            user_id=selected_submit_as_user_id,
+        ).first()
+        if selected_submit_as_person:
+            selected_submit_as_label = _person_lookup_label(selected_submit_as_person)
+
+    pending_concurring_fighter_label = ''
+    if pending_concurring_fighter_user_id:
+        pending_concurring_fighter = Person.objects.select_related('user').filter(
+            user_id=pending_concurring_fighter_user_id,
+        ).first()
+        if pending_concurring_fighter:
+            pending_concurring_fighter_label = _person_lookup_label(pending_concurring_fighter)
 
     officer_notes = []
     if can_view_officer_comments:
@@ -4998,13 +5297,14 @@ def fighter(request, person_id):
         {
             'person': person,
             'authorization_list': grouped_authorizations,
+            'limited_authorization_list': limited_authorizations,
             'pending_authorization_list': pending_authorizations,
             'pending_authorization_groups': pending_authorization_groups,
             'equestrian': equestrian,
             'youth': youth,
             'fighter': fighter,
             'is_marshal': is_senior_marshal(request.user) or auth_officer or equestrian_auth_officer,
-            'auth_form': CreateAuthorizationForm(user=request.user, show_all=auth_officer),
+            'auth_form': CreateAuthorizationForm(user=request.user),
             'auth_officer': auth_officer,
             'equestrian_auth_officer': equestrian_auth_officer,
             'can_manage_sanctions': can_manage_sanctions,
@@ -5017,17 +5317,18 @@ def fighter(request, person_id):
             'discipline_choices': discipline_choices,
             'sanctions': sanctions,
             'regional_marshal': regional_marshal,
-            'all_people': _exclude_system_people(
-                Person.objects.filter(user__merged_into__isnull=True)
-            ).order_by('sca_name'),
             'pending_waivers': pending_waivers,
             'pending_note_required': pending_note_required,
             'pending_authorization_action': pending_authorization_action,
             'selected_submit_as_user_id': selected_submit_as_user_id,
+            'selected_submit_as_label': selected_submit_as_label,
             'can_view_notes': can_view_notes,
             'visible_notes': visible_notes,
             'today': date.today(),
             'pending_concurring_fighter_user_id': pending_concurring_fighter_user_id,
+            'pending_concurring_fighter_label': pending_concurring_fighter_label,
+            'pending_authorizing_marshal_user_id': pending_authorizing_marshal_user_id,
+            'pending_authorization_date': pending_authorization_date,
         },
     )
 
@@ -5296,8 +5597,9 @@ def add_authorization(request, person_id):
     # Only the Authorization Officer may specify a different marshal via marshal_id.
     authorizing_marshal = request.user
     marshal_id = request.POST.get('marshal_id')
+    requested_marshal_override = bool(marshal_id)
     if marshal_id:
-        if is_kingdom_authorization_officer(request.user):
+        if is_kingdom_authorization_officer(request.user) or is_kingdom_equestrian_authorization_officer(request.user):
             try:
                 authorizing_marshal = User.objects.get(id=marshal_id)
             except User.DoesNotExist:
@@ -5311,6 +5613,12 @@ def add_authorization(request, person_id):
     discipline_id = request.POST.get('discipline')
     if discipline_id:
         discipline = Discipline.objects.get(id=discipline_id)
+        if requested_marshal_override and (
+            is_kingdom_authorization_officer(request.user)
+            or is_kingdom_equestrian_authorization_officer(request.user)
+        ) and not _kingdom_officer_can_add_for_discipline(request.user, discipline):
+            messages.error(request, _kingdom_officer_scope_error_for_discipline(discipline))
+            return redirect('fighter', person_id=person_id)
         if not can_authorize_in_discipline(authorizing_marshal, discipline):
             messages.error(request, f"Error: {authorizing_marshal.person.sca_name} is not a senior marshal in {discipline.name} and cannot authorize authorizations.")
             return redirect('fighter', person_id=person_id)
@@ -5322,7 +5630,7 @@ def add_authorization(request, person_id):
         if auth_form.is_valid():
             # Helpers for waiver and statuses
             def waiver_current(u):
-                return bool(u.waiver_expiration and u.waiver_expiration > date.today())
+                return bool(u.waiver_expiration and u.waiver_expiration > authorization_date)
 
             active_status = AuthorizationStatus.objects.get(name='Active')
             pending_waiver_status = AuthorizationStatus.objects.get(name='Awaiting Waiver')
@@ -5355,7 +5663,7 @@ def add_authorization(request, person_id):
                     sign_off_required
                     and authorization.status
                     and authorization.status.name == 'Active'
-                    and authorization.expiration >= date.today()
+                    and authorization.expiration >= authorization_date
                     and kingdom_review_status_name_for_style(authorization.style) != KINGDOM_EQUESTRIAN_WAIVER_STATUS
                 )
 
@@ -5374,18 +5682,47 @@ def add_authorization(request, person_id):
                     return redirect('fighter', person_id=person_id)
                 selected_styles = pending.get('style_ids', [])
                 pending_concurring_fighter_user_id = pending.get('concurring_fighter_user_id')
+                authorization_date_raw = (request.POST.get('authorization_date') or '').strip() or pending.get('authorization_date', '')
                 if not selected_styles:
                     messages.error(request, 'Pending authorization missing styles. Please try again.')
                     return redirect('fighter', person_id=person_id)
             else:
                 sent_styles = request.POST.getlist('weapon_styles')
                 selected_styles = sorted(set(sent_styles))
+                authorization_date_raw = (request.POST.get('authorization_date') or '').strip()
+
+            authorization_date = date.today()
+            if authorization_date_raw:
+                try:
+                    parsed_authorization_date = date.fromisoformat(authorization_date_raw)
+                except (TypeError, ValueError):
+                    messages.error(request, 'Authorization date must be a valid date.')
+                    return redirect('fighter', person_id=person_id)
+                if parsed_authorization_date > date.today():
+                    messages.error(request, 'Authorization date cannot be in the future.')
+                    return redirect('fighter', person_id=person_id)
+                if parsed_authorization_date != date.today():
+                    if not (
+                        is_kingdom_authorization_officer(request.user)
+                        or is_kingdom_equestrian_authorization_officer(request.user)
+                    ):
+                        messages.error(request, 'Only a kingdom authorization officer may set an authorization date.')
+                        return redirect('fighter', person_id=person_id)
+                    if discipline_id:
+                        discipline_for_date = Discipline.objects.get(id=discipline_id)
+                        if not _kingdom_officer_can_add_for_discipline(request.user, discipline_for_date):
+                            messages.error(request, _kingdom_officer_scope_error_for_discipline(discipline_for_date))
+                            return redirect('fighter', person_id=person_id)
+                authorization_date = parsed_authorization_date
 
             # Optional KAO-only explicit concurrence when rule 25 concurrence is required.
             concurring_fighter_user_id_raw = (request.POST.get('concurring_fighter_id') or '').strip()
             if is_pending_submit and pending_concurring_fighter_user_id and not concurring_fighter_user_id_raw:
                 concurring_fighter_user_id_raw = str(pending_concurring_fighter_user_id)
-            if concurring_fighter_user_id_raw and not is_kingdom_authorization_officer(request.user):
+            if concurring_fighter_user_id_raw and not (
+                is_kingdom_authorization_officer(request.user)
+                or is_kingdom_equestrian_authorization_officer(request.user)
+            ):
                 messages.error(request, 'You are not allowed to specify a concurring fighter.')
                 return redirect('fighter', person_id=person_id)
             concurring_fighter = None
@@ -5420,7 +5757,7 @@ def add_authorization(request, person_id):
                 if status_name and status_name != 'Active':
                     return True
                 effective_expiration = auth.effective_expiration
-                days_expired = (date.today() - effective_expiration).days
+                days_expired = (authorization_date - effective_expiration).days
                 return days_expired > 365
 
             concurrence_cache = {}
@@ -5430,11 +5767,17 @@ def add_authorization(request, person_id):
                     return False
                 discipline_id = style.discipline_id
                 if discipline_id not in concurrence_cache:
-                    concurrence_cache[discipline_id] = authorization_requires_concurrence(person, style)
+                    concurrence_cache[discipline_id] = authorization_requires_concurrence(
+                        person,
+                        style,
+                        today=authorization_date,
+                    )
                 return concurrence_cache[discipline_id]
 
             selected_style_ids = [int(style_id) for style_id in selected_styles]
             selected_style_map = WeaponStyle.objects.select_related('discipline').in_bulk(selected_style_ids)
+            selected_style_ids = _ordered_authorization_basket_style_ids(selected_style_ids, selected_style_map)
+            selected_styles = [str(style_id) for style_id in selected_style_ids]
 
             if concurring_fighter:
                 if concurring_fighter.user_id == person.user_id:
@@ -5473,6 +5816,7 @@ def add_authorization(request, person_id):
                     'style_ids': selected_styles,
                     'authorizing_marshal_id': authorizing_marshal.id,
                     'concurring_fighter_user_id': concurring_fighter.user_id if concurring_fighter else None,
+                    'authorization_date': authorization_date.isoformat(),
                     'created_at': datetime.utcnow().isoformat(),
                 }
                 request.session.modified = True
@@ -5574,7 +5918,7 @@ def add_authorization(request, person_id):
                                 
                                 # Check if this is a marshal authorization and if it has been expired for more than a year
                                 if update_auth.style.name in ['Senior Marshal', 'Junior Marshal']:
-                                    days_expired = (date.today() - update_auth.effective_expiration).days
+                                    days_expired = (authorization_date - update_auth.effective_expiration).days
                                     is_rejected = update_auth.status and update_auth.status.name == 'Rejected'
                                     if is_rejected or days_expired > 365:  # Treat rejected like long-expired
                                         update_auth.status = AuthorizationStatus.objects.get(name='Awaiting Second Marshal Concurrence')
@@ -5639,7 +5983,11 @@ def add_authorization(request, person_id):
                                             else:
                                                 messages.success(request, f'Existing authorization for {update_auth.style.name} pending waiver.')
                                 
-                                update_auth.expiration = calculate_authorization_expiration(person, update_auth.style)
+                                update_auth.expiration = calculate_authorization_expiration(
+                                    person,
+                                    update_auth.style,
+                                    today=authorization_date,
+                                )
                                 update_auth.updated_by = authorizing_marshal
                                 update_auth.save()
                                 if update_auth.status == active_status:
@@ -5650,7 +5998,11 @@ def add_authorization(request, person_id):
                             else:
                                 style = WeaponStyle.objects.get(id=style_id)
                                 if style.name in ['Senior Marshal', 'Junior Marshal']:
-                                    expiration = calculate_authorization_expiration(person, style)
+                                    expiration = calculate_authorization_expiration(
+                                        person,
+                                        style,
+                                        today=authorization_date,
+                                    )
                                     new_auth = Authorization.objects.create(
                                         person=person,
                                         style=style,
@@ -5663,7 +6015,11 @@ def add_authorization(request, person_id):
                                     record_note(new_auth, 'marshal_proposed')
                                     messages.success(request, f'Authorization for {style.name} pending confirmation.')
                                 else:
-                                    expiration = calculate_authorization_expiration(person, style)
+                                    expiration = calculate_authorization_expiration(
+                                        person,
+                                        style,
+                                        today=authorization_date,
+                                    )
                                     if requires_concurrence(style):
                                         if concurring_fighter:
                                             if routes_to_kingdom_review(style):
@@ -8503,7 +8859,7 @@ class CreateAuthorizationForm(forms.Form):
         show_all = kwargs.pop('show_all', False)
         super().__init__(*args, **kwargs)
 
-        if show_all:
+        if show_all or (user and getattr(user, 'is_staff', False)):
             # Public testing: expose all disciplines (except AO/EM which aren't user auths)
             self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=[
                 KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
@@ -8512,17 +8868,34 @@ class CreateAuthorizationForm(forms.Form):
             ])
         elif user:
             # Filter disciplines based on the user's senior marshal authorizations
+            senior_authorizations = Authorization.objects.effectively_active().filter(
+                person__user=user,
+                style__name='Senior Marshal',  # Assuming 'Senior Marshal' is the style name
+            ).values_list('style__discipline', flat=True)
+
             if is_kingdom_authorization_officer(user):
-                self.fields['discipline'].queryset = Discipline.objects.all().exclude(name__in=[
+                self.fields['discipline'].queryset = Discipline.objects.filter(
+                    Q(id__in=senior_authorizations)
+                    | ~Q(name__in=[
+                        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+                        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+                        'Earl Marshal',
+                        'Equestrian',
+                    ])
+                ).exclude(name__in=[
                     KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
                     KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
                     'Earl Marshal',
-                ])
+                ]).distinct().order_by('name')
+            elif is_kingdom_equestrian_authorization_officer(user):
+                self.fields['discipline'].queryset = Discipline.objects.filter(
+                    Q(id__in=senior_authorizations)
+                    | Q(name='Equestrian')
+                ).exclude(name__in=[
+                    KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+                    KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+                    'Earl Marshal',
+                ]).distinct().order_by('name')
             else:
-                senior_authorizations = Authorization.objects.effectively_active().filter(
-                    person__user=user,
-                    style__name='Senior Marshal',  # Assuming 'Senior Marshal' is the style name
-                ).values_list('style__discipline', flat=True)
-
                 # Update the discipline queryset with the filtered disciplines
                 self.fields['discipline'].queryset = Discipline.objects.filter(id__in=senior_authorizations)

@@ -20,6 +20,7 @@ from authorizations.models import (
     AuthorizationAuditEntry,
     AuthorizationNote,
     AuthorizationStatus,
+    AuthorizationValidityInterval,
     AuthorizationPortalSetting,
     Branch,
     BranchMarshal,
@@ -37,6 +38,11 @@ from authorizations.permissions import validate_reject_authorization
 from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER, build_current_report_snapshot
 from authorizations.views import CreateAuthorizationForm, CreatePersonForm, _apply_profile_form_to_user_and_person
 from authorizations.changelog import unreleased_has_displayable_entries
+from authorizations.management.commands.populate_restore_validity_intervals import (
+    Command as PopulateRestoreValidityIntervalsCommand,
+    IntervalCandidate,
+)
+from authorizations.management.commands.catch_up_validity_intervals import Command as CatchUpValidityIntervalsCommand
 
 
 class AdditionalCoverageBase(TestCase):
@@ -149,6 +155,182 @@ class AdditionalCoverageBase(TestCase):
 
     def messages_for(self, response):
         return [m.message for m in response.context['messages']]
+
+
+class PopulateTestValidityIntervalsCommandTests(AdditionalCoverageBase):
+    def test_dry_run_reports_intervals_without_creating_them(self):
+        _, person = self.make_person('interval_dry_run', 'Interval Dry Run')
+        self.grant_authorization(
+            person,
+            self.style_weapon_armored,
+            expiration=date(2028, 6, 1),
+        )
+        out = StringIO()
+
+        call_command('populate_test_validity_intervals', stdout=out)
+
+        self.assertEqual(AuthorizationValidityInterval.objects.count(), 0)
+        self.assertIn('Intervals generated from current authorizations: 1', out.getvalue())
+        self.assertIn('Dry run only.', out.getvalue())
+
+    def test_write_creates_four_year_two_year_and_effective_end_intervals(self):
+        _, adult_person = self.make_person('interval_adult', 'Interval Adult')
+        _, minor_person = self.make_person(
+            'interval_minor',
+            'Interval Minor',
+            birthday=date.today() - relativedelta(years=15),
+        )
+        _, senior_person = self.make_person(
+            'interval_senior',
+            'Interval Senior',
+            membership_expiration=date(2027, 1, 31),
+        )
+        youth_style = WeaponStyle.objects.create(
+            name='Lion - Weapon & Shield',
+            discipline=self.discipline_youth_armored,
+        )
+        adult_authorization = self.grant_authorization(
+            adult_person,
+            self.style_weapon_armored,
+            expiration=date(2028, 6, 1),
+        )
+        minor_authorization = self.grant_authorization(
+            minor_person,
+            self.style_polearm_armored,
+            expiration=date(2028, 7, 1),
+        )
+        youth_authorization = self.grant_authorization(
+            adult_person,
+            youth_style,
+            expiration=date(2028, 8, 1),
+        )
+        senior_authorization = self.grant_authorization(
+            senior_person,
+            self.style_sm_armored,
+            expiration=date(2028, 9, 1),
+        )
+        out = StringIO()
+
+        call_command('populate_test_validity_intervals', '--write', stdout=out)
+
+        adult_interval = AuthorizationValidityInterval.objects.get(authorization=adult_authorization)
+        minor_interval = AuthorizationValidityInterval.objects.get(authorization=minor_authorization)
+        youth_interval = AuthorizationValidityInterval.objects.get(authorization=youth_authorization)
+        senior_interval = AuthorizationValidityInterval.objects.get(authorization=senior_authorization)
+        self.assertEqual(adult_interval.start_date, date(2024, 6, 1))
+        self.assertEqual(adult_interval.end_date, date(2028, 6, 1))
+        self.assertEqual(minor_interval.start_date, date(2026, 7, 1))
+        self.assertEqual(minor_interval.end_date, date(2028, 7, 1))
+        self.assertEqual(youth_interval.start_date, date(2026, 8, 1))
+        self.assertEqual(youth_interval.end_date, date(2028, 8, 1))
+        self.assertEqual(senior_interval.start_date, date(2024, 9, 1))
+        self.assertEqual(senior_interval.end_date, date(2027, 1, 31))
+        self.assertEqual(adult_interval.source, 'manual_repair')
+        self.assertIn('Created 4 authorization validity interval(s).', out.getvalue())
+
+    def test_write_refuses_existing_intervals_without_replace(self):
+        _, person = self.make_person('interval_existing', 'Interval Existing')
+        authorization = self.grant_authorization(
+            person,
+            self.style_weapon_armored,
+            expiration=date(2028, 6, 1),
+        )
+        AuthorizationValidityInterval.objects.create(
+            authorization=authorization,
+            start_date=date(2024, 6, 1),
+            end_date=date(2028, 6, 1),
+            source='manual_repair',
+        )
+
+        with self.assertRaises(CommandError):
+            call_command('populate_test_validity_intervals', '--write')
+
+
+class PopulateRestoreValidityIntervalsCommandTests(TestCase):
+    def test_effective_expiration_shortens_marshal_interval_to_membership(self):
+        command = PopulateRestoreValidityIntervalsCommand()
+
+        expiration = command._effective_expiration(
+            expiration=date(2028, 9, 1),
+            style_name='Senior Marshal',
+            discipline_name='Armored Combat',
+            membership_expiration=date(2027, 1, 31),
+            background_check_expiration=None,
+            snapshot_date=date(2026, 6, 5),
+        )
+
+        self.assertEqual(expiration, date(2027, 1, 31))
+
+    def test_merge_candidates_extends_overlapping_intervals_and_keeps_gaps(self):
+        command = PopulateRestoreValidityIntervalsCommand()
+        candidates = [
+            IntervalCandidate(1, date(2021, 5, 1), date(2025, 5, 1), 'legacy_import', 'legacy'),
+            IntervalCandidate(1, date(2024, 5, 1), date(2028, 5, 1), 'portal_authorization', 'current'),
+            IntervalCandidate(2, date(2021, 5, 1), date(2025, 5, 1), 'legacy_import', 'legacy'),
+            IntervalCandidate(2, date(2025, 6, 1), date(2029, 6, 1), 'portal_authorization', 'current'),
+        ]
+
+        merged, counts = command._merge_candidates(candidates)
+
+        self.assertEqual(
+            [(interval.authorization_id, interval.start_date, interval.end_date) for interval in merged],
+            [
+                (1, date(2021, 5, 1), date(2028, 5, 1)),
+                (2, date(2021, 5, 1), date(2025, 5, 1)),
+                (2, date(2025, 6, 1), date(2029, 6, 1)),
+            ],
+        )
+        self.assertEqual(counts['extended_interval'], 1)
+        self.assertEqual(counts['created_interval'], 3)
+
+    def test_raw_candidate_can_attach_reviewed_drift_to_target_authorization(self):
+        command = PopulateRestoreValidityIntervalsCommand()
+        row = {
+            'id': 10,
+            'expiration': date(2028, 6, 1),
+            'style_name': 'Weapon & Shield',
+            'discipline_name': 'Armored Combat',
+            'is_minor': False,
+            'birthday': None,
+            'country': 'United States',
+            'state_province': 'Oregon',
+            'membership_expiration': None,
+            'background_check_expiration': None,
+        }
+
+        candidate = command._candidate_from_raw_row(
+            row,
+            date(2025, 5, 9),
+            target_authorization_id=99,
+            target_drifted=True,
+        )
+
+        self.assertEqual(candidate.authorization_id, 99)
+        self.assertEqual(candidate.start_date, date(2024, 6, 1))
+        self.assertEqual(candidate.end_date, date(2028, 6, 1))
+        self.assertIn('manually reviewed', candidate.note)
+
+
+class CatchUpValidityIntervalsCommandTests(TestCase):
+    def test_action_for_identifies_unchanged_created_and_gap_interval(self):
+        command = CatchUpValidityIntervalsCommand()
+        existing = [
+            SimpleNamespace(start_date=date(2024, 1, 1), end_date=date(2028, 1, 1), source='legacy_import'),
+        ]
+
+        self.assertEqual(command._action_for(existing, existing), 'unchanged')
+        self.assertEqual(command._action_for([], existing), 'created')
+        self.assertEqual(
+            command._action_for(
+                existing,
+                existing + [SimpleNamespace(start_date=date(2028, 2, 1), end_date=date(2032, 2, 1), source='portal_authorization')],
+            ),
+            'added_gap_interval',
+        )
+
+    def test_requires_since_or_all(self):
+        with self.assertRaises(CommandError):
+            call_command('catch_up_validity_intervals')
 
 
 class ActivatePendingWaiverAuthorizationsCommandTests(AdditionalCoverageBase):

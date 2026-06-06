@@ -6,9 +6,8 @@ This document describes how backups are created, verified, restored, and archive
 
 The current production setup uses:
 - a DigitalOcean Droplet for the Django/MySQL application;
-- encrypted local database backups on the droplet;
 - DigitalOcean Spaces for remote backup storage;
-- optional manual offline backup copies for ransomware resilience.
+- manual encrypted offline backup copies for monthly archives and major milestones.
 
 The goals of this system are:
 - protect against accidental data modification;
@@ -29,10 +28,12 @@ This system intentionally favors simplicity and reliability over fine-grained po
 
 ### Where Backups Live
 
-Local short-term backups:
-- Path: `/var/backups/an-tir-authorizations`
-- Retention: 7 days
-- Purpose: fast rollback for recent mistakes
+Manual droplet backups:
+- Path: `/home/antir/db_backups`
+- Retention: keep encrypted milestone/monthly files until they are downloaded and restore-tested
+- Purpose: operator-controlled monthly archives and pre-change recovery points
+
+Do not assume `/var/backups/an-tir-authorizations` or `an-tir-auth-backup-*` systemd units exist on the current droplet unless they have been revalidated.
 
 Remote long-term backups:
 - DigitalOcean Spaces bucket: `an-tir-authorization-backup`
@@ -63,264 +64,145 @@ Anyone with both the encrypted backup file and this key can decrypt the database
 
 ## Backup Schedule
 
-Backups are handled by systemd timers.
+DigitalOcean Spaces shows daily remote backups. The exact automation that creates those remote objects should be revalidated before relying on local timer commands.
 
-| Task | Time (UTC) |
-| --- | --- |
-| Local backup | 03:30 |
-| Upload to Spaces | 04:00 |
-
-Timers are persistent. If the server is offline at the scheduled time, the job should run once the system is back up.
+Monthly offline backups are manual and should follow the procedure below so the retained file is encrypted and restore-tested.
 
 ## Backup Implementation
 
-Backup logic lives in:
+The confirmed manual backup path is:
 
 ```bash
-/usr/local/sbin/an-tir-auth-backup-local.sh
-/usr/local/sbin/an-tir-auth-backup-upload.sh
+mysqldump -u antir_app -p --single-transaction --quick --no-tablespaces an_tir_authorizations
+gzip
+sudo openssl enc -aes-256-cbc -salt -pbkdf2 -pass file:/etc/an-tir-auth-backup.key
 ```
 
-Scheduling is via:
-
-```bash
-an-tir-auth-backup-local.timer
-an-tir-auth-backup-upload.timer
-```
-
-Remote retention cleanup must delete the full object path returned by `s3cmd ls`. The delete command should look like:
-
-```bash
-sudo s3cmd del "${FILE}"
-```
-
-It should not prepend the bucket to a value that already starts with `s3://`.
+If systemd backup units are reintroduced later, update this runbook with the validated unit names, script paths, and local backup directory.
 
 ## Verifying Backups
 
-### 1. Verify Timers Are Active
+### 1. Verify Remote Backups
 
-```bash
-systemctl list-timers | grep an-tir-auth
-```
+Use the DigitalOcean Spaces UI or a configured Spaces CLI to confirm recent backup objects exist in `an-tir-authorization-backup`.
 
 Expected:
-- `an-tir-auth-backup-local.timer`
-- `an-tir-auth-backup-upload.timer`
-
-### 2. Verify Recent Local Backups
-
-```bash
-sudo ls -lh /var/backups/an-tir-authorizations
-```
-
-Expected:
-- encrypted backup files are present;
-- filenames include date and hostname;
-- files are non-zero size;
-- local retention is roughly 7 days.
-
-### 3. Verify Remote Backups
-
-```bash
-sudo s3cmd ls s3://an-tir-authorization-backup
-```
-
-Expected:
-- recent encrypted files exist in Spaces;
+- recent backup files exist in Spaces;
 - files are dated daily;
 - remote retention is roughly 30 days.
 
-### 4. Verify Recent Job Success
+### 2. Verify Manual Offline Backup
 
-```bash
-sudo journalctl -u an-tir-auth-backup-local.service -n 80 --no-pager
-sudo journalctl -u an-tir-auth-backup-upload.service -n 80 --no-pager
-```
+After taking a manual monthly backup, verify:
 
-Look for:
-- successful completion messages;
-- no encryption or upload failures;
-- no malformed remote delete paths.
+- the retained file ends in `.sql.gz.enc`;
+- the local downloaded file is non-zero size;
+- the backup restores into `an_tir_authorizations_restore_test`;
+- temporary unencrypted `.sql` and `.sql.gz` working files were removed.
 
 ## Restore Procedures
 
-### Scenario A: Recent Mistake, Local Restore
+Production restores are incident operations. Do not restore over production from this runbook casually.
 
-Use this when:
-- the server is healthy;
-- the mistake happened within the local retention window.
-
-Identify the correct backup:
-
-```bash
-sudo ls /var/backups/an-tir-authorizations
-```
-
-Restore the database:
-
-```bash
-sudo openssl enc -d -aes-256-cbc -pbkdf2 \
-  -pass file:/etc/an-tir-auth-backup.key \
-  -in /var/backups/an-tir-authorizations/an-tir-authorizations-db-YYYYMMDD-HOST.sql.gz.enc \
-| gunzip \
-| sudo mysql
-```
-
-This recreates the database exactly as of that backup.
-
-### Scenario B: Server Loss Or Rebuild, Remote Restore
-
-Use this when:
-- the droplet was destroyed or rebuilt;
-- local backups are unavailable.
-
-Preconditions:
-- MySQL is installed and running;
-- `/etc/an-tir-auth-backup.key` is present;
-- `s3cmd` is configured.
-
-Download the desired backup:
-
-```bash
-sudo s3cmd get s3://an-tir-authorization-backup/an-tir-authorizations-db-YYYYMMDD-HOST.sql.gz.enc
-```
-
-Restore the database:
-
-```bash
-sudo openssl enc -d -aes-256-cbc -pbkdf2 \
-  -pass file:/etc/an-tir-auth-backup.key \
-  -in an-tir-authorizations-db-YYYYMMDD-HOST.sql.gz.enc \
-| gunzip \
-| sudo mysql
-```
-
-## Restore Testing
-
-Restore tests should be performed:
-- before production launch;
-- after major backup script changes;
-- quarterly after launch.
-
-### Safe Restore Test Procedure
-
-Create a temporary database:
-
-```bash
-sudo mysql -e "CREATE DATABASE an_tir_authorizations_restore_test;"
-```
-
-Restore while rewriting the database name:
-
-```bash
-sudo openssl enc -d -aes-256-cbc -pbkdf2 \
-  -pass file:/etc/an-tir-auth-backup.key \
-  -in /var/backups/an-tir-authorizations/an-tir-authorizations-db-YYYYMMDD-HOST.sql.gz.enc \
-| gunzip \
-| sed -e 's/`an_tir_authorizations`/`an_tir_authorizations_restore_test`/g' \
-      -e 's/CREATE DATABASE .*an_tir_authorizations.*/CREATE DATABASE IF NOT EXISTS `an_tir_authorizations_restore_test`;/' \
-      -e 's/USE `an_tir_authorizations`;/USE `an_tir_authorizations_restore_test`;/' \
-| sudo mysql
-```
-
-Verify tables exist:
-
-```bash
-sudo mysql -e "SHOW TABLES;" an_tir_authorizations_restore_test
-```
-
-Verify key table counts:
-
-```bash
-sudo mysql -e "SELECT COUNT(*) AS users FROM authorizations_user;" an_tir_authorizations_restore_test
-sudo mysql -e "SELECT COUNT(*) AS people FROM authorizations_person;" an_tir_authorizations_restore_test
-sudo mysql -e "SELECT COUNT(*) AS authorizations FROM authorizations_authorization;" an_tir_authorizations_restore_test
-```
-
-Drop the test database:
-
-```bash
-sudo mysql -e "DROP DATABASE an_tir_authorizations_restore_test;"
-```
-
-## Offline Backup Procedure
-
-Use this after major production milestones and then monthly. The backup file remains encrypted; do not decrypt it for routine storage.
-
-Recommended milestones:
-- immediately after production data import and validation;
-- monthly after launch;
-- before major infrastructure changes.
-
-### 1. Choose The Backup File
-
-Replace `YYYYMMDD` with the actual backup date, for example `20260505`.
-
-Example backup filename:
+For routine verification, use the **Local Offline Backup Viewing Procedure** below and restore into:
 
 ```text
-an-tir-authorizations-db-20260505-antir-authorizations.sql.gz.enc
+an_tir_authorizations_restore_test
 ```
 
-### 2. Copy The Encrypted Backup To A Temporary Readable Path
+For an actual production restore, first identify the desired encrypted `.sql.gz.enc` backup, confirm the matching key is available, stop the application service, and write out the exact restore command for review before running it. If the incident allows time, restore into a scratch database first and verify row counts before replacing production.
+
+Restore tests should be performed:
+- after taking a monthly offline backup;
+- before major production changes;
+- after backup process changes;
+- quarterly after launch.
+
+## Monthly Offline Backup Procedure
+
+Use this after major production milestones and then monthly. The retained backup file should be encrypted. Do not keep unencrypted `.sql` or `.sql.gz` files longer than needed to create and verify the encrypted backup.
+
+This procedure creates a fresh encrypted backup on the droplet and downloads that encrypted file to the local backups folder.
+
+### 1. Create A Fresh Database Dump
 
 Run on the droplet:
 
 ```bash
-BACKUP_FILE="an-tir-authorizations-db-YYYYMMDD-antir-authorizations.sql.gz.enc"
-sudo cp "/var/backups/an-tir-authorizations/${BACKUP_FILE}" "/tmp/${BACKUP_FILE}"
-sudo chown antir:antir "/tmp/${BACKUP_FILE}"
-sudo chmod 600 "/tmp/${BACKUP_FILE}"
+cd /home/antir/apps/an_tir_authorizations
+source venv/bin/activate
+
+mkdir -p "$HOME/db_backups"
+BACKUP_BASE="$HOME/db_backups/prod_backup_$(date +%Y-%m-%d_%H%M)"
+SQL_FILE="${BACKUP_BASE}.sql"
+GZ_FILE="${SQL_FILE}.gz"
+ENC_FILE="${GZ_FILE}.enc"
+
+mysqldump -u antir_app -p --single-transaction --quick --no-tablespaces an_tir_authorizations > "$SQL_FILE"
+gzip -k "$SQL_FILE"
+ls -lh "$SQL_FILE" "$GZ_FILE"
 ```
 
-### 3. Download From Local PowerShell
+The `mysqldump` command prompts for the `antir_app` database password. If the first password attempt fails with `ERROR 1045`, rerun the `mysqldump` command and enter the correct database password.
 
-Run from the operator's local computer:
+### 2. Encrypt The Compressed Dump
+
+Run on the droplet:
+
+```bash
+sudo openssl enc -aes-256-cbc -salt -pbkdf2 \
+  -pass file:/etc/an-tir-auth-backup.key \
+  -in "$GZ_FILE" \
+  -out "$ENC_FILE"
+
+sudo chown antir:antir "$ENC_FILE"
+chmod 600 "$ENC_FILE"
+ls -lh "$ENC_FILE"
+basename "$ENC_FILE"
+```
+
+Use the `basename` output as the exact filename in the local `scp` command.
+
+### 3. Download The Encrypted Backup
+
+Run from the operator's local PowerShell, not from the SSH session:
 
 ```powershell
-scp antir@YOUR_DROPLET_IP:/tmp/an-tir-authorizations-db-YYYYMMDD-antir-authorizations.sql.gz.enc "D:\AI and Technology\Programming\An_Tir_Authorizations_project\offline_backups\"
+scp antir@138.68.242.105:/home/antir/db_backups/PASTE_EXACT_FILENAME.sql.gz.enc "C:\Users\Don Room\CascadeProjects\an_tir_authorization\backups\PASTE_EXACT_FILENAME.sql.gz.enc"
 ```
 
-### 4. Remove The Temporary Droplet Copy
+Verify the local encrypted file exists and is non-zero size:
 
-Run on the droplet:
+```powershell
+Get-Item "C:\Users\Don Room\CascadeProjects\an_tir_authorization\backups\PASTE_EXACT_FILENAME.sql.gz.enc"
+```
+
+### 4. Clean Up Temporary Unencrypted Files On The Droplet
+
+After the encrypted file exists and has been downloaded, remove the unencrypted working files from the droplet:
 
 ```bash
-rm "/tmp/${BACKUP_FILE}"
+rm -f "$SQL_FILE" "$GZ_FILE"
+ls -lh "$ENC_FILE"
 ```
 
-### 5. Store The Backup Key Separately
+Keep the `.sql.gz.enc` file until the offline restore test succeeds.
 
-The required key is:
+### 5. Backup Key Reminder
+
+The required encryption key is:
 
 ```text
 /etc/an-tir-auth-backup.key
 ```
 
-To copy it for secure offline storage, run on the droplet:
+The key is root-readable on the droplet and should also be stored securely offline. Do not upload the key to DigitalOcean Spaces or commit it to the repository.
 
-```bash
-sudo cp /etc/an-tir-auth-backup.key /tmp/an-tir-auth-backup.key
-sudo chown antir:antir /tmp/an-tir-auth-backup.key
-sudo chmod 600 /tmp/an-tir-auth-backup.key
-```
-
-Download from local PowerShell:
-
-```powershell
-scp antir@YOUR_DROPLET_IP:/tmp/an-tir-auth-backup.key "D:\AI and Technology\Programming\An_Tir_Authorizations_project\offline_backups\an-tir-auth-backup.key"
-```
-
-Remove the temporary droplet copy:
-
-```bash
-rm /tmp/an-tir-auth-backup.key
-```
+Only copy the key again if the offline key copy is missing or being rotated.
 
 ## Local Offline Backup Viewing Procedure
 
-Use this when you have an offline encrypted backup saved on your local computer and want to inspect it without touching production.
+Use this when you have an encrypted offline backup saved on your local computer and want to inspect it without touching production.
 
 This procedure restores the selected backup into the local scratch database:
 
@@ -334,10 +216,11 @@ Do not restore an offline backup directly into the local development database un
 
 - MySQL is installed and running locally.
 - The scratch database `an_tir_authorizations_restore_test` exists locally, or you have permission to create it.
+- Git for Windows is installed, or you know the local paths to `openssl.exe` and `gzip.exe`.
 - You have the encrypted backup file, for example:
 
 ```text
-an-tir-authorizations-db-YYYYMMDD-antir-authorizations.sql.gz.enc
+prod_backup_YYYY-MM-DD_HHMM.sql.gz.enc
 ```
 
 - You have the matching backup key file:
@@ -348,10 +231,10 @@ an-tir-auth-backup.key
 
 ### 1. Set Local Paths
 
-Run from PowerShell on the local computer. Update these paths for the backup you want to inspect.
+Run from PowerShell on the local computer. Update `$BackupFile` for the backup you want to inspect.
 
 ```powershell
-$BackupFile = "C:\Users\Don Room\CascadeProjects\an_tir_authorization\backups\an-tir-authorizations-db-YYYYMMDD-antir-authorizations.sql.gz.enc"
+$BackupFile = "C:\Users\Don Room\CascadeProjects\an_tir_authorization\backups\PASTE_EXACT_BACKUP_FILENAME.sql.gz.enc"
 $KeyFile = "D:\AI and Technology\Programming\An_Tir_Authorizations_project\offline_backups\an-tir-auth-backup.key"
 $RestoreDb = "an_tir_authorizations_restore_test"
 $MysqlUser = "root"
@@ -366,30 +249,28 @@ New-Item -ItemType Directory -Force -Path $TempDir
 
 Replace `root` with the local MySQL user you normally use if needed. The `-p` flag in later commands makes MySQL prompt for that user's password.
 
-The example OpenSSL and gzip paths are the Git for Windows defaults. If those files are not present, install Git for Windows or update `$OpenSslExe` and `$GzipExe` to the local paths for those tools.
-
 ### 2. Prepare The Scratch Database
 
 This wipes any prior restore-test contents before loading the selected backup.
-
-When it asks for the password, enter the password for the MySQL user rather than the specific database.
 
 ```powershell
 mysql -u $MysqlUser -p -e "DROP DATABASE IF EXISTS $RestoreDb; CREATE DATABASE $RestoreDb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
 
+When prompted, enter the password for the local MySQL user.
+
 ### 3. Decrypt And Decompress The Backup Temporarily
 
-This creates temporary decrypted files under your Windows temp directory. They are removed at the end of this procedure.
+This creates temporary decrypted SQL files under your Windows temp directory. They are removed at the end of this procedure.
 
 ```powershell
 & $OpenSslExe enc -d -aes-256-cbc -pbkdf2 -pass file:"$KeyFile" -in "$BackupFile" -out "$EncryptedSqlGz"
 & $GzipExe -dc "$EncryptedSqlGz" > "$SqlFile"
 ```
 
-### 4. Rewrite The Dump To Use The Scratch Database
+### 4. Rewrite Any Production Database Statements
 
-The production backup may contain `CREATE DATABASE` and `USE` statements for `an_tir_authorizations`. Rewrite those statements so the import targets only `an_tir_authorizations_restore_test`.
+Some dumps include `CREATE DATABASE` or `USE` statements for `an_tir_authorizations`; others contain only table statements. This rewrite is safe for both shapes.
 
 ```powershell
 $reader = [System.IO.StreamReader]::new($SqlFile)
@@ -409,8 +290,10 @@ finally {
 
 ### 5. Import The Backup Into The Scratch Database
 
+Always include `$RestoreDb` in the import command. Some backups do not contain a `USE` statement, and importing without a database selected fails with `ERROR 1046: No database selected`.
+
 ```powershell
-$ImportCommand = 'mysql -u ' + $MysqlUser + ' -p < "' + $RewrittenSqlFile + '"'
+$ImportCommand = 'mysql -u ' + $MysqlUser + ' -p ' + $RestoreDb + ' < "' + $RewrittenSqlFile + '"'
 cmd /c $ImportCommand
 ```
 
@@ -422,12 +305,13 @@ Check that tables were restored:
 mysql -u $MysqlUser -p -e "SHOW TABLES;" $RestoreDb
 ```
 
-Check key row counts:
+Check key row counts and recent users:
 
 ```powershell
 mysql -u $MysqlUser -p -e "SELECT COUNT(*) AS users FROM authorizations_user;" $RestoreDb
 mysql -u $MysqlUser -p -e "SELECT COUNT(*) AS people FROM authorizations_person;" $RestoreDb
 mysql -u $MysqlUser -p -e "SELECT COUNT(*) AS authorizations FROM authorizations_authorization;" $RestoreDb
+mysql -u $MysqlUser -p -e "SELECT id, username, email, date_joined FROM authorizations_user ORDER BY id DESC LIMIT 10;" $RestoreDb
 ```
 
 To browse the data, point your local MySQL client at:
@@ -438,104 +322,75 @@ database: an_tir_authorizations_restore_test
 
 Keep this database read-only in practice. It is for inspection and restore verification, not for application use.
 
-STOP!! 
-This is where you can inspect the database and verify the backup is correct. The next steps remove it.
+STOP: this is where you can inspect the database and verify the backup is correct. The next steps remove decrypted working files and, optionally, wipe the scratch database.
 
-### 7. Wipe The Restored Data When Done
+### 7. Remove Temporary Decrypted Files
+
+Delete the temporary decrypted working files:
+
+```powershell
+Remove-Item -LiteralPath $EncryptedSqlGz, $SqlFile, $RewrittenSqlFile -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Force $TempDir
+```
+
+Only the original encrypted offline backup file and separately stored key should remain.
+
+### 8. Wipe The Restored Data When Done
 
 When you are done inspecting the backup, drop and recreate the scratch database so the backup contents are no longer present in an open database.
 
 ```powershell
 mysql -u $MysqlUser -p -e "DROP DATABASE IF EXISTS $RestoreDb; CREATE DATABASE $RestoreDb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-```
-
-Confirm it is empty:
-
-```powershell
 mysql -u $MysqlUser -p -e "SHOW TABLES;" $RestoreDb
 ```
 
 Expected result:
 - no tables are listed.
 
-### 8. Remove Temporary Decrypted Files
-
-Delete the temporary decrypted working files:
-
-```powershell
-Remove-Item -LiteralPath $EncryptedSqlGz, $SqlFile, $RewrittenSqlFile -Force -ErrorAction SilentlyContinue
-```
-
-Confirm the temporary folder no longer contains decrypted restore files:
-
-```powershell
-Get-ChildItem -Force $TempDir
-```
-
-Only the original encrypted offline backup and separately stored key should remain.
-
 ## Failure Modes And Responses
 
-### Local Backup Fails
+### Manual Dump Fails
 
-- Upload will not have a fresh backup to upload.
-- Check logs:
+- Symptom: `mysqldump` exits with `ERROR 1045`.
+- Cause: wrong MySQL password for `antir_app`.
+- Response: rerun the `mysqldump` command and enter the correct database password.
 
-```bash
-sudo journalctl -u an-tir-auth-backup-local.service -n 80 --no-pager
+### Encryption Fails
+
+- Symptom: `openssl` cannot read `/etc/an-tir-auth-backup.key`.
+- Cause: the key is root-readable.
+- Response: run the OpenSSL encryption command with `sudo`, as shown in the monthly backup procedure.
+
+### Restore Import Fails With No Database Selected
+
+- Symptom: `ERROR 1046 (3D000): No database selected`.
+- Cause: the dump does not contain a `USE` statement.
+- Response: include the scratch database name in the import command:
+
+```powershell
+$ImportCommand = 'mysql -u ' + $MysqlUser + ' -p ' + $RestoreDb + ' < "' + $RewrittenSqlFile + '"'
+cmd /c $ImportCommand
 ```
 
-### Upload Fails
+### Remote Backup Cadence Looks Wrong
 
-- Local backups remain intact.
-- Check logs:
-
-```bash
-sudo journalctl -u an-tir-auth-backup-upload.service -n 80 --no-pager
-```
-
-- Rerun upload manually:
-
-```bash
-sudo /usr/local/sbin/an-tir-auth-backup-upload.sh
-```
-
-### Remote Retention Fails
-
-- Symptom: old files remain in Spaces beyond the documented retention window.
-- Check upload logs:
-
-```bash
-sudo journalctl -u an-tir-auth-backup-upload.service -n 80 --no-pager
-```
-
-- Confirm delete commands target paths like:
-
-```text
-s3://an-tir-authorization-backup/an-tir-authorizations-db-YYYYMMDD-antir-authorizations.sql.gz.enc
-```
-
-- They should not target paths like:
-
-```text
-s3://an-tir-authorization-backup/s3://an-tir-authorization-backup/...
-```
+- Symptom: DigitalOcean Spaces does not show a recent dated backup object.
+- Response: take a manual encrypted monthly backup using this runbook, then separately investigate the remote backup automation.
 
 ### Disk Pressure
 
 - Risk: local disk fills.
 - Mitigation:
-  - local retention is enforced;
-  - disk usage must be monitored;
-  - droplet currently has expanded disk capacity after the 2026-05 resize.
+  - remove temporary unencrypted `.sql` and `.sql.gz` files after the `.sql.gz.enc` file is created and downloaded;
+  - monitor `/home/antir/db_backups`;
+  - prune old encrypted manual files after they are safely retained offline.
 
 ## Monitoring Requirements
 
 At minimum, monitor:
 
 - root filesystem usage (`/`);
-- presence of recent backup files;
-- systemd timer failures;
+- presence of recent encrypted files in `/home/antir/db_backups`;
 - remote backup count/date range;
 - periodic restore test completion.
 
@@ -569,19 +424,19 @@ For ransomware resilience:
 
 ## Verified Status
 
-As of 2026-05-05:
+As of 2026-06-05:
 
-- Local encrypted backup creation was verified.
-- Remote upload to DigitalOcean Spaces was verified.
-- Restore into `an_tir_authorizations_restore_test` was verified.
-- Key table counts were checked during restore testing.
-- Remote retention cleanup was corrected and verified.
-- The backup encryption key was copied for offline storage.
+- DigitalOcean Spaces contains recent dated backup objects.
+- Manual `mysqldump` to `/home/antir/db_backups` was verified.
+- Manual encryption with `/etc/an-tir-auth-backup.key` was verified.
+- Download of an encrypted `.sql.gz.enc` backup to the local backups folder was verified.
+- Local restore flow requires importing with the scratch database name because the manual dump may not include a `USE` statement.
+- The older `/var/backups/an-tir-authorizations` and `an-tir-auth-backup-*` systemd workflow was not present in the observed shell session and should not be treated as current without revalidation.
 
 ## Ownership And Handoff Notes
 
-- Backup logic lives in `/usr/local/sbin/`.
-- Scheduling is via systemd timers.
+- Confirmed monthly backup logic is the manual encrypted procedure in this runbook.
+- Remote daily backup automation exists because DigitalOcean Spaces has current files, but its implementation path still needs to be revalidated and documented.
 - Server-local credentials and keys must remain protected.
 - Offline monthly archives should be kept outside the droplet and Spaces bucket.
 - The system is designed to be transferred to Kingdom ownership with minimal changes.

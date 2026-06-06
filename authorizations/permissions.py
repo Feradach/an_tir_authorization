@@ -605,24 +605,37 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         if fighter_is_minor:
             return False, 'Must be an adult to become a senior marshal.'
 
-    # Rule 4: A Rapier or Youth Rapier fighter must have single sword as their first weapon authorization
-    # Since these require single sword first, they rely on single sword being before the other combat styles so that they can be added in the same form submission.
+    # Rule 4: Rapier secondaries require Single Sword to exist in a non-terminal status.
+    # Their effective expiration is capped by Active Single Sword, so they remain invalid
+    # until Single Sword becomes active.
+    terminal_prerequisite_statuses = ['Inactive', 'Rejected', 'Revoked']
     style_base_name = youth_base_style_name(style.name)
-    if not style_base_name in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
-        if style.discipline.name == 'Rapier Combat':
-            if not active_authorizations.filter(style__name='Single Sword', style__discipline__name='Rapier Combat').exists():
-                return False, 'A fighter must be authorized with single sword as their first rapier authorization.'
-        if style.discipline.name == 'Youth Rapier':
-            category = youth_age_category_for_style_name(style.name)
-            single_sword_names = ['Single Sword']
-            if category:
-                single_sword_names.append(f'{category} - Single Sword')
-            if not active_authorizations.filter(style__name__in=single_sword_names, style__discipline__name='Youth Rapier').exists():
-                return False, 'A fighter must be authorized with single sword as their first youth rapier authorization.'
+    if style.discipline.name == 'Rapier Combat' and style.name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
+        if not all_authorizations.filter(
+            style__discipline__name='Rapier Combat',
+            style__name='Single Sword',
+        ).exclude(status__name__in=terminal_prerequisite_statuses).exists():
+            return False, 'A fighter must have a single sword rapier authorization before adding other rapier authorizations.'
+    if style.discipline.name == 'Youth Rapier' and style_base_name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
+        category = youth_age_category_for_style_name(style.name)
+        single_sword_names = ['Single Sword']
+        if category:
+            single_sword_names.append(f'{category} - Single Sword')
+        if not all_authorizations.filter(
+            style__discipline__name='Youth Rapier',
+            style__name__in=single_sword_names,
+        ).exclude(status__name__in=terminal_prerequisite_statuses).exists():
+            return False, 'A fighter must have a single sword youth rapier authorization before adding other youth rapier authorizations.'
     
     # Rule 5: A Cut & Thrust fighter cannot have spear as their first authorization.
     if style.discipline.name == 'Cut & Thrust' and style.name == 'Spear':
-        if not active_authorizations.filter(style__discipline__name='Cut & Thrust').exists():
+        if not all_authorizations.filter(
+            style__discipline__name='Cut & Thrust',
+        ).exclude(
+            style__name__in=['Spear', 'Junior Marshal', 'Senior Marshal'],
+        ).exclude(
+            status__name__in=terminal_prerequisite_statuses,
+        ).exists():
             return False, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.'
 
     # Rule 6: Rapier fighters must be at lest 14 years old
@@ -689,27 +702,33 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
 
     # Rule 11a: Mounted Gaming requires General Riding.
     if style.name in _MOUNTED_GAMING_STYLES:
-        if not active_authorizations.filter(
+        if not all_authorizations.filter(
             style__discipline__name='Equestrian',
             style__name__in=_GENERAL_RIDING_STYLES,
+        ).exclude(
+            status__name__in=terminal_prerequisite_statuses,
         ).exists():
-            return False, 'Mounted Gaming requires an active General Riding authorization.'
+            return False, 'Mounted Gaming requires a General Riding authorization.'
 
     # Rule 11b: Mounted weapon-game special authorizations require Mounted Gaming.
     if style.name in _MOUNTED_WEAPON_GAME_STYLES:
-        if not active_authorizations.filter(
+        if not all_authorizations.filter(
             style__discipline__name='Equestrian',
             style__name__in=_MOUNTED_GAMING_STYLES,
+        ).exclude(
+            status__name__in=terminal_prerequisite_statuses,
         ).exists():
-            return False, f'{style.name} requires an active Mounted Gaming authorization.'
+            return False, f'{style.name} requires a Mounted Gaming authorization.'
 
     # Rule 11c: Mounted Heavy Combat additionally requires General Riding.
     if style.name in _MOUNTED_COMBAT_STYLES:
-        if not active_authorizations.filter(
+        if not all_authorizations.filter(
             style__discipline__name='Equestrian',
             style__name__in=_GENERAL_RIDING_STYLES,
+        ).exclude(
+            status__name__in=terminal_prerequisite_statuses,
         ).exists():
-            return False, 'Mounted Heavy Combat requires an active General Riding authorization.'
+            return False, 'Mounted Heavy Combat requires a General Riding authorization.'
 
     # Rule 12: Youth rapier marshals must already be Senior Rapier marshals
     if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
@@ -1324,7 +1343,6 @@ def approve_authorization(request):
                     authorization.status = pending_background_check_status
                 else:
                     authorization.status = active_status
-                authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
                 save_authorization(authorization)
                 record_note(authorization, 'marshal_approved', note)
                 if authorization.status == active_status:
@@ -1340,7 +1358,6 @@ def approve_authorization(request):
             else:
                 if waiver_current(authorization.person.user):
                     authorization.status = active_status
-                    authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
                     save_authorization(authorization)
                     # Rule 5a: If a senior-level authorization gets full approval, delete no longer relevant junior authorization.
                     remove_superseded_junior_authorization(authorization)
@@ -1370,7 +1387,6 @@ def approve_authorization(request):
         else:
             authorization.status = active_status if waiver_current(authorization.person.user) else pending_waiver_status
 
-        authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
         save_authorization(authorization)
 
         # Ensure waiver does not trail authorization expiration for active approvals.
@@ -1407,7 +1423,6 @@ def approve_authorization(request):
         else:
             authorization.status = active_status if waiver_current(authorization.person.user) else pending_waiver_status
 
-        authorization.expiration = calculate_authorization_expiration(authorization.person, authorization.style)
         save_authorization(authorization)
 
         if authorization.status == active_status:

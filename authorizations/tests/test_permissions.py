@@ -214,6 +214,167 @@ class EffectiveExpirationTests(AuthorizationTestBase):
 
         self.assertEqual(auth.effective_expiration, base_exp)
 
+    def test_rapier_secondary_effective_expiration_is_limited_by_single_sword(self):
+        _, fighter = self.make_person('fighter_rapier_secondary', 'Fighter Rapier Secondary')
+        secondary_style = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        single_sword_exp = date.today() + timedelta(days=60)
+        secondary_exp = date.today() + relativedelta(years=2)
+        self.grant_authorization(fighter, self.style_single_rapier, expiration=single_sword_exp)
+        auth = self.grant_authorization(fighter, secondary_style, expiration=secondary_exp)
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, single_sword_exp)
+        self.assertEqual(self._date_value(annotated_auth.effective_expiration_date), single_sword_exp)
+
+    def test_rapier_secondary_without_active_single_sword_is_effectively_expired(self):
+        _, fighter = self.make_person('fighter_rapier_no_single', 'Fighter Rapier No Single')
+        secondary_style = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        auth = self.grant_authorization(
+            fighter,
+            secondary_style,
+            expiration=date.today() + relativedelta(years=2),
+        )
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, date.today() - relativedelta(years=1))
+        self.assertEqual(
+            self._date_value(annotated_auth.effective_expiration_date),
+            date.today() - relativedelta(years=1),
+        )
+
+    def test_youth_rapier_secondary_effective_expiration_is_limited_by_category_single_sword(self):
+        _, fighter = self.make_person(
+            'fighter_youth_rapier_secondary',
+            'Fighter Youth Rapier Secondary',
+            birthday=date.today() - relativedelta(years=12),
+        )
+        single_sword_exp = date.today() + timedelta(days=45)
+        secondary_exp = date.today() + relativedelta(years=1)
+        self.grant_authorization(
+            fighter,
+            self.style_gryphon_single_youth_rapier,
+            expiration=single_sword_exp,
+        )
+        auth = self.grant_authorization(
+            fighter,
+            self.style_gryphon_defensive_youth_rapier,
+            expiration=secondary_exp,
+        )
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, single_sword_exp)
+        self.assertEqual(self._date_value(annotated_auth.effective_expiration_date), single_sword_exp)
+
+    def test_youth_rapier_secondary_without_active_single_sword_is_effectively_expired(self):
+        _, fighter = self.make_person(
+            'fighter_youth_rapier_no_single',
+            'Fighter Youth Rapier No Single',
+            birthday=date.today() - relativedelta(years=12),
+        )
+        auth = self.grant_authorization(
+            fighter,
+            self.style_gryphon_defensive_youth_rapier,
+            expiration=date.today() + relativedelta(years=1),
+        )
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, date.today() - relativedelta(years=1))
+        self.assertEqual(
+            self._date_value(annotated_auth.effective_expiration_date),
+            date.today() - relativedelta(years=1),
+        )
+
+    def test_cut_and_thrust_spear_effective_expiration_is_limited_by_foundation_style(self):
+        discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
+        style_longsword = WeaponStyle.objects.create(name='Longsword', discipline=discipline_cut_and_thrust)
+        style_spear = WeaponStyle.objects.create(name='Spear', discipline=discipline_cut_and_thrust)
+        _, fighter = self.make_person('fighter_ct_spear', 'Fighter CT Spear')
+        foundation_exp = date.today() + timedelta(days=75)
+        spear_exp = date.today() + relativedelta(years=2)
+        self.grant_authorization(fighter, style_longsword, expiration=foundation_exp)
+        auth = self.grant_authorization(fighter, style_spear, expiration=spear_exp)
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, foundation_exp)
+        self.assertEqual(self._date_value(annotated_auth.effective_expiration_date), foundation_exp)
+
+    def test_cut_and_thrust_spear_without_active_foundation_style_is_effectively_expired(self):
+        discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
+        style_spear = WeaponStyle.objects.create(name='Spear', discipline=discipline_cut_and_thrust)
+        _, fighter = self.make_person('fighter_ct_spear_no_foundation', 'Fighter CT Spear No Foundation')
+        auth = self.grant_authorization(
+            fighter,
+            style_spear,
+            expiration=date.today() + relativedelta(years=2),
+        )
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, date.today() - relativedelta(years=1))
+        self.assertEqual(
+            self._date_value(annotated_auth.effective_expiration_date),
+            date.today() - relativedelta(years=1),
+        )
+
+    def test_mounted_gaming_effective_expiration_is_limited_by_general_riding(self):
+        _, fighter = self.make_person('fighter_eq_mounted_gaming', 'Fighter EQ Mounted Gaming')
+        general_riding_exp = date.today() + timedelta(days=40)
+        mounted_gaming_exp = date.today() + relativedelta(years=2)
+        self.grant_authorization(fighter, self.style_general_riding, expiration=general_riding_exp)
+        auth = self.grant_authorization(fighter, self.style_mounted_gaming, expiration=mounted_gaming_exp)
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, general_riding_exp)
+        self.assertEqual(self._date_value(annotated_auth.effective_expiration_date), general_riding_exp)
+
+    def test_mounted_weapon_game_effective_expiration_is_limited_by_mounted_gaming(self):
+        _, fighter = self.make_person('fighter_eq_mounted_archery', 'Fighter EQ Mounted Archery')
+        mounted_gaming_exp = date.today() + timedelta(days=50)
+        mounted_archery_exp = date.today() + relativedelta(years=2)
+        self.grant_authorization(fighter, self.style_mounted_gaming, expiration=mounted_gaming_exp)
+        auth = self.grant_authorization(fighter, self.style_mounted_archery, expiration=mounted_archery_exp)
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, mounted_gaming_exp)
+        self.assertEqual(self._date_value(annotated_auth.effective_expiration_date), mounted_gaming_exp)
+
+    def test_mounted_heavy_combat_effective_expiration_is_limited_by_mounted_gaming_and_general_riding(self):
+        _, fighter = self.make_person('fighter_eq_mounted_heavy', 'Fighter EQ Mounted Heavy')
+        general_riding_exp = date.today() + timedelta(days=80)
+        mounted_gaming_exp = date.today() + timedelta(days=30)
+        heavy_combat_exp = date.today() + relativedelta(years=2)
+        self.grant_authorization(fighter, self.style_general_riding, expiration=general_riding_exp)
+        self.grant_authorization(fighter, self.style_mounted_gaming, expiration=mounted_gaming_exp)
+        auth = self.grant_authorization(fighter, self.style_mounted_heavy_combat, expiration=heavy_combat_exp)
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, mounted_gaming_exp)
+        self.assertEqual(self._date_value(annotated_auth.effective_expiration_date), mounted_gaming_exp)
+
+    def test_equestrian_dependent_authorization_without_active_prerequisite_is_effectively_expired(self):
+        _, fighter = self.make_person('fighter_eq_no_prereq', 'Fighter EQ No Prereq')
+        auth = self.grant_authorization(
+            fighter,
+            self.style_mounted_gaming,
+            expiration=date.today() + relativedelta(years=2),
+        )
+
+        annotated_auth = Authorization.objects.with_effective_expiration().get(id=auth.id)
+
+        self.assertEqual(auth.effective_expiration, date.today() - relativedelta(years=1))
+        self.assertEqual(
+            self._date_value(annotated_auth.effective_expiration_date),
+            date.today() - relativedelta(years=1),
+        )
+
     def test_marshal_effective_expiration_is_limited_by_membership(self):
         user, fighter = self.make_person(
             'fighter_marshal',
@@ -596,6 +757,146 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertTrue(ok, msg)
         self.assertEqual(msg, 'Authorization follows all rules.')
 
+    def test_youth_rapier_secondary_accepts_pending_single_sword(self):
+        marshal_user, marshal = self.make_person(
+            'youth_rapier_no_single_marshal',
+            'Youth Rapier No Single Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(marshal, self.style_sm_youth_rapier)
+        _, fighter = self.make_person(
+            'youth_rapier_no_single_target',
+            'Youth Rapier No Single Target',
+            birthday=date.today() - relativedelta(years=12),
+        )
+        self.grant_authorization(
+            fighter,
+            self.style_gryphon_single_youth_rapier,
+            status=self.status_pending,
+        )
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_gryphon_defensive_youth_rapier.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_youth_rapier_secondary_requires_existing_single_sword(self):
+        marshal_user, marshal = self.make_person(
+            'youth_rapier_requires_single_marshal',
+            'Youth Rapier Requires Single Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(marshal, self.style_sm_youth_rapier)
+        _, fighter = self.make_person(
+            'youth_rapier_requires_single_target',
+            'Youth Rapier Requires Single Target',
+            birthday=date.today() - relativedelta(years=12),
+        )
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_gryphon_defensive_youth_rapier.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(
+            msg,
+            'A fighter must have a single sword youth rapier authorization before adding other youth rapier authorizations.',
+        )
+
+    def test_adult_rapier_secondary_accepts_pending_single_sword(self):
+        marshal_user, marshal = self.make_person('adult_rapier_marshal', 'Adult Rapier Marshal')
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        secondary_style = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        self.grant_authorization(marshal, style_sm_rapier)
+        _, fighter = self.make_person('adult_rapier_target', 'Adult Rapier Target')
+        self.grant_authorization(fighter, self.style_single_rapier, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, secondary_style.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_adult_rapier_secondary_requires_existing_single_sword(self):
+        marshal_user, marshal = self.make_person('adult_rapier_requires_single_marshal', 'Adult Rapier Requires Single Marshal')
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        secondary_style = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        self.grant_authorization(marshal, style_sm_rapier)
+        _, fighter = self.make_person('adult_rapier_requires_single_target', 'Adult Rapier Requires Single Target')
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, secondary_style.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(
+            msg,
+            'A fighter must have a single sword rapier authorization before adding other rapier authorizations.',
+        )
+
+    def test_cut_and_thrust_spear_accepts_pending_foundation_style(self):
+        discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
+        style_longsword = WeaponStyle.objects.create(name='Longsword', discipline=discipline_cut_and_thrust)
+        style_spear = WeaponStyle.objects.create(name='Spear', discipline=discipline_cut_and_thrust)
+        style_sm_cut_and_thrust = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_cut_and_thrust)
+        marshal_user, marshal = self.make_person('ct_spear_marshal', 'CT Spear Marshal')
+        self.grant_authorization(marshal, style_sm_cut_and_thrust)
+        _, fighter = self.make_person('ct_spear_target', 'CT Spear Target')
+        self.grant_authorization(fighter, style_longsword, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, style_spear.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_cut_and_thrust_spear_requires_existing_foundation_style(self):
+        discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
+        style_spear = WeaponStyle.objects.create(name='Spear', discipline=discipline_cut_and_thrust)
+        style_sm_cut_and_thrust = WeaponStyle.objects.create(name='Senior Marshal', discipline=discipline_cut_and_thrust)
+        marshal_user, marshal = self.make_person('ct_spear_requires_foundation_marshal', 'CT Spear Requires Foundation Marshal')
+        self.grant_authorization(marshal, style_sm_cut_and_thrust)
+        _, fighter = self.make_person('ct_spear_requires_foundation_target', 'CT Spear Requires Foundation Target')
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, style_spear.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'A fighter cannot be authorized with spear as their first cut and thrust authorization.')
+
+    def test_mounted_gaming_accepts_pending_general_riding(self):
+        marshal_user, marshal = self.make_person('eq_mg_pending_marshal', 'EQ MG Pending Marshal')
+        _, fighter = self.make_person('eq_mg_pending_target', 'EQ MG Pending Target')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_general_riding, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_mounted_gaming.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_mounted_weapon_game_accepts_pending_mounted_gaming(self):
+        marshal_user, marshal = self.make_person('eq_mounted_special_pending_marshal', 'EQ Mounted Special Pending Marshal')
+        _, fighter = self.make_person('eq_mounted_special_pending_target', 'EQ Mounted Special Pending Target')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(marshal, self.style_general_riding)
+        self.grant_authorization(marshal, self.style_mounted_gaming)
+        self.grant_authorization(marshal, self.style_mounted_archery)
+        self.grant_authorization(fighter, self.style_mounted_gaming, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_mounted_archery.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_mounted_heavy_combat_accepts_pending_mounted_gaming_and_general_riding(self):
+        marshal_user, marshal = self.make_person('eq_mhc_pending_marshal', 'EQ MHC Pending Marshal')
+        _, fighter = self.make_person('eq_mhc_pending_target', 'EQ MHC Pending Target')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(marshal, self.style_general_riding)
+        self.grant_authorization(marshal, self.style_mounted_gaming)
+        self.grant_authorization(marshal, self.style_mounted_heavy_combat)
+        self.grant_authorization(fighter, self.style_general_riding, status=self.status_pending)
+        self.grant_authorization(fighter, self.style_mounted_gaming, status=self.status_pending)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_mounted_heavy_combat.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
     def test_blocks_pending_duplicate_authorization(self):
         marshal_user, marshal = self.make_person('pending_marshal', 'Awaiting Second Marshal Concurrence Marshal')
         _, fighter = self.make_person('pending_target', 'Awaiting Second Marshal Concurrence Target')
@@ -735,7 +1036,7 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_mounted_gaming.id)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'Mounted Gaming requires an active General Riding authorization.')
+        self.assertEqual(msg, 'Mounted Gaming requires a General Riding authorization.')
 
     def test_mounted_archery_requires_mounted_gaming(self):
         marshal_user, marshal = self.make_person('eq_sm_ma', 'Eq SM MA')
@@ -746,7 +1047,7 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_mounted_archery.id)
 
         self.assertFalse(ok)
-        self.assertEqual(msg, 'Mounted Archery requires an active Mounted Gaming authorization.')
+        self.assertEqual(msg, 'Mounted Archery requires a Mounted Gaming authorization.')
 
     def test_first_time_special_requires_same_skill_marshal_but_renewal_does_not(self):
         marshal_user, marshal = self.make_person('eq_sm_special', 'Eq SM Special')

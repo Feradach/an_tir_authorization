@@ -14,6 +14,7 @@ urlpatterns = [
     path('sign_waiver/<int:user_id>', views.sign_waiver, name='sign_waiver'),
     path('api/styles/<int:discipline_id>/', views.get_weapon_styles, name='get_weapon_styles'),
     path('api/equestrian_authorizations/', views.get_equestrian_authorizations, name='get_equestrian_authorizations'),
+    path('api/officer_person_lookup/', views.officer_person_lookup, name='officer_person_lookup'),
     path('api/validate_authorization/', views.validate_authorization_rules, name='validate_authorization_rules'),
     path('api/validate_authorization_action/', views.validate_authorization_action, name='validate_authorization_action'),
     path('api/validate_sanction_action/', views.validate_sanction_action, name='validate_sanction_action'),

@@ -120,6 +120,22 @@
                             </p>
                         {% endif %}
                     {% endif %}
+                    {% if data.actual_expirations %}
+                        {% for actual_expiration in data.actual_expirations %}
+                            <p>
+                                <details class="d-inline">
+                                    <summary class="d-inline" style="cursor: pointer; list-style: none;">
+                                        [?]
+                                    </summary>
+                                    <span class="ms-1 small text-muted">
+                                        This is the authorization's actual expiration date. It may not currently be valid past the prerequisite authorization shown by the earliest expiration.
+                                    </span>
+                                </details>
+                                <strong>{{ actual_expiration.style }} Renewal:</strong>
+                                <span class="past-expiration">{{ actual_expiration.expiration }}</span>
+                            </p>
+                        {% endfor %}
+                    {% endif %}
                     <p><strong>Authorizing Marshal:</strong> {{ data.marshal_name }}</p>
                     {% if auth_officer %}
                         <p><strong>Concurring Fighter:</strong>
@@ -134,6 +150,44 @@
             </div>
         {% endfor %}
     </div>
+    {% if limited_authorization_list %}
+        <h4>Authorizations Not Currently Valid</h4>
+        <div class="row">
+            {% for discipline, data in limited_authorization_list.items %}
+                <div class="col-md-3">
+                    <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #fff3cd; color: #333;">
+                        <h5>{{ discipline }}</h5>
+                        <p><strong>Styles:</strong>
+                        <ul>
+                        {% for style in data.styles %}
+                          <li>{{ style }}{% if not forloop.last %}, {% endif %}</li>
+                        {% endfor %}
+                        </ul>
+                        </p>
+                        <p><strong>Status:</strong> Not currently valid</p>
+                        <p>
+                            <details class="d-inline">
+                                <summary class="d-inline" style="cursor: pointer; list-style: none;">
+                                    [?]
+                                </summary>
+                                <span class="ms-1 small text-muted">
+                                    These authorizations have future renewal dates, but are not currently valid because a prerequisite authorization is missing or expired.
+                                </span>
+                            </details>
+                            <strong>Prerequisite Valid Through:</strong>
+                            <span class="past-expiration">{{ data.earliest_effective_expiration }}</span>
+                        </p>
+                        {% for actual_expiration in data.actual_expirations %}
+                            <p>
+                                <strong>{{ actual_expiration.style }} Renewal:</strong>
+                                <span class="future-expiration">{{ actual_expiration.expiration }}</span>
+                            </p>
+                        {% endfor %}
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
     {% if pending_waivers %}
         <h4>Awaiting Waiver</h4>
         <div class="row">
@@ -163,13 +217,21 @@
         {% if auth_officer %}
         <div class="row mb-2">
             <div class="col-md-4">
-                <label for="kao_submit_as_control"><strong>Approve As (optional):</strong></label>
-                <select id="kao_submit_as_control" class="form-control">
-                    <option value="">My own account</option>
-                    {% for person in all_people %}
-                        <option value="{{ person.user.id }}"{% if selected_submit_as_user_id and selected_submit_as_user_id|stringformat:"s" == person.user.id|stringformat:"s" %} selected{% endif %}>{{ person }}</option>
-                    {% endfor %}
-                </select>
+                <label for="kao_submit_as_lookup"><strong>Approve As (optional):</strong></label>
+                <input
+                    id="kao_submit_as_lookup"
+                    class="form-control"
+                    type="text"
+                    autocomplete="off"
+                    placeholder="My own account"
+                    data-person-lookup="1"
+                    data-lookup-purpose="active"
+                    data-target-id="kao_submit_as_control"
+                    value="{{ selected_submit_as_label|default:'' }}"
+                >
+                <input id="kao_submit_as_control" type="hidden" value="{{ selected_submit_as_user_id|default:'' }}">
+                <div class="person-lookup-results list-group" data-results-for="kao_submit_as_lookup"></div>
+                <small class="form-text text-muted">Search by SCA name, member number, or mundane name.</small>
             </div>
         </div>
         {% endif %}
@@ -338,27 +400,48 @@
                 <input type="hidden" name="pending_authorization" value="1">
             {% endif %}
             <h3>Add New Authorization</h3>
-            {% if auth_officer %}
+            {% if auth_officer or equestrian_auth_officer %}
                 <div class="mb-3">
                     <label for="authorizing_marshal">Authorizing Marshal:</label>
-                    <select id="authorizing_marshal" name="authorizing_marshal" class="form-control choices-dropdown">
-                        <option value="">-- Select an authorizing marshal --</option>
-                        {% for person in all_people %}
-                            <option value="{{ person }}" data-user-id="{{ person.user.id }}">{{ person }}</option>
-                        {% endfor %}
-                    </select>
-                    <input type="hidden" id="marshal_id" name="marshal_id" value="">
+                    <input
+                        id="authorizing_marshal"
+                        class="form-control"
+                        type="text"
+                        autocomplete="off"
+                        placeholder="Search by SCA name, member number, or mundane name"
+                        data-person-lookup="1"
+                        data-lookup-purpose="senior_marshal"
+                        data-target-id="marshal_id"
+                    >
+                    <input type="hidden" id="marshal_id" name="marshal_id" value="{{ pending_authorizing_marshal_user_id|default:'' }}">
+                    <div class="person-lookup-results list-group" data-results-for="authorizing_marshal"></div>
+                </div>
+                <div class="mb-3">
+                    <label for="new_authorization_date">Authorization Date:</label>
+                    <input
+                        id="new_authorization_date"
+                        name="authorization_date"
+                        class="form-control"
+                        type="date"
+                        value="{{ pending_authorization_date|default:today|date:'Y-m-d' }}"
+                        max="{{ today|date:'Y-m-d' }}"
+                    >
                 </div>
                 <div class="mb-3">
                     <label for="concurring_fighter_id">Concurring Fighter (optional):</label>
-                    <select id="concurring_fighter_id" name="concurring_fighter_id" class="form-control choices-dropdown">
-                        <option value="">-- No immediate concurrence --</option>
-                        {% for person in all_people %}
-                            <option value="{{ person.user.id }}"{% if pending_concurring_fighter_user_id and pending_concurring_fighter_user_id == person.user.id %} selected{% endif %}>
-                                {{ person }}
-                            </option>
-                        {% endfor %}
-                    </select>
+                    <input
+                        id="concurring_fighter_lookup"
+                        class="form-control"
+                        type="text"
+                        autocomplete="off"
+                        placeholder="No immediate concurrence"
+                        data-person-lookup="1"
+                        data-lookup-purpose="active"
+                        data-target-id="concurring_fighter_id"
+                        value="{{ pending_concurring_fighter_label|default:'' }}"
+                    >
+                    <input type="hidden" id="concurring_fighter_id" name="concurring_fighter_id" value="{{ pending_concurring_fighter_user_id|default:'' }}">
+                    <div class="person-lookup-results list-group" data-results-for="concurring_fighter_lookup"></div>
                     <small class="form-text text-muted">
                         Used only when a selected authorization requires concurrence.
                     </small>
@@ -541,13 +624,10 @@
             });
         }
 
-        // Initialize searchable dropdowns.
-        let authorizingMarshalChoices = null;
-        const authorizingMarshalSelect = document.getElementById('authorizing_marshal');
-        const concurringFighterSelect = document.getElementById('concurring_fighter_id');
+        const personLookupUrl = "{% url 'officer_person_lookup' %}";
+        const authorizingMarshalInput = document.getElementById('authorizing_marshal');
         const officerBranchSelect = document.getElementById('branch');
         const officerDisciplineSelect = document.getElementById('discipline');
-        const marshalIdInput = document.getElementById('marshal_id');
         const submitAsControl = document.getElementById('kao_submit_as_control');
         const disciplineSelect = document.getElementById('discipline-select');
         const stylesSelect = document.getElementById('weapon-styles-select');
@@ -556,8 +636,61 @@
 
         initSearchableSelect(officerBranchSelect, 1000);
         initSearchableSelect(officerDisciplineSelect, 1000);
-        initSearchableSelect(concurringFighterSelect, 20);
-        initSearchableSelect(submitAsControl, 20);
+
+        function wirePersonLookup(inputElement) {
+            if (!inputElement) {
+                return;
+            }
+            const hiddenInput = document.getElementById(inputElement.dataset.targetId);
+            const resultsElement = document.querySelector(`[data-results-for="${inputElement.id}"]`);
+            if (!hiddenInput || !resultsElement) {
+                return;
+            }
+            let debounceTimer = null;
+
+            function clearResults() {
+                resultsElement.innerHTML = '';
+            }
+
+            inputElement.addEventListener('input', function () {
+                hiddenInput.value = '';
+                clearTimeout(debounceTimer);
+                const query = inputElement.value.trim();
+                if (query.length < 2) {
+                    clearResults();
+                    return;
+                }
+                debounceTimer = setTimeout(function () {
+                    const purpose = inputElement.dataset.lookupPurpose || 'active';
+                    fetch(`${personLookupUrl}?q=${encodeURIComponent(query)}&purpose=${encodeURIComponent(purpose)}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            clearResults();
+                            if (!data.ok) {
+                                return;
+                            }
+                            data.results.forEach(person => {
+                                const button = document.createElement('button');
+                                button.type = 'button';
+                                button.className = 'list-group-item list-group-item-action';
+                                button.textContent = person.label;
+                                button.addEventListener('click', function () {
+                                    inputElement.value = person.label;
+                                    hiddenInput.value = person.user_id;
+                                    clearResults();
+                                });
+                                resultsElement.appendChild(button);
+                            });
+                        });
+                }, 200);
+            });
+
+            inputElement.addEventListener('blur', function () {
+                setTimeout(clearResults, 200);
+            });
+        }
+
+        document.querySelectorAll('[data-person-lookup="1"]').forEach(wirePersonLookup);
 
         const approvalForms = document.querySelectorAll('form[data-kao-submit-as="1"]');
         approvalForms.forEach(function (approvalForm) {
@@ -572,22 +705,6 @@
                 }
             });
         });
-
-        // Initialize Choices.js for the authorizing marshal dropdown
-        if (authorizingMarshalSelect) {
-            authorizingMarshalChoices = initSearchableSelect(authorizingMarshalSelect, 20);
-
-            // Update marshal_id when selection changes
-            authorizingMarshalSelect.addEventListener('change', function () {
-                const selectedOption = authorizingMarshalSelect.options[authorizingMarshalSelect.selectedIndex];
-                if (selectedOption) {
-                    const userId = selectedOption.dataset.userId;
-                    marshalIdInput.value = userId;
-                    console.log('DEBUG: Selected marshal:', selectedOption.textContent);
-                    console.log('DEBUG: Setting marshal_id to:', userId);
-                }
-            });
-        }
 
         if (!disciplineSelect || !stylesSelect || !cartContainer || !form) {
             return;
@@ -698,21 +815,10 @@
                 console.log('DEBUG: Current marshal_id value:', marshalIdField.value);
             }
 
-            // Handle marshal selection if Choices.js is initialized
-            if (authorizingMarshalChoices) {
-                const selectedChoiceValue = authorizingMarshalChoices.getValue(true);
-                const selectedValue = Array.isArray(selectedChoiceValue) ? selectedChoiceValue[0] : selectedChoiceValue;
-                console.log('DEBUG: Choices.js selected value:', selectedValue);
-                if (selectedValue) {
-                    const selectedOption = authorizingMarshalSelect.querySelector(`option[value="${selectedValue}"]`);
-                    if (selectedOption) {
-                        const userId = selectedOption.dataset.userId;
-                        if (marshalIdField) {
-                            marshalIdField.value = userId;
-                        }
-                        console.log('DEBUG: Setting marshal_id in form submit:', userId);
-                    }
-                }
+            if (authorizingMarshalInput && marshalIdField && authorizingMarshalInput.value.trim() && !marshalIdField.value) {
+                event.preventDefault();
+                alert('Please select an authorizing marshal from the search results.');
+                return;
             }
 
             // Validate weapon styles

@@ -6,7 +6,7 @@ from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
-from django.db.models import Case, When, F, Exists, OuterRef, Q, Value
+from django.db.models import Case, When, F, Exists, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce, Least
 
 BRANCH_TYPE_CHOICES = [
@@ -422,7 +422,133 @@ class AuthorizationQuerySet(models.QuerySet):
             models.Q(style__name__in=['Junior Marshal', 'Senior Marshal'])
             & models.Q(style__discipline__name__in=['Youth Armored', 'Youth Rapier'])
         )
+        rapier_secondary = (
+            models.Q(style__discipline__name='Rapier Combat')
+            & ~models.Q(style__name__in=['Single Sword', 'Junior Marshal', 'Senior Marshal'])
+        )
+        youth_rapier_secondary = (
+            models.Q(style__discipline__name='Youth Rapier')
+            & ~models.Q(style__name__in=['Single Sword', 'Junior Marshal', 'Senior Marshal'])
+            & ~models.Q(style__name__endswith=' - Single Sword')
+        )
+        cut_and_thrust_spear = (
+            models.Q(style__discipline__name='Cut & Thrust')
+            & models.Q(style__name='Spear')
+        )
+        equestrian_mounted_gaming = (
+            models.Q(style__discipline__name='Equestrian')
+            & models.Q(style__name__in=['Mounted Gaming'])
+        )
+        equestrian_mounted_weapon_game = (
+            models.Q(style__discipline__name='Equestrian')
+            & models.Q(style__name__in=[
+                'Mounted Archery',
+                'Crest Combat',
+                'Mounted Crest Combat',
+                'Jousting',
+                'Foam-Tipped Jousting',
+            ])
+        )
+        equestrian_mounted_heavy_combat = (
+            models.Q(style__discipline__name='Equestrian')
+            & models.Q(style__name__in=['Mounted Heavy Combat', 'Mounted Combat'])
+        )
         expired_fallback = Value(date.today() - relativedelta(years=1), output_field=models.DateField())
+        single_sword_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Rapier Combat',
+                style__name='Single Sword',
+                status__name='Active',
+            )
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
+        youth_single_sword_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Youth Rapier',
+                style__name='Single Sword',
+                status__name='Active',
+            )
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
+        lion_single_sword_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Youth Rapier',
+                style__name__in=['Single Sword', 'Lion - Single Sword'],
+                status__name='Active',
+            )
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
+        gryphon_single_sword_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Youth Rapier',
+                style__name__in=['Single Sword', 'Gryphon - Single Sword'],
+                status__name='Active',
+            )
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
+        dragon_single_sword_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Youth Rapier',
+                style__name__in=['Single Sword', 'Dragon - Single Sword'],
+                status__name='Active',
+            )
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
+        youth_rapier_single_sword_expiration = Case(
+            When(style__name__startswith='Lion - ', then=lion_single_sword_expiration),
+            When(style__name__startswith='Gryphon - ', then=gryphon_single_sword_expiration),
+            When(style__name__startswith='Dragon - ', then=dragon_single_sword_expiration),
+            default=youth_single_sword_expiration,
+            output_field=models.DateField(),
+        )
+        cut_and_thrust_foundation_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Cut & Thrust',
+                status__name='Active',
+            )
+            .exclude(style__name__in=['Spear', 'Junior Marshal', 'Senior Marshal'])
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
+        equestrian_general_riding_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Equestrian',
+                style__name__in=['General Riding'],
+                status__name='Active',
+            )
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
+        equestrian_mounted_gaming_expiration = Subquery(
+            Authorization.objects.filter(
+                person_id=OuterRef('person_id'),
+                style__discipline__name='Equestrian',
+                style__name__in=['Mounted Gaming'],
+                status__name='Active',
+            )
+            .order_by('-expiration')
+            .values('expiration')[:1],
+            output_field=models.DateField(),
+        )
         base_membership = Least(
             F('expiration'),
             Coalesce(F('person__user__membership_expiration'), expired_fallback),
@@ -438,6 +564,49 @@ class AuthorizationQuerySet(models.QuerySet):
             When(
                 marshal,
                 then=base_membership,
+            ),
+            When(
+                rapier_secondary,
+                then=Least(
+                    F('expiration'),
+                    Coalesce(single_sword_expiration, expired_fallback),
+                ),
+            ),
+            When(
+                youth_rapier_secondary,
+                then=Least(
+                    F('expiration'),
+                    Coalesce(youth_rapier_single_sword_expiration, expired_fallback),
+                ),
+            ),
+            When(
+                cut_and_thrust_spear,
+                then=Least(
+                    F('expiration'),
+                    Coalesce(cut_and_thrust_foundation_expiration, expired_fallback),
+                ),
+            ),
+            When(
+                equestrian_mounted_heavy_combat,
+                then=Least(
+                    F('expiration'),
+                    Coalesce(equestrian_mounted_gaming_expiration, expired_fallback),
+                    Coalesce(equestrian_general_riding_expiration, expired_fallback),
+                ),
+            ),
+            When(
+                equestrian_mounted_weapon_game,
+                then=Least(
+                    F('expiration'),
+                    Coalesce(equestrian_mounted_gaming_expiration, expired_fallback),
+                ),
+            ),
+            When(
+                equestrian_mounted_gaming,
+                then=Least(
+                    F('expiration'),
+                    Coalesce(equestrian_general_riding_expiration, expired_fallback),
+                ),
             ),
             default=F('expiration'),
             output_field=models.DateField(),
@@ -606,12 +775,159 @@ class Authorization(models.Model):
                 background_expiration = self.person.user.background_check_expiration or expired_fallback
                 return min(base_expiration, background_expiration)
             return base_expiration
+        if (
+            self.style
+            and self.style.discipline.name == 'Rapier Combat'
+            and self.style.name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']
+        ):
+            expired_fallback = date.today() - relativedelta(years=1)
+            single_sword_expiration = Authorization.objects.filter(
+                person=self.person,
+                style__discipline__name='Rapier Combat',
+                style__name='Single Sword',
+                status__name='Active',
+            ).order_by('-expiration').values_list('expiration', flat=True).first()
+            return min(self.expiration, single_sword_expiration or expired_fallback)
+        if (
+            self.style
+            and self.style.discipline.name == 'Youth Rapier'
+            and self.style.name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']
+            and not self.style.name.endswith(' - Single Sword')
+        ):
+            expired_fallback = date.today() - relativedelta(years=1)
+            single_sword_names = ['Single Sword']
+            for category in ['Lion', 'Gryphon', 'Dragon']:
+                if self.style.name.startswith(f'{category} - '):
+                    single_sword_names.append(f'{category} - Single Sword')
+                    break
+            single_sword_expiration = Authorization.objects.filter(
+                person=self.person,
+                style__discipline__name='Youth Rapier',
+                style__name__in=single_sword_names,
+                status__name='Active',
+            ).order_by('-expiration').values_list('expiration', flat=True).first()
+            return min(self.expiration, single_sword_expiration or expired_fallback)
+        if (
+            self.style
+            and self.style.discipline.name == 'Cut & Thrust'
+            and self.style.name == 'Spear'
+        ):
+            expired_fallback = date.today() - relativedelta(years=1)
+            foundation_expiration = Authorization.objects.filter(
+                person=self.person,
+                style__discipline__name='Cut & Thrust',
+                status__name='Active',
+            ).exclude(
+                style__name__in=['Spear', 'Junior Marshal', 'Senior Marshal'],
+            ).order_by('-expiration').values_list('expiration', flat=True).first()
+            return min(self.expiration, foundation_expiration or expired_fallback)
+        if self.style and self.style.discipline.name == 'Equestrian':
+            expired_fallback = date.today() - relativedelta(years=1)
+            if self.style.name in ['Mounted Gaming']:
+                general_riding_expiration = Authorization.objects.filter(
+                    person=self.person,
+                    style__discipline__name='Equestrian',
+                    style__name__in=['General Riding'],
+                    status__name='Active',
+                ).order_by('-expiration').values_list('expiration', flat=True).first()
+                return min(self.expiration, general_riding_expiration or expired_fallback)
+            if self.style.name in ['Mounted Heavy Combat', 'Mounted Combat']:
+                mounted_gaming_expiration = Authorization.objects.filter(
+                    person=self.person,
+                    style__discipline__name='Equestrian',
+                    style__name__in=['Mounted Gaming'],
+                    status__name='Active',
+                ).order_by('-expiration').values_list('expiration', flat=True).first()
+                general_riding_expiration = Authorization.objects.filter(
+                    person=self.person,
+                    style__discipline__name='Equestrian',
+                    style__name__in=['General Riding'],
+                    status__name='Active',
+                ).order_by('-expiration').values_list('expiration', flat=True).first()
+                return min(
+                    self.expiration,
+                    mounted_gaming_expiration or expired_fallback,
+                    general_riding_expiration or expired_fallback,
+                )
+            if self.style.name in [
+                'Mounted Archery',
+                'Crest Combat',
+                'Mounted Crest Combat',
+                'Jousting',
+                'Foam-Tipped Jousting',
+            ]:
+                mounted_gaming_expiration = Authorization.objects.filter(
+                    person=self.person,
+                    style__discipline__name='Equestrian',
+                    style__name__in=['Mounted Gaming'],
+                    status__name='Active',
+                ).order_by('-expiration').values_list('expiration', flat=True).first()
+                return min(self.expiration, mounted_gaming_expiration or expired_fallback)
         return self.expiration
 
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['person', 'style'], name='unique_person_style')
         ]
+
+
+AUTHORIZATION_VALIDITY_INTERVAL_SOURCE_CHOICES = [
+    ('legacy_import', 'Legacy import'),
+    ('portal_authorization', 'Portal authorization'),
+    ('paper_entry', 'Paper entry'),
+    ('membership_update', 'Membership update'),
+    ('background_check_update', 'Background check update'),
+    ('manual_repair', 'Manual repair'),
+]
+
+
+class AuthorizationValidityInterval(models.Model):
+    """Date range during which an authorization was valid for as-of-date checks."""
+    authorization = models.ForeignKey(
+        Authorization,
+        on_delete=models.CASCADE,
+        related_name='validity_intervals',
+    )
+    start_date = models.DateField(db_index=True)
+    end_date = models.DateField(db_index=True)
+    source = models.CharField(
+        max_length=50,
+        choices=AUTHORIZATION_VALIDITY_INTERVAL_SOURCE_CHOICES,
+        db_index=True,
+    )
+    created_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='authorization_validity_intervals_created',
+    )
+    note = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['authorization_id', 'start_date', 'end_date']
+        indexes = [
+            models.Index(fields=['authorization', 'start_date', 'end_date']),
+            models.Index(fields=['source', 'created_at']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=Q(start_date__lte=F('end_date')),
+                name='auth_validity_interval_start_lte_end',
+            ),
+        ]
+        verbose_name = 'authorization validity interval'
+        verbose_name_plural = 'authorization validity intervals'
+
+    def clean(self):
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValidationError('Validity interval start date must be on or before end date.')
+        super().clean()
+
+    def __str__(self):
+        return f'Authorization {self.authorization_id}: {self.start_date} to {self.end_date}'
 
 
 AUTHORIZATION_AUDIT_EVENT_CHOICES = [

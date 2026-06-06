@@ -15,6 +15,20 @@
 ### Removed
 
 
+## [1.1.4] - 2026-06-05
+### Added
+- Added backend support for tracking historical authorization status.
+
+### Changed
+- Kingdom authorization officer fighter-page controls now use searchable lookups that show member numbers and mundane names, and kingdom authorization officers can set the initial authorization date when adding an authorization. Lookup can be done by SCA name, mundane name, or member number.
+- Modified how rapier single sword, C&T spear, and various equestrian authorizations are validated to allow them to be submitted with their prerequisite authorizations at the same time.
+- Modified authorizations that have prerequisite authorizations so that the expiration of the dependent authorization cannot be later than the expiration of the prerequisite authorization.
+- Actual expiration dates for authorizations limited by prerequisite expirations are now shown to the fighter, their parent, and the appropriate kingdom authorization officer, including when the dependent authorization is not currently valid because the prerequisite is missing or expired.
+
+### Fixed
+- Improved performance for Kingdom Authorization Officer fighter pages.
+
+
 ## [1.1.3] - 2026-06-04
 ### Added
 - Added a form for requestiong new features.

@@ -5175,6 +5175,181 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertIn('Ground Crew - Senior', styles)
         self.assertNotIn('Ground Crew - Junior', styles)
 
+    def test_fighter_owner_can_view_limited_actual_expiration(self):
+        style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        single_sword_expiration = date.today() + timedelta(days=30)
+        case_expiration = date.today() + relativedelta(years=1)
+        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
+        self.grant_authorization(
+            self.candidate_ao_person,
+            self.style_single_rapier,
+            expiration=single_sword_expiration,
+            marshal=self.krapier_person,
+        )
+        self.grant_authorization(
+            self.candidate_ao_person,
+            style_case,
+            expiration=case_expiration,
+            marshal=self.krapier_person,
+        )
+
+        self.client.login(username=self.candidate_ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Case Renewal:')
+        self.assertContains(response, formatted_case_expiration)
+
+    def test_unrelated_viewer_cannot_view_limited_actual_expiration(self):
+        style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        single_sword_expiration = date.today() + timedelta(days=30)
+        case_expiration = date.today() + relativedelta(years=1)
+        self.grant_authorization(
+            self.candidate_ao_person,
+            self.style_single_rapier,
+            expiration=single_sword_expiration,
+            marshal=self.krapier_person,
+        )
+        self.grant_authorization(
+            self.candidate_ao_person,
+            style_case,
+            expiration=case_expiration,
+            marshal=self.krapier_person,
+        )
+        viewer_user, _ = self.make_person('actual_exp_unrelated', 'Actual Exp Unrelated')
+
+        self.client.login(username=viewer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Case Renewal:')
+
+    def test_fighter_owner_can_view_dependency_limited_authorization_not_currently_valid(self):
+        style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        single_sword_expiration = date.today() - timedelta(days=1)
+        case_expiration = date.today() + relativedelta(years=1)
+        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
+        self.grant_authorization(
+            self.candidate_ao_person,
+            self.style_single_rapier,
+            expiration=single_sword_expiration,
+            marshal=self.krapier_person,
+        )
+        self.grant_authorization(
+            self.candidate_ao_person,
+            style_case,
+            expiration=case_expiration,
+            marshal=self.krapier_person,
+        )
+
+        self.client.login(username=self.candidate_ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('Rapier Combat', response.context['authorization_list'])
+        self.assertIn('Rapier Combat', response.context['limited_authorization_list'])
+        self.assertContains(response, 'Authorizations Not Currently Valid')
+        self.assertContains(response, 'Case Renewal:')
+        self.assertContains(response, formatted_case_expiration)
+
+    def test_auth_officer_can_view_dependency_limited_authorization_not_currently_valid(self):
+        style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        single_sword_expiration = date.today() - timedelta(days=1)
+        case_expiration = date.today() + relativedelta(years=1)
+        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
+        self.grant_authorization(
+            self.candidate_ao_person,
+            self.style_single_rapier,
+            expiration=single_sword_expiration,
+            marshal=self.krapier_person,
+        )
+        self.grant_authorization(
+            self.candidate_ao_person,
+            style_case,
+            expiration=case_expiration,
+            marshal=self.krapier_person,
+        )
+
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Rapier Combat', response.context['limited_authorization_list'])
+        self.assertContains(response, 'Authorizations Not Currently Valid')
+        self.assertContains(response, 'Case Renewal:')
+        self.assertContains(response, formatted_case_expiration)
+
+    def test_unrelated_viewer_cannot_view_dependency_limited_authorization_not_currently_valid(self):
+        style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        single_sword_expiration = date.today() - timedelta(days=1)
+        case_expiration = date.today() + relativedelta(years=1)
+        self.grant_authorization(
+            self.candidate_ao_person,
+            self.style_single_rapier,
+            expiration=single_sword_expiration,
+            marshal=self.krapier_person,
+        )
+        self.grant_authorization(
+            self.candidate_ao_person,
+            style_case,
+            expiration=case_expiration,
+            marshal=self.krapier_person,
+        )
+        viewer_user, _ = self.make_person('dependency_limited_unrelated', 'Dependency Limited Unrelated')
+
+        self.client.login(username=viewer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['limited_authorization_list'], {})
+        self.assertNotContains(response, 'Authorizations Not Currently Valid')
+        self.assertNotContains(response, 'Case Renewal:')
+
+    def test_equestrian_actual_expiration_visibility_is_scoped_to_keao(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        style_mounted_gaming, _ = WeaponStyle.objects.get_or_create(
+            name='Mounted Gaming',
+            discipline=discipline_equestrian,
+        )
+        eq_officer_user, eq_officer_person = self.make_person(
+            'actual_exp_eq_officer',
+            'Actual Exp EQ Officer',
+        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        general_riding_expiration = date.today() + timedelta(days=30)
+        mounted_gaming_expiration = date.today() + relativedelta(years=1)
+        formatted_mounted_gaming_expiration = (
+            f'{mounted_gaming_expiration.strftime("%B")} '
+            f'{mounted_gaming_expiration.day}, {mounted_gaming_expiration.year}'
+        )
+        self.grant_authorization(
+            self.candidate_ao_person,
+            style_general_riding,
+            expiration=general_riding_expiration,
+            marshal=eq_officer_person,
+        )
+        self.grant_authorization(
+            self.candidate_ao_person,
+            style_mounted_gaming,
+            expiration=mounted_gaming_expiration,
+            marshal=eq_officer_person,
+        )
+
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        kao_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+        keao_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
+
+        self.assertEqual(kao_response.status_code, 200)
+        self.assertEqual(keao_response.status_code, 200)
+        self.assertNotContains(kao_response, 'Mounted Gaming Renewal:')
+        self.assertContains(keao_response, 'Mounted Gaming Renewal:')
+        self.assertContains(keao_response, formatted_mounted_gaming_expiration)
+
     def test_kingdom_discipline_marshal_can_appoint_regional_same_discipline(self):
         self.client.login(username=self.krapier_user.username, password='StrongPass!123')
         response = self.client.post(
@@ -5545,6 +5720,457 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(pending_auth.status, self.status_active)
 
+    def test_officer_person_lookup_includes_member_number_and_mundane_name(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('officer_person_lookup'), {
+            'q': '6060606060',
+            'purpose': 'active',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        labels = [row['label'] for row in response.json()['results']]
+        self.assertTrue(any('Office Candidate Armored' in label for label in labels))
+        self.assertTrue(any('Member #6060606060' in label for label in labels))
+        self.assertTrue(any('Candidate Armored Combat' in label for label in labels))
+
+    def test_authorizing_marshal_lookup_requires_active_senior_marshal_authorization(self):
+        active_weapon_user, active_weapon_person = self.make_person(
+            'lookup_active_weapon_only',
+            'Lookup Active Weapon Only',
+        )
+        self.grant_authorization(active_weapon_person, self.style_weapon_armored)
+        senior_user, senior_person = self.make_person(
+            'lookup_active_senior',
+            'Lookup Active Senior',
+        )
+        self.grant_authorization(senior_person, self.style_sm_armored)
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('officer_person_lookup'), {
+            'q': 'Lookup Active',
+            'purpose': 'senior_marshal',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        labels = [row['label'] for row in response.json()['results']]
+        self.assertTrue(any('Lookup Active Senior' in label for label in labels))
+        self.assertFalse(any('Lookup Active Weapon Only' in label for label in labels))
+
+    def test_active_lookup_allows_any_active_authorized_person(self):
+        active_weapon_user, active_weapon_person = self.make_person(
+            'lookup_active_any_weapon',
+            'Lookup Active Any Weapon',
+        )
+        self.grant_authorization(active_weapon_person, self.style_weapon_armored)
+        no_auth_user, no_auth_person = self.make_person(
+            'lookup_active_any_noauth',
+            'Lookup Active Any Noauth',
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('officer_person_lookup'), {
+            'q': 'Lookup Active Any',
+            'purpose': 'active',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        labels = [row['label'] for row in response.json()['results']]
+        self.assertTrue(any('Lookup Active Any Weapon' in label for label in labels))
+        self.assertFalse(any('Lookup Active Any Noauth' in label for label in labels))
+
+    def test_officer_person_lookup_fuzzy_matches_name_fields(self):
+        senior_user, senior_person = self.make_person(
+            'lookup_fuzzy_robert',
+            'Robert Fuzzy Marshal',
+        )
+        self.grant_authorization(senior_person, self.style_sm_armored)
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('officer_person_lookup'), {
+            'q': 'Robret Fuzzy',
+            'purpose': 'senior_marshal',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        labels = [row['label'] for row in response.json()['results']]
+        self.assertTrue(any('Robert Fuzzy Marshal' in label for label in labels))
+
+    def test_officer_person_lookup_does_not_fuzzy_match_membership_numbers(self):
+        active_user, active_person = self.make_person(
+            'lookup_no_fuzzy_member',
+            'Lookup Numeric Exact',
+            membership='9191919191',
+        )
+        self.grant_authorization(active_person, self.style_weapon_armored)
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('officer_person_lookup'), {
+            'q': '9191919192',
+            'purpose': 'active',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        labels = [row['label'] for row in response.json()['results']]
+        self.assertFalse(any('Lookup Numeric Exact' in label for label in labels))
+
+    def test_officer_person_lookup_rejects_non_officer(self):
+        self.client.login(username=self.candidate_armored_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('officer_person_lookup'), {'q': 'Office'})
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_kao_fighter_page_uses_person_lookup_instead_of_full_people_selects(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('all_people', response.context)
+        self.assertContains(response, 'data-person-lookup="1"')
+        self.assertContains(response, 'id="authorizing_marshal"')
+        self.assertNotContains(response, 'data-user-id="')
+
+    def test_kao_approval_preserves_existing_kingdom_review_expiration(self):
+        proposed_expiration = date.today() + relativedelta(years=3)
+        self.candidate_ao_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_ao_user.save()
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_ao_person,
+            style=self.style_weapon_armored,
+            status=self.status_kingdom,
+            marshal=self.candidate_armored_person,
+            expiration=proposed_expiration,
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'approval_date': (date.today() - timedelta(days=30)).isoformat(),
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertEqual(pending_auth.expiration, proposed_expiration)
+
+    def test_kingdom_equestrian_authorization_officer_approval_preserves_existing_expiration(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        eq_officer_user, eq_officer_person = self.make_person(
+            'office_eq_date_officer',
+            'Office EQ Date Officer',
+        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        self.candidate_ao_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_ao_user.save()
+        proposed_expiration = date.today() + relativedelta(years=3)
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_ao_person,
+            style=style_general_riding,
+            status=self.status_needs_kingdom_equestrian_waiver,
+            marshal=self.candidate_armored_person,
+            expiration=proposed_expiration,
+        )
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'approval_date': (date.today() - timedelta(days=45)).isoformat(),
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertEqual(pending_auth.expiration, proposed_expiration)
+
+    def test_concurrence_then_kingdom_approval_preserves_proposed_expiration(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': True})
+        proposed_expiration = date.today() + relativedelta(years=3)
+        self.candidate_ao_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_ao_user.save()
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_ao_person,
+            style=self.style_weapon_armored,
+            status=self.status_needs_concurrence,
+            marshal=self.candidate_rapier_person,
+            expiration=proposed_expiration,
+        )
+        self.client.login(username=self.candidate_armored_user.username, password='StrongPass!123')
+
+        concur_response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'concur_authorization',
+                'authorization_id': str(pending_auth.id),
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(concur_response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_kingdom)
+        self.assertEqual(pending_auth.concurring_fighter, self.candidate_armored_person)
+        self.assertEqual(pending_auth.expiration, proposed_expiration)
+
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+        approve_response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(approve_response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+        self.assertEqual(pending_auth.expiration, proposed_expiration)
+
+    def test_kao_can_set_authorization_date_when_adding_authorization(self):
+        authorization_date = date.today() - timedelta(days=20)
+        self.candidate_armored_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_armored_user.save()
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+                'marshal_id': str(self.kem_user.id),
+                'authorization_date': authorization_date.isoformat(),
+            },
+            follow=True,
+        )
+
+        created_auth = Authorization.objects.get(
+            person=self.candidate_armored_person,
+            style=self.style_weapon_armored,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created_auth.expiration, authorization_date + relativedelta(years=4))
+
+    def test_rapier_single_sword_and_secondary_can_be_submitted_together_for_concurrence(self):
+        style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
+        self.client.login(username=self.krapier_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_rapier.id),
+                'weapon_styles': [str(self.style_single_rapier.id), str(style_case.id)],
+            },
+            follow=True,
+        )
+
+        single_sword = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=self.style_single_rapier,
+        )
+        case = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=style_case,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(single_sword.status.name, 'Awaiting Fighter Concurrence')
+        self.assertEqual(case.status.name, 'Awaiting Fighter Concurrence')
+        self.assertEqual(case.effective_expiration, date.today() - relativedelta(years=1))
+
+    def test_keao_can_set_authorization_date_when_adding_equestrian_authorization(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        eq_officer_user, eq_officer_person = self.make_person(
+            'office_eq_add_date_officer',
+            'Office EQ Add Date Officer',
+        )
+        eq_marshal_user, eq_marshal_person = self.make_person(
+            'office_eq_add_date_marshal',
+            'Office EQ Add Date Marshal',
+        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        self.grant_authorization(eq_marshal_person, style_sm_equestrian)
+        self.candidate_ao_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_ao_user.save()
+        authorization_date = date.today() - timedelta(days=25)
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_equestrian.id),
+                'weapon_styles': [str(style_general_riding.id)],
+                'marshal_id': str(eq_marshal_user.id),
+                'authorization_date': authorization_date.isoformat(),
+            },
+            follow=True,
+        )
+
+        created_auth = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=style_general_riding,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created_auth.expiration, authorization_date + relativedelta(years=4))
+
+    def test_kao_cannot_add_equestrian_authorization(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        eq_marshal_user, eq_marshal_person = self.make_person(
+            'office_kao_scope_eq_marshal',
+            'Office KAO Scope EQ Marshal',
+        )
+        self.grant_authorization(eq_marshal_person, style_sm_equestrian)
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_equestrian.id),
+                'weapon_styles': [str(style_general_riding.id)],
+                'marshal_id': str(eq_marshal_user.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Authorization.objects.filter(
+                person=self.candidate_ao_person,
+                style=style_general_riding,
+            ).exists()
+        )
+        self.assertIn(
+            'Only the Kingdom Equestrian Authorization Officer can add equestrian authorizations.',
+            self.messages_for(response),
+        )
+
+    def test_keao_cannot_add_non_equestrian_authorization(self):
+        eq_officer_user, eq_officer_person = self.make_person(
+            'office_keao_scope_officer',
+            'Office KEAO Scope Officer',
+        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+                'marshal_id': str(self.kem_user.id),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            Authorization.objects.filter(
+                person=self.candidate_ao_person,
+                style=self.style_weapon_armored,
+            ).exists()
+        )
+        self.assertIn(
+            'Only the Kingdom Authorization Officer can add non-equestrian authorizations.',
+            self.messages_for(response),
+        )
+
+    def test_kao_with_equestrian_senior_marshal_auth_can_add_equestrian_as_self(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        self.grant_authorization(self.kao_person, style_sm_equestrian)
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_equestrian.id),
+                'weapon_styles': [str(style_general_riding.id)],
+                'authorization_date': date.today().isoformat(),
+            },
+            follow=True,
+        )
+
+        created_auth = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=style_general_riding,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created_auth.marshal, self.kao_person)
+        self.assertEqual(created_auth.status, self.status_needs_kingdom_equestrian_waiver)
+
+    def test_keao_with_non_equestrian_senior_marshal_auth_can_add_non_equestrian_as_self(self):
+        eq_officer_user, eq_officer_person = self.make_person(
+            'office_keao_armored_self_officer',
+            'Office KEAO Armored Self Officer',
+        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        self.grant_authorization(eq_officer_person, self.style_sm_armored)
+        self.candidate_ao_user.waiver_expiration = date.today() + relativedelta(years=1)
+        self.candidate_ao_user.save()
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(self.discipline_armored.id),
+                'weapon_styles': [str(self.style_weapon_armored.id)],
+                'authorization_date': date.today().isoformat(),
+            },
+            follow=True,
+        )
+
+        created_auth = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=self.style_weapon_armored,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(created_auth.marshal, eq_officer_person)
+        self.assertEqual(created_auth.status.name, 'Awaiting Fighter Concurrence')
+
     def test_kao_cannot_add_authorization_outside_their_marshal_discipline_as_self(self):
         discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
         style_longsword = WeaponStyle.objects.create(
@@ -5622,6 +6248,107 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             style=style_longsword,
         )
         self.assertEqual(created_auth.marshal, ct_marshal_person)
+
+    def test_equestrian_general_riding_and_mounted_gaming_can_be_submitted_together(self):
+        discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
+        style_mounted_gaming, _ = WeaponStyle.objects.get_or_create(
+            name='Mounted Gaming',
+            discipline=discipline_equestrian,
+        )
+        style_general_riding, _ = WeaponStyle.objects.get_or_create(
+            name='General Riding',
+            discipline=discipline_equestrian,
+        )
+        style_sm_equestrian, _ = WeaponStyle.objects.get_or_create(
+            name='Senior Marshal',
+            discipline=discipline_equestrian,
+        )
+        eq_officer_user, eq_officer_person = self.make_person(
+            'office_eq_mg_officer',
+            'Office EQ MG Officer',
+        )
+        eq_marshal_user, eq_marshal_person = self.make_person(
+            'office_eq_mg_marshal',
+            'Office EQ MG Marshal',
+        )
+        self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        self.grant_authorization(eq_marshal_person, style_sm_equestrian)
+        self.client.login(username=eq_officer_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_equestrian.id),
+                'weapon_styles': [str(style_mounted_gaming.id), str(style_general_riding.id)],
+                'marshal_id': str(eq_marshal_user.id),
+            },
+            follow=True,
+        )
+
+        general_riding = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=style_general_riding,
+        )
+        mounted_gaming = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=style_mounted_gaming,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(general_riding.status, self.status_needs_kingdom_equestrian_waiver)
+        self.assertEqual(mounted_gaming.status, self.status_needs_kingdom_equestrian_waiver)
+        self.assertEqual(mounted_gaming.effective_expiration, date.today() - relativedelta(years=1))
+
+    def test_cut_and_thrust_foundation_and_spear_can_be_submitted_together_for_concurrence(self):
+        discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
+        style_spear = WeaponStyle.objects.create(
+            name='Spear',
+            discipline=discipline_cut_and_thrust,
+        )
+        style_longsword = WeaponStyle.objects.create(
+            name='Longsword',
+            discipline=discipline_cut_and_thrust,
+        )
+        style_sm_cut_and_thrust = WeaponStyle.objects.create(
+            name='Senior Marshal',
+            discipline=discipline_cut_and_thrust,
+        )
+        ct_marshal_user, ct_marshal_person = self.make_person(
+            'office_ct_spear_senior_marshal',
+            'Office C&T Spear Senior Marshal',
+        )
+        Authorization.objects.create(
+            person=ct_marshal_person,
+            style=style_sm_cut_and_thrust,
+            status=self.status_active,
+            marshal=self.kem_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}),
+            {
+                'action': 'add_authorization',
+                'discipline': str(discipline_cut_and_thrust.id),
+                'weapon_styles': [str(style_spear.id), str(style_longsword.id)],
+                'marshal_id': str(ct_marshal_user.id),
+            },
+            follow=True,
+        )
+
+        longsword = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=style_longsword,
+        )
+        spear = Authorization.objects.get(
+            person=self.candidate_ao_person,
+            style=style_spear,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(longsword.status.name, 'Awaiting Fighter Concurrence')
+        self.assertEqual(spear.status.name, 'Awaiting Fighter Concurrence')
+        self.assertEqual(spear.effective_expiration, date.today() - relativedelta(years=1))
 
     def test_basket_processes_new_style_after_existing_style_renewal(self):
         style_two_handed = WeaponStyle.objects.create(
