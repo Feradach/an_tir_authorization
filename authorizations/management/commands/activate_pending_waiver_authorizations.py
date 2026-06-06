@@ -3,7 +3,7 @@ from datetime import date
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from authorizations.models import Authorization, AuthorizationStatus
+from authorizations.models import Authorization, AuthorizationStatus, sync_authorization_validity_interval
 from authorizations.permissions import _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 
 
@@ -46,6 +46,12 @@ class Command(BaseCommand):
         with transaction.atomic():
             authorization_ids = [authorization.id for authorization in pending_authorizations]
             Authorization.objects.filter(id__in=authorization_ids).update(status=active_status)
+            for authorization in pending_authorizations:
+                authorization.status = active_status
+                sync_authorization_validity_interval(
+                    authorization,
+                    note="Generated when Awaiting Waiver authorization became active by repair command.",
+                )
             senior_ground_crew_user_ids = {
                 authorization.person.user_id
                 for authorization in pending_authorizations

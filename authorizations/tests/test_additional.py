@@ -163,6 +163,7 @@ class PopulateTestValidityIntervalsCommandTests(AdditionalCoverageBase):
         self.grant_authorization(
             person,
             self.style_weapon_armored,
+            status=self.status_pending,
             expiration=date(2028, 6, 1),
         )
         out = StringIO()
@@ -192,21 +193,25 @@ class PopulateTestValidityIntervalsCommandTests(AdditionalCoverageBase):
         adult_authorization = self.grant_authorization(
             adult_person,
             self.style_weapon_armored,
+            status=self.status_pending,
             expiration=date(2028, 6, 1),
         )
         minor_authorization = self.grant_authorization(
             minor_person,
             self.style_polearm_armored,
+            status=self.status_pending,
             expiration=date(2028, 7, 1),
         )
         youth_authorization = self.grant_authorization(
             adult_person,
             youth_style,
+            status=self.status_pending,
             expiration=date(2028, 8, 1),
         )
         senior_authorization = self.grant_authorization(
             senior_person,
             self.style_sm_armored,
+            status=self.status_pending,
             expiration=date(2028, 9, 1),
         )
         out = StringIO()
@@ -233,6 +238,7 @@ class PopulateTestValidityIntervalsCommandTests(AdditionalCoverageBase):
         authorization = self.grant_authorization(
             person,
             self.style_weapon_armored,
+            status=self.status_pending,
             expiration=date(2028, 6, 1),
         )
         AuthorizationValidityInterval.objects.create(
@@ -244,6 +250,210 @@ class PopulateTestValidityIntervalsCommandTests(AdditionalCoverageBase):
 
         with self.assertRaises(CommandError):
             call_command('populate_test_validity_intervals', '--write')
+
+
+class AuthorizationValidityIntervalSyncTests(AdditionalCoverageBase):
+    def test_active_authorization_create_adds_interval(self):
+        _, person = self.make_person('interval_sync_create', 'Interval Sync Create')
+
+        authorization = self.grant_authorization(
+            person,
+            self.style_weapon_armored,
+            expiration=date(2028, 6, 1),
+        )
+
+        interval = AuthorizationValidityInterval.objects.get(authorization=authorization)
+        self.assertEqual(interval.start_date, date(2024, 6, 1))
+        self.assertEqual(interval.end_date, date(2028, 6, 1))
+        self.assertEqual(interval.source, 'portal_authorization')
+
+    def test_pending_authorization_create_does_not_add_interval(self):
+        _, person = self.make_person('interval_sync_pending', 'Interval Sync Pending')
+
+        authorization = self.grant_authorization(
+            person,
+            self.style_weapon_armored,
+            status=self.status_pending,
+            expiration=date(2028, 6, 1),
+        )
+
+        self.assertFalse(AuthorizationValidityInterval.objects.filter(authorization=authorization).exists())
+
+    def test_active_renewal_extends_overlapping_interval(self):
+        _, person = self.make_person('interval_sync_extend', 'Interval Sync Extend')
+        authorization = self.grant_authorization(
+            person,
+            self.style_weapon_armored,
+            expiration=date(2028, 6, 1),
+        )
+
+        authorization.expiration = date(2030, 6, 1)
+        authorization.save()
+
+        intervals = list(AuthorizationValidityInterval.objects.filter(authorization=authorization).order_by('start_date'))
+        self.assertEqual(len(intervals), 1)
+        self.assertEqual(intervals[0].start_date, date(2024, 6, 1))
+        self.assertEqual(intervals[0].end_date, date(2030, 6, 1))
+
+    def test_active_renewal_after_lapse_adds_new_interval(self):
+        _, person = self.make_person('interval_sync_lapse', 'Interval Sync Lapse')
+        authorization = self.grant_authorization(
+            person,
+            self.style_weapon_armored,
+            expiration=date(2024, 6, 1),
+        )
+
+        authorization.expiration = date(2030, 6, 1)
+        authorization.save()
+
+        intervals = list(AuthorizationValidityInterval.objects.filter(authorization=authorization).order_by('start_date'))
+        self.assertEqual(len(intervals), 2)
+        self.assertEqual((intervals[0].start_date, intervals[0].end_date), (date(2020, 6, 1), date(2024, 6, 1)))
+        self.assertEqual((intervals[1].start_date, intervals[1].end_date), (date(2026, 6, 1), date(2030, 6, 1)))
+
+    def test_membership_expiration_update_extends_marshal_interval(self):
+        _, person = self.make_person(
+            'interval_sync_membership_extend',
+            'Interval Sync Membership Extend',
+            membership_expiration=date.today() + relativedelta(years=1),
+        )
+        authorization = self.grant_authorization(
+            person,
+            self.style_sm_armored,
+            expiration=date.today() + relativedelta(years=4),
+        )
+        original_interval = AuthorizationValidityInterval.objects.get(authorization=authorization)
+
+        person.user.membership_expiration = date.today() + relativedelta(years=2)
+        person.user.save(update_fields=['membership_expiration', 'updated_at'])
+
+        interval = AuthorizationValidityInterval.objects.get(authorization=authorization)
+        self.assertEqual(interval.start_date, original_interval.start_date)
+        self.assertEqual(interval.end_date, date.today() + relativedelta(years=2))
+
+    def test_membership_expiration_update_does_not_extend_marshal_past_authorization_expiration(self):
+        _, person = self.make_person(
+            'interval_sync_membership_cap',
+            'Interval Sync Membership Cap',
+            membership_expiration=date(2029, 1, 31),
+        )
+        authorization = self.grant_authorization(
+            person,
+            self.style_sm_armored,
+            expiration=date(2030, 1, 31),
+        )
+
+        person.user.membership_expiration = date(2035, 1, 31)
+        person.user.save(update_fields=['membership_expiration', 'updated_at'])
+
+        interval = AuthorizationValidityInterval.objects.get(authorization=authorization)
+        self.assertEqual(interval.end_date, date(2030, 1, 31))
+
+    def test_membership_expiration_update_corrects_existing_interval_past_authorization_expiration(self):
+        _, person = self.make_person(
+            'interval_sync_membership_correct',
+            'Interval Sync Membership Correct',
+            membership_expiration=date(2029, 1, 31),
+        )
+        authorization = self.grant_authorization(
+            person,
+            self.style_sm_armored,
+            expiration=date(2030, 1, 31),
+        )
+        AuthorizationValidityInterval.objects.filter(authorization=authorization).update(end_date=date(2035, 1, 31))
+
+        person.user.membership_expiration = date(2035, 1, 31)
+        person.user.save(update_fields=['membership_expiration', 'updated_at'])
+
+        interval = AuthorizationValidityInterval.objects.get(authorization=authorization)
+        self.assertEqual(interval.end_date, date(2030, 1, 31))
+
+    def test_membership_expiration_update_backwards_shortens_marshal_interval(self):
+        _, person = self.make_person(
+            'interval_sync_membership_backward',
+            'Interval Sync Membership Backward',
+            membership_expiration=date(2035, 1, 31),
+        )
+        authorization = self.grant_authorization(
+            person,
+            self.style_sm_armored,
+            expiration=date(2030, 1, 31),
+        )
+
+        person.user.membership_expiration = date(2028, 1, 31)
+        person.user.save(update_fields=['membership_expiration', 'updated_at'])
+
+        interval = AuthorizationValidityInterval.objects.get(authorization=authorization)
+        self.assertEqual(interval.end_date, date(2028, 1, 31))
+
+    def test_membership_expiration_update_after_gap_adds_new_interval(self):
+        _, person = self.make_person(
+            'interval_sync_membership_gap',
+            'Interval Sync Membership Gap',
+            membership_expiration=date.today() - relativedelta(months=1),
+        )
+        authorization = self.grant_authorization(
+            person,
+            self.style_sm_armored,
+            expiration=date.today() + relativedelta(years=2),
+        )
+
+        person.user.membership_expiration = date.today() + relativedelta(years=1)
+        person.user.save(update_fields=['membership_expiration', 'updated_at'])
+
+        intervals = list(AuthorizationValidityInterval.objects.filter(authorization=authorization).order_by('start_date'))
+        self.assertEqual(len(intervals), 2)
+        self.assertEqual(intervals[1].start_date, date.today())
+        self.assertEqual(intervals[1].end_date, date.today() + relativedelta(years=1))
+
+    def test_prerequisite_expiration_update_after_gap_adds_dependent_interval(self):
+        _, person = self.make_person('interval_sync_prereq_gap', 'Interval Sync Prereq Gap')
+        dagger = WeaponStyle.objects.create(name='Dagger', discipline=self.discipline_rapier)
+        single_sword = self.grant_authorization(
+            person,
+            self.style_single_rapier,
+            expiration=date.today() - relativedelta(days=10),
+        )
+        dependent = self.grant_authorization(
+            person,
+            dagger,
+            expiration=date.today() + relativedelta(years=4),
+        )
+        AuthorizationValidityInterval.objects.filter(authorization=dependent).delete()
+        AuthorizationValidityInterval.objects.create(
+            authorization=dependent,
+            start_date=date.today() - relativedelta(years=4, days=10),
+            end_date=date.today() - relativedelta(days=10),
+            source='manual_repair',
+        )
+
+        single_sword.expiration = date.today() + relativedelta(years=4)
+        single_sword.save()
+
+        intervals = list(AuthorizationValidityInterval.objects.filter(authorization=dependent).order_by('start_date'))
+        self.assertEqual(len(intervals), 2)
+        self.assertEqual(intervals[1].start_date, date.today())
+        self.assertEqual(intervals[1].end_date, dependent.expiration)
+
+    def test_prerequisite_expiration_update_backwards_shortens_dependent_interval(self):
+        _, person = self.make_person('interval_sync_prereq_backward', 'Interval Sync Prereq Backward')
+        dagger = WeaponStyle.objects.create(name='Backward Dagger', discipline=self.discipline_rapier)
+        single_sword = self.grant_authorization(
+            person,
+            self.style_single_rapier,
+            expiration=date(2030, 1, 31),
+        )
+        dependent = self.grant_authorization(
+            person,
+            dagger,
+            expiration=date(2030, 1, 31),
+        )
+
+        single_sword.expiration = date(2028, 1, 31)
+        single_sword.save()
+
+        interval = AuthorizationValidityInterval.objects.get(authorization=dependent)
+        self.assertEqual(interval.end_date, date(2028, 1, 31))
 
 
 class PopulateRestoreValidityIntervalsCommandTests(TestCase):
@@ -396,6 +606,9 @@ class ActivatePendingWaiverAuthorizationsCommandTests(AdditionalCoverageBase):
         self.assertEqual(current_authorization.status, self.status_active)
         self.assertEqual(expired_authorization.status, self.status_pending_waiver)
         self.assertEqual(no_waiver_authorization.status, self.status_pending_waiver)
+        self.assertTrue(AuthorizationValidityInterval.objects.filter(authorization=current_authorization).exists())
+        self.assertFalse(AuthorizationValidityInterval.objects.filter(authorization=expired_authorization).exists())
+        self.assertFalse(AuthorizationValidityInterval.objects.filter(authorization=no_waiver_authorization).exists())
         self.assertIn('Marked 1 authorization(s) Active.', out.getvalue())
 
 

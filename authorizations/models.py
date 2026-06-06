@@ -5,7 +5,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
-from django.db import models
+from django.db import connections, models
 from django.db.models import Case, When, F, Exists, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce, Least
 
@@ -121,6 +121,17 @@ class User(AbstractUser):
     pass
 
     def save(self, *args, **kwargs):
+        previous_membership_expiration = None
+        previous_background_check_expiration = None
+        if self.pk:
+            previous_values = User.objects.filter(pk=self.pk).values(
+                'membership_expiration',
+                'background_check_expiration',
+            ).first()
+            if previous_values:
+                previous_membership_expiration = previous_values['membership_expiration']
+                previous_background_check_expiration = previous_values['background_check_expiration']
+
         # Automatically set sca_name to user first name if not provided
         if not self.membership or not self.membership_expiration:
             self.membership = None
@@ -140,6 +151,20 @@ class User(AbstractUser):
                     self.waiver_expiration = self.membership_expiration
 
         super().save(*args, **kwargs)
+        if self.pk and self.membership_expiration != previous_membership_expiration:
+            sync_active_authorization_validity_for_user(
+                self,
+                source='membership_update',
+                resume_date=date.today(),
+                note='Generated from membership expiration update.',
+            )
+        if self.pk and self.background_check_expiration != previous_background_check_expiration:
+            sync_active_authorization_validity_for_user(
+                self,
+                source='background_check_update',
+                resume_date=date.today(),
+                note='Generated from background-check expiration update.',
+            )
 
     class Meta(AbstractUser.Meta):
         constraints = [
@@ -759,6 +784,11 @@ class Authorization(models.Model):
     def __str__(self):
         return self.person.sca_name + ': ' + self.style.discipline.name + ' ' + self.style.name + ' authorization'
 
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        sync_authorization_validity_interval(self)
+        sync_dependent_authorization_validity_intervals(self)
+
     @property
     def effective_expiration(self):
         annotated = getattr(self, 'effective_expiration_date', None)
@@ -928,6 +958,125 @@ class AuthorizationValidityInterval(models.Model):
 
     def __str__(self):
         return f'Authorization {self.authorization_id}: {self.start_date} to {self.end_date}'
+
+
+def authorization_validity_duration_years(authorization: Authorization) -> int:
+    if not authorization.style or not authorization.style.discipline:
+        return 4
+    if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+        return 2
+    if authorization.person and authorization.person.is_current_minor:
+        return 2
+    return 4
+
+
+def authorization_validity_candidate_dates(authorization: Authorization):
+    if not authorization.expiration or not authorization.style or not authorization.style.discipline:
+        return None, None
+    years = authorization_validity_duration_years(authorization)
+    return authorization.expiration - relativedelta(years=years), authorization.effective_expiration
+
+
+def sync_authorization_validity_interval(
+    authorization: Authorization,
+    *,
+    source='portal_authorization',
+    note='Generated from active authorization update.',
+    resume_date=None,
+):
+    """Merge the current active authorization window into validity history."""
+    if not authorization.pk:
+        return None
+
+    db_alias = authorization._state.db or 'default'
+    status_name = getattr(authorization.status, 'name', None)
+    if status_name is None and authorization.status_id:
+        status_name = AuthorizationStatus.objects.using(db_alias).filter(pk=authorization.status_id).values_list('name', flat=True).first()
+    if status_name != 'Active':
+        return None
+
+    start_date, end_date = authorization_validity_candidate_dates(authorization)
+    if not start_date or not end_date or end_date < start_date:
+        return None
+
+    interval_query = AuthorizationValidityInterval.objects.using(db_alias).filter(
+        authorization_id=authorization.pk,
+    )
+    if connections[db_alias].in_atomic_block:
+        interval_query = interval_query.select_for_update()
+    intervals = list(interval_query.order_by('start_date', 'end_date', 'id'))
+    if resume_date and intervals:
+        latest_end = max(interval.end_date for interval in intervals)
+        if latest_end < resume_date:
+            start_date = max(start_date, resume_date)
+            if end_date < start_date:
+                return None
+    elif resume_date and not intervals:
+        start_date = max(start_date, resume_date)
+        if end_date < start_date:
+            return None
+
+    for interval in intervals:
+        if start_date <= interval.end_date and end_date >= interval.start_date:
+            changed = False
+            if start_date < interval.start_date:
+                interval.start_date = start_date
+                changed = True
+            if end_date != interval.end_date:
+                interval.end_date = end_date
+                changed = True
+            if changed:
+                interval.note = f'{interval.note} Merged with active authorization update.'.strip()
+                interval.save(using=db_alias, update_fields=['start_date', 'end_date', 'note', 'updated_at'])
+            return interval
+
+    return AuthorizationValidityInterval.objects.using(db_alias).create(
+        authorization_id=authorization.pk,
+        start_date=start_date,
+        end_date=end_date,
+        source=source,
+        note=note,
+    )
+
+
+def sync_active_authorization_validity_for_user(
+    user: User,
+    *,
+    source='portal_authorization',
+    resume_date=None,
+    note='Generated from active authorization update.',
+):
+    for authorization in Authorization.objects.select_related(
+        'person__user',
+        'style__discipline',
+        'status',
+    ).filter(person__user=user, status__name='Active'):
+        sync_authorization_validity_interval(
+            authorization,
+            source=source,
+            resume_date=resume_date,
+            note=note,
+        )
+
+
+def sync_dependent_authorization_validity_intervals(authorization: Authorization):
+    if not authorization.pk or not authorization.person_id:
+        return
+    status_name = getattr(authorization.status, 'name', None)
+    if status_name != 'Active':
+        return
+    if authorization.effective_expiration < date.today():
+        return
+    for dependent in Authorization.objects.select_related(
+        'person__user',
+        'style__discipline',
+        'status',
+    ).filter(person=authorization.person, status__name='Active').exclude(pk=authorization.pk):
+        sync_authorization_validity_interval(
+            dependent,
+            resume_date=date.today(),
+            note='Generated from prerequisite authorization update.',
+        )
 
 
 AUTHORIZATION_AUDIT_EVENT_CHOICES = [
