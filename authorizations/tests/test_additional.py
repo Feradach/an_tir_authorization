@@ -582,8 +582,9 @@ class ActivatePendingWaiverAuthorizationsCommandTests(AdditionalCoverageBase):
 
         authorization.refresh_from_db()
         self.assertEqual(authorization.status, self.status_pending_waiver)
-        self.assertIn('Found 1 Awaiting Waiver authorization', out.getvalue())
+        self.assertIn('Found 1 waiver-blocked authorization', out.getvalue())
         self.assertIn(f'authorization_id={authorization.id} person_id={person.pk} user_id={user.id}', out.getvalue())
+        self.assertIn('status Awaiting Waiver', out.getvalue())
         self.assertIn('Dry run only.', out.getvalue())
 
     def test_apply_activates_only_authorizations_for_current_waivers(self):
@@ -631,6 +632,48 @@ class ActivatePendingWaiverAuthorizationsCommandTests(AdditionalCoverageBase):
         self.assertFalse(AuthorizationValidityInterval.objects.filter(authorization=expired_authorization).exists())
         self.assertFalse(AuthorizationValidityInterval.objects.filter(authorization=no_waiver_authorization).exists())
         self.assertIn('Marked 1 authorization(s) Active.', out.getvalue())
+
+    def test_apply_activates_legacy_needs_waiver_authorizations(self):
+        needs_waiver_status = AuthorizationStatus.objects.create(name='Needs Waiver')
+        _, current_person = self.make_person(
+            'needs_waiver_repair_apply',
+            'Needs Waiver Repair Apply',
+            waiver_expiration=date.today() + timedelta(days=30),
+        )
+        authorization = self.grant_authorization(
+            current_person,
+            self.style_weapon_armored,
+            status=needs_waiver_status,
+        )
+        out = StringIO()
+
+        call_command('activate_pending_waiver_authorizations', '--apply', stdout=out)
+
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status, self.status_active)
+        self.assertTrue(AuthorizationValidityInterval.objects.filter(authorization=authorization).exists())
+        self.assertIn('Marked 1 authorization(s) Active.', out.getvalue())
+
+    def test_dry_run_does_not_match_kingdom_equestrian_waiver_review(self):
+        needs_kingdom_waiver_status = AuthorizationStatus.objects.create(name='Needs Kingdom Equestrian Waiver')
+        _, current_person = self.make_person(
+            'kingdom_waiver_repair_skip',
+            'Kingdom Waiver Repair Skip',
+            waiver_expiration=date.today() + timedelta(days=30),
+        )
+        authorization = self.grant_authorization(
+            current_person,
+            self.style_weapon_armored,
+            status=needs_kingdom_waiver_status,
+        )
+        out = StringIO()
+
+        call_command('activate_pending_waiver_authorizations', '--apply', stdout=out)
+
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status, needs_kingdom_waiver_status)
+        self.assertFalse(AuthorizationValidityInterval.objects.filter(authorization=authorization).exists())
+        self.assertIn('No waiver-blocked authorizations were found', out.getvalue())
 
 
 class ProfileFormWaiverActivationTests(AdditionalCoverageBase):

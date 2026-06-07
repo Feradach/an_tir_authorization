@@ -7,8 +7,11 @@ from authorizations.models import Authorization, AuthorizationStatus, sync_autho
 from authorizations.permissions import _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 
 
+WAIVER_BLOCKED_STATUS_NAMES = ("Awaiting Waiver", "Pending Waiver", "Needs Waiver")
+
+
 class Command(BaseCommand):
-    help = "Activate Awaiting Waiver authorizations for fighters who already have a current waiver expiration."
+    help = "Activate waiver-blocked authorizations for fighters who already have a current waiver expiration."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -23,11 +26,11 @@ class Command(BaseCommand):
         pending_authorizations = list(self._pending_authorizations_with_current_waiver())
 
         if not pending_authorizations:
-            self.stdout.write("No Awaiting Waiver authorizations were found for fighters with a current waiver.")
+            self.stdout.write("No waiver-blocked authorizations were found for fighters with a current waiver.")
             return
 
         self.stdout.write(
-            f"Found {len(pending_authorizations)} Awaiting Waiver authorization(s) "
+            f"Found {len(pending_authorizations)} waiver-blocked authorization(s) "
             "for fighters with a current waiver."
         )
         for authorization in pending_authorizations:
@@ -36,6 +39,7 @@ class Command(BaseCommand):
                 f"- authorization_id={authorization.id} person_id={authorization.person_id} "
                 f"user_id={user.id}: {authorization.person.sca_name} / "
                 f"{authorization.style.discipline.name} / {authorization.style.name} / "
+                f"status {authorization.status.name} / "
                 f"authorization expires {authorization.expiration} / waiver expires {user.waiver_expiration}"
             )
 
@@ -50,7 +54,7 @@ class Command(BaseCommand):
                 authorization.status = active_status
                 sync_authorization_validity_interval(
                     authorization,
-                    note="Generated when Awaiting Waiver authorization became active by repair command.",
+                    note="Generated when waiver-blocked authorization became active by repair command.",
                 )
             senior_ground_crew_user_ids = {
                 authorization.person.user_id
@@ -88,8 +92,8 @@ class Command(BaseCommand):
         return (
             Authorization.objects.select_related("person__user", "style__discipline", "status")
             .filter(
-                status__name="Awaiting Waiver",
+                status__name__in=WAIVER_BLOCKED_STATUS_NAMES,
                 person__user__waiver_expiration__gt=date.today(),
             )
-            .order_by("person__sca_name", "style__discipline__name", "style__name", "id")
+            .order_by("person__sca_name", "status__name", "style__discipline__name", "style__name", "id")
         )
