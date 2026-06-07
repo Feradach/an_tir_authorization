@@ -4,7 +4,6 @@
 
 
 ### Added
-- Added a maintenance command to advance authorizations out of Awaiting Fighter Concurrence after temporarily disabling fighter concurrence requirements.
 
 
 ### Changed
