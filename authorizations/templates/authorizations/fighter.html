@@ -427,25 +427,27 @@
                         max="{{ today|date:'Y-m-d' }}"
                     >
                 </div>
-                <div class="mb-3">
-                    <label for="concurring_fighter_id">Concurring Fighter (optional):</label>
-                    <input
-                        id="concurring_fighter_lookup"
-                        class="form-control"
-                        type="text"
-                        autocomplete="off"
-                        placeholder="No immediate concurrence"
-                        data-person-lookup="1"
-                        data-lookup-purpose="active"
-                        data-target-id="concurring_fighter_id"
-                        value="{{ pending_concurring_fighter_label|default:'' }}"
-                    >
-                    <input type="hidden" id="concurring_fighter_id" name="concurring_fighter_id" value="{{ pending_concurring_fighter_user_id|default:'' }}">
-                    <div class="person-lookup-results list-group" data-results-for="concurring_fighter_lookup"></div>
-                    <small class="form-text text-muted">
-                        Used only when a selected authorization requires concurrence.
-                    </small>
-                </div>
+                {% if AUTHZ_REQUIRE_FIGHTER_CONCURRENCE %}
+                    <div class="mb-3">
+                        <label for="concurring_fighter_id">Concurring Fighter (optional):</label>
+                        <input
+                            id="concurring_fighter_lookup"
+                            class="form-control"
+                            type="text"
+                            autocomplete="off"
+                            placeholder="No immediate concurrence"
+                            data-person-lookup="1"
+                            data-lookup-purpose="active"
+                            data-target-id="concurring_fighter_id"
+                            value="{{ pending_concurring_fighter_label|default:'' }}"
+                        >
+                        <input type="hidden" id="concurring_fighter_id" name="concurring_fighter_id" value="{{ pending_concurring_fighter_user_id|default:'' }}">
+                        <div class="person-lookup-results list-group" data-results-for="concurring_fighter_lookup"></div>
+                        <small class="form-text text-muted">
+                            Used only when a selected authorization requires concurrence.
+                        </small>
+                    </div>
+                {% endif %}
             {% endif %}
             <label for="discipline-select">Discipline:</label>
             <select id="discipline-select" name="discipline" class="form-control">

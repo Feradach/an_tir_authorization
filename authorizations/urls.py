@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 from . import views
 
 urlpatterns = [
@@ -21,7 +22,12 @@ urlpatterns = [
     path('password_reset/<int:user_id>', views.password_reset, name='password_reset'),
     path('user_account/<int:user_id>', views.user_account, name='user_account'),
     path('membership/upload', views.upload_membership_roster, name='upload_membership_roster'),
-    path('legacy_authorizations/recovery', views.legacy_authorization_recovery, name='legacy_authorization_recovery'),
+    path('paper_authorizations/entry', views.legacy_authorization_recovery, name='paper_authorization_entry'),
+    path(
+        'legacy_authorizations/recovery',
+        RedirectView.as_view(pattern_name='paper_authorization_entry', permanent=False),
+        name='legacy_authorization_recovery',
+    ),
     path('legacy_authorizations/upload', views.upload_legacy_authorizations, name='upload_legacy_authorizations'),
     path('supporting_documents', views.supporting_documents, name='supporting_documents'),
     path('supporting_documents/<int:document_id>/file', views.supporting_document_file, name='supporting_document_file'),

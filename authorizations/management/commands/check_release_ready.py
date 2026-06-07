@@ -31,12 +31,6 @@ class Command(BaseCommand):
         if getattr(settings, 'AUTHZ_TEST_FEATURES', False):
             errors.append('AUTHZ_TEST_FEATURES must be disabled for production.')
 
-        if getattr(settings, 'AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT', False):
-            warnings.append(
-                'AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT is enabled. This was built for production use, '
-                'but should normally be off unless a legacy import/recovery task is intentionally underway.'
-            )
-
         allowed_hosts = getattr(settings, 'ALLOWED_HOSTS', [])
         if not allowed_hosts:
             errors.append('DJANGO_ALLOWED_HOSTS must include the production host name.')

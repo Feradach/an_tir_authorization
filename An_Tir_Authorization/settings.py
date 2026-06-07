@@ -54,9 +54,8 @@ MANAGERS = ADMINS
 # Gate test-only behavior (e.g., public register, test sections)
 AUTHZ_TEST_FEATURES = _env_truthy('AUTHZ_TEST_FEATURES', '0')
 
-# Temporary disaster-recovery importer. Keep off unless actively rebuilding
-# vetted historical authorization records.
-AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT = _env_truthy('AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT', '0')
+# Temporarily disabled until the paper authorization forms include fighter concurrence.
+AUTHZ_REQUIRE_FIGHTER_CONCURRENCE = _env_truthy('AUTHZ_REQUIRE_FIGHTER_CONCURRENCE', '0')
 
 # Release environment. Only "production" currently has special behavior.
 RELEASE_ENV = os.environ.get('RELEASE_ENV', '').strip().lower()

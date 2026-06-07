@@ -4,15 +4,25 @@
 
 
 ### Added
+- Added a maintenance command to advance authorizations out of Awaiting Fighter Concurrence after temporarily disabling fighter concurrence requirements.
 
 
 ### Changed
+
 
 
 ### Fixed
 
 
 ### Removed
+
+
+## [1.1.5] - 2026-06-07
+### Added
+- Created a new, more efficient, backend method for the Kingdom Authorization Officer to add paper authorizations into the system.
+
+### Removed
+- Suspended the rule requiring a second fighter to concur for new authorizations until the paper forms can be updated and an adendum is pushed for the rule books.
 
 
 ## [1.1.4] - 2026-06-05

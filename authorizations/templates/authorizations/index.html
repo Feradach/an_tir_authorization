@@ -76,9 +76,6 @@
                 <button type="submit" class="btn btn-primary">Save</button>
             </div>
         </form>
-        {% if legacy_authorization_import_enabled %}
-            <p><a href="{% url 'legacy_authorization_recovery' %}" class="btn btn-danger">Legacy Authorization Recovery</a></p>
-        {% endif %}
     {% elif authorization_officer_sign_off_required %}
         <p><strong>Kingdom Authorization Officer Verification Is Enabled</strong></p>
     {% endif %}
@@ -118,6 +115,9 @@
     {% endif %}
     {% if can_manage_sanctions %}
         <p><a href="{% url 'manage_sanctions' %}" class="btn btn-primary">Manage Sanctions</a></p>
+    {% endif %}
+    {% if paper_authorization_entry_enabled %}
+        <p><a href="{% url 'paper_authorization_entry' %}" class="btn btn-success">Paper Authorization Entry</a></p>
     {% endif %}
     <div class="col-md-3">
         <p>

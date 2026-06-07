@@ -2,6 +2,7 @@ from datetime import date, datetime
 import logging
 from dateutil.relativedelta import relativedelta
 from django.contrib.auth.decorators import login_required
+from django.conf import settings
 from django.db.models import Q, Max
 from django.db.utils import OperationalError, ProgrammingError
 from typing import Optional
@@ -898,6 +899,8 @@ def is_authorized_in_discipline(user: User, discipline) -> bool:
     ).exists()
 
 def authorization_requires_concurrence(person: Person, style: WeaponStyle, today: Optional[date] = None) -> bool:
+    if not getattr(settings, 'AUTHZ_REQUIRE_FIGHTER_CONCURRENCE', False):
+        return False
     if today is None:
         today = date.today()
     if style.name in ['Junior Marshal', 'Senior Marshal']:

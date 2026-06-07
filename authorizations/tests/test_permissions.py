@@ -4,7 +4,7 @@ from io import StringIO
 from dateutil.relativedelta import relativedelta
 from django.core.management import call_command
 from unittest.mock import patch
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 
 from authorizations.models import (
     Authorization,
@@ -1077,6 +1077,12 @@ class AuthorizationRuleTests(AuthorizationTestBase):
 
 
 class ConcurrenceRequirementTests(AuthorizationTestBase):
+    def test_concurrence_requirement_is_disabled_by_default(self):
+        _, fighter = self.make_person('concur_disabled', 'Concur Disabled')
+
+        self.assertFalse(authorization_requires_concurrence(fighter, self.style_weapon_armored))
+
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
     def test_requires_concurrence_when_no_prior_authorization_in_discipline(self):
         _, fighter = self.make_person('concur_none', 'Concur None')
 
@@ -1093,6 +1099,7 @@ class ConcurrenceRequirementTests(AuthorizationTestBase):
 
         self.assertFalse(authorization_requires_concurrence(fighter, self.style_weapon_armored))
 
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
     def test_requires_concurrence_for_lapsed_authorization_older_than_one_year(self):
         _, fighter = self.make_person('concur_old', 'Concur Old')
         self.grant_authorization(

@@ -233,6 +233,27 @@ class PopulateTestValidityIntervalsCommandTests(AdditionalCoverageBase):
         self.assertEqual(adult_interval.source, 'manual_repair')
         self.assertIn('Created 4 authorization validity interval(s).', out.getvalue())
 
+    def test_write_estimates_start_when_effective_end_precedes_stored_expiration_start(self):
+        _, person = self.make_person(
+            'interval_effective_before_start',
+            'Interval Effective Before Start',
+            membership_expiration=date(2028, 10, 12),
+        )
+        authorization = self.grant_authorization(
+            person,
+            WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier),
+            status=self.status_pending,
+            expiration=date(2036, 12, 8),
+        )
+        out = StringIO()
+
+        call_command('populate_test_validity_intervals', '--write', stdout=out)
+
+        interval = AuthorizationValidityInterval.objects.get(authorization=authorization)
+        self.assertEqual(interval.start_date, date(2024, 10, 12))
+        self.assertEqual(interval.end_date, date(2028, 10, 12))
+        self.assertIn('Adjusted effective expiration before calculated start: 1', out.getvalue())
+
     def test_write_refuses_existing_intervals_without_replace(self):
         _, person = self.make_person('interval_existing', 'Interval Existing')
         authorization = self.grant_authorization(
@@ -983,6 +1004,59 @@ class AuthorizationOfficerSignOffFlagTests(AdditionalCoverageBase):
             pk=1,
             defaults={'require_kao_verification': enabled},
         )
+
+    def test_advance_fighter_concurrence_command_dry_run_does_not_change_status(self):
+        target_user, target_person = self.make_person('advance_concur_dry_target', 'Advance Concur Dry Target')
+        pending = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_needs_concurrence,
+        )
+        self._set_sign_off(True)
+        out = StringIO()
+
+        call_command('advance_fighter_concurrence_authorizations', stdout=out)
+
+        pending.refresh_from_db()
+        self.assertEqual(pending.status, self.status_needs_concurrence)
+        self.assertIn('Dry run only', out.getvalue())
+        self.assertIn('Authorizations to advance: 1', out.getvalue())
+
+    def test_advance_fighter_concurrence_command_routes_to_review_and_skips_marshal_styles(self):
+        target_user, target_person = self.make_person('advance_concur_target', 'Advance Concur Target')
+        eq_discipline = Discipline.objects.create(name='Equestrian')
+        eq_style = WeaponStyle.objects.create(name='General Riding', discipline=eq_discipline)
+        pending_armored = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_needs_concurrence,
+        )
+        pending_armored.concurring_fighter = target_person
+        pending_armored.save()
+        pending_equestrian = self.grant_authorization(
+            target_person,
+            eq_style,
+            status=self.status_needs_concurrence,
+        )
+        malformed_marshal = self.grant_authorization(
+            target_person,
+            self.style_jm_armored,
+            status=self.status_needs_concurrence,
+        )
+        self._set_sign_off(True)
+        out = StringIO()
+
+        call_command('advance_fighter_concurrence_authorizations', '--write', stdout=out)
+
+        pending_armored.refresh_from_db()
+        pending_equestrian.refresh_from_db()
+        malformed_marshal.refresh_from_db()
+        self.assertEqual(pending_armored.status.name, 'Awaiting Kingdom Authorization Officer Review')
+        self.assertIsNone(pending_armored.concurring_fighter)
+        self.assertEqual(pending_equestrian.status.name, 'Awaiting Equestrian Authorization Officer Review')
+        self.assertEqual(malformed_marshal.status, self.status_needs_concurrence)
+        self.assertIn('Advanced 2 authorization(s).', out.getvalue())
+        self.assertIn('marshal authorizations should not use fighter concurrence', out.getvalue())
 
     def test_sign_off_disabled_new_non_marshal_can_become_active(self):
         acting_user, acting_person = self.make_person('signoff_off_actor', 'Signoff Off Actor')
@@ -2946,19 +3020,6 @@ class ReleaseReadinessTests(TestCase):
             ):
                 with self.assertRaisesMessage(CommandError, 'AUTHZ_TEST_FEATURES must be disabled'):
                     call_command('check_release_ready', stdout=output)
-
-    def test_release_check_warns_when_legacy_import_is_enabled(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            (Path(temp_dir) / 'CHANGELOG.md').write_text('## [Unreleased]\n', encoding='utf-8')
-            output = StringIO()
-            with override_settings(
-                BASE_DIR=Path(temp_dir),
-                **self.production_ready_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True),
-            ):
-                call_command('check_release_ready', stdout=output)
-
-        self.assertIn('Warning: AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT is enabled', output.getvalue())
-        self.assertIn('Release readiness check passed.', output.getvalue())
 
     def test_release_check_blocks_unreleased_entries_in_production(self):
         with tempfile.TemporaryDirectory() as temp_dir:

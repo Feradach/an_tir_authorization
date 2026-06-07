@@ -2238,12 +2238,30 @@ class UserAccountViewTests(ViewTestBase):
             last_name='Officer',
             membership='8888888888',
             membership_expiration=date.today() + relativedelta(years=1),
+            background_check_expiration=date.today() + relativedelta(years=1),
             state_province='Oregon',
             country='United States',
         )
         cls.ao_person = Person.objects.create(
             user=cls.ao_user,
             sca_name='Authorization Officer',
+            branch=cls.branch_gd,
+        )
+        cls.paper_concurrer_user = User.objects.create_user(
+            username='paper_concurrer',
+            password='StrongPass!123',
+            email='paper_concurrer@example.com',
+            first_name='Paper',
+            last_name='Concurrer',
+            membership='',
+            membership_expiration=date.today() + relativedelta(years=1),
+            background_check_expiration=date.today() + relativedelta(years=1),
+            state_province='Oregon',
+            country='United States',
+        )
+        cls.paper_concurrer_person = Person.objects.create(
+            user=cls.paper_concurrer_user,
+            sca_name='Paper Concurrer',
             branch=cls.branch_gd,
         )
         BranchMarshal.objects.create(
@@ -2253,11 +2271,37 @@ class UserAccountViewTests(ViewTestBase):
             start_date=date.today() - timedelta(days=1),
             end_date=date.today() + relativedelta(years=1),
         )
+        for marshal_person in (cls.ao_person, cls.other_person, cls.paper_concurrer_person):
+            if marshal_person.user.background_check_expiration is None:
+                marshal_person.user.background_check_expiration = date.today() + relativedelta(years=1)
+                marshal_person.user.save(update_fields=['background_check_expiration'])
+            Authorization.objects.create(
+                person=marshal_person,
+                style=cls.style_sm_armored,
+                status=cls.status_active,
+                marshal=marshal_person,
+                expiration=date(2029, 5, 9),
+            )
+            Authorization.objects.create(
+                person=marshal_person,
+                style=cls.style_sm_youth_armored,
+                status=cls.status_active,
+                marshal=marshal_person,
+                expiration=date(2027, 5, 10),
+            )
         cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
         cls.style_eq_general_riding = WeaponStyle.objects.create(
             name='General Riding',
             discipline=cls.discipline_equestrian,
         )
+
+    def paper_concurrer_fields(self, person=None, count=1):
+        person = person or self.paper_concurrer_person
+        return {
+            'concurring_officer_sca_name': [person.sca_name] * count,
+            'concurring_officer_first_name': [person.user.first_name] * count,
+            'concurring_officer_last_name': [person.user.last_name] * count,
+        }
 
     def test_owner_can_view_own_account(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
@@ -3304,36 +3348,6 @@ class UserAccountViewTests(ViewTestBase):
         self.assertTrue(yes_entry.has_society_waiver)
         self.assertFalse(no_entry.has_society_waiver)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=False)
-    def test_legacy_authorization_import_is_hidden_when_disabled(self):
-        self.client.login(username=self.ao_user.username, password='StrongPass!123')
-
-        response = self.client.get(reverse('index'))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, 'Upload Legacy Authorization CSV')
-        self.assertNotContains(response, 'name="authorization_csv"')
-
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=False)
-    def test_legacy_authorization_import_url_is_not_available_when_disabled(self):
-        self.client.force_login(self.ao_user)
-        upload = SimpleUploadedFile(
-            'legacy_authorizations.csv',
-            b'SCA Name,Discipline,Weapon Style,Start Date\nTest,Armored Combat,Weapon & Shield,2025-01-01\n',
-            content_type='text/csv',
-        )
-
-        response = self.client.post(
-            reverse('upload_legacy_authorizations'),
-            {'authorization_csv': upload, 'next': reverse('index')},
-            follow=True,
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'That page was not found. Redirected to the Authorizations Homepage.')
-        self.assertFalse(Authorization.objects.filter(person__sca_name='Test').exists())
-
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_import_legacy_authorization_for_existing_person(self):
         self.client.force_login(self.ao_user)
         upload = SimpleUploadedFile(
@@ -3371,7 +3385,6 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_import_legacy_authorization_with_unambiguous_style_only(self):
         self.client.force_login(self.ao_user)
         upload = SimpleUploadedFile(
@@ -3394,7 +3407,6 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(authorization.status.name, 'Active')
         self.assertEqual(authorization.marshal, self.ao_person)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_import_legacy_authorization_with_combined_discipline_style(self):
         self.client.force_login(self.ao_user)
         upload = SimpleUploadedFile(
@@ -3417,7 +3429,6 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(authorization.status.name, 'Active')
         self.assertEqual(authorization.marshal, self.ao_person)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_import_legacy_authorization_with_discipline_abbreviation(self):
         self.client.force_login(self.ao_user)
         upload = SimpleUploadedFile(
@@ -3440,7 +3451,6 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(authorization.status.name, 'Active')
         self.assertEqual(authorization.marshal, self.ao_person)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_authorization_import_requires_authorizing_marshal(self):
         self.client.force_login(self.ao_user)
         upload = SimpleUploadedFile(
@@ -3464,7 +3474,6 @@ class UserAccountViewTests(ViewTestBase):
             Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists()
         )
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_import_legacy_authorization_and_create_placeholder_person(self):
         self.client.force_login(self.ao_user)
         upload = SimpleUploadedFile(
@@ -3502,7 +3511,6 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(authorization.marshal, self.ao_person)
         self.assertTrue(UserNote.objects.filter(person=person, note__contains='Placeholder account').exists())
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_non_ao_cannot_import_legacy_authorizations(self):
         self.client.force_login(self.owner_user)
         upload = SimpleUploadedFile(
@@ -3518,45 +3526,48 @@ class UserAccountViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 403)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_process_legacy_recovery_batch(self):
         self.client.force_login(self.ao_user)
         other_style = WeaponStyle.objects.create(name='Two-Handed', discipline=self.discipline_armored)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
-                'person_sca_name': [self.owner_person.sca_name, self.other_person.sca_name],
-                'person_first_name': [self.owner_user.first_name, self.other_user.first_name],
-                'person_last_name': [self.owner_user.last_name, self.other_user.last_name],
+                'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield', 'Armored Combat - Two-Handed'],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
                 'auth_date': ['2025-05-10', '2025-05-11'],
+                **self.paper_concurrer_fields(count=2),
             },
             follow=True,
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 2 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Processed 2 paper authorization row(s).')
         first_auth = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
-        second_auth = Authorization.objects.get(person=self.other_person, style=other_style)
+        second_auth = Authorization.objects.get(person=self.owner_person, style=other_style)
         self.assertEqual(first_auth.expiration, date(2029, 5, 10))
         self.assertEqual(second_auth.expiration, date(2029, 5, 11))
+        self.assertIsNone(first_auth.concurring_fighter)
+        self.assertIsNone(second_auth.concurring_fighter)
         self.owner_user.refresh_from_db()
-        self.other_user.refresh_from_db()
-        self.assertEqual(self.owner_user.waiver_expiration, date(2029, 5, 10))
-        self.assertEqual(self.other_user.waiver_expiration, date(2029, 5, 11))
+        self.assertEqual(self.owner_user.waiver_expiration, date(2029, 5, 11))
         self.assertEqual(
-            WaiverRecord.objects.filter(source=WaiverRecord.Source.LEGACY_DATABASE_IMPORT).count(),
+            WaiverRecord.objects.filter(
+                covered_user=self.owner_user,
+                source=WaiverRecord.Source.LEGACY_DATABASE_IMPORT,
+            ).count(),
             2,
         )
         self.assertEqual(LegacyAuthorizationRecoveryEntry.objects.count(), 2)
         first_entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=first_auth)
         self.assertFalse(first_entry.minor_on_paperwork)
         self.assertEqual(first_entry.expiration, date(2029, 5, 10))
-        note_text = 'Authorization Added through Legacy Authorization Recovery Tool'
+        note_text = 'Authorization Added through Paper Authorization Entry Tool'
         self.assertTrue(
             AuthorizationNote.objects.filter(
                 authorization=first_auth,
@@ -3579,12 +3590,11 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_batch_blocks_duplicate_person_style(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
@@ -3594,37 +3604,161 @@ class UserAccountViewTests(ViewTestBase):
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
                 'auth_date': ['2025-05-10', '2025-05-10'],
+                **self.paper_concurrer_fields(count=2),
             },
             follow=True,
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
-        self.assertContains(response, 'already has a recovery entry')
+        self.assertContains(response, 'Armored Combat - Weapon &amp; Shield')
+        self.assertContains(response, 'This authorization is already in the batch.')
         self.assertEqual(
             Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).count(),
-            1,
+            0,
         )
         self.assertEqual(
             LegacyAuthorizationRecoveryEntry.objects.filter(
                 person=self.owner_person,
                 style=self.style_weapon_armored,
             ).count(),
-            1,
+            0,
         )
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
-    def test_legacy_recovery_updates_existing_authorization_and_records_previous_state(self):
+    def test_paper_entry_rolls_back_new_fighter_when_later_row_fails(self):
         self.client.force_login(self.ao_user)
-        existing_authorization = self.grant_authorization(
-            self.owner_person,
-            self.style_weapon_armored,
-            expiration=date(2028, 5, 10),
-            marshal=self.other_person,
+        new_sca_name = 'Atomic Paper Fighter'
+        style_rapier_dagger = WeaponStyle.objects.create(name='Dagger', discipline=self.discipline_rapier)
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        self.grant_authorization(
+            self.ao_person,
+            style_sm_rapier,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
         )
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [new_sca_name, new_sca_name],
+                'person_email': ['atomic.paper@example.com', 'atomic.paper@example.com'],
+                'person_first_name': ['Atomic', 'Atomic'],
+                'person_last_name': ['Fighter', 'Fighter'],
+                'person_address': ['123 Atomic Way', '123 Atomic Way'],
+                'person_city': ['Portland', 'Portland'],
+                'person_state_province': ['Oregon', 'Oregon'],
+                'person_postal_code': ['97201', '97201'],
+                'person_country': ['United States', 'United States'],
+                'person_phone_number': ['5035550199', '5035550199'],
+                'person_branch': [str(self.branch_gd.id), str(self.branch_gd.id)],
+                'weapon_style': ['Armored Combat - Weapon & Shield', 'Rapier Combat - Dagger'],
+                'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
+                'auth_date': ['2025-05-10', '2025-05-10'],
+                **self.paper_concurrer_fields(count=2),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Rapier Combat - Dagger')
+        self.assertContains(response, 'did not have Rapier Single Sword on 2025-05-10')
+        self.assertFalse(Person.objects.filter(sca_name=new_sca_name).exists())
+        self.assertFalse(Authorization.objects.filter(person__sca_name=new_sca_name).exists())
+        self.assertFalse(LegacyAuthorizationRecoveryEntry.objects.filter(person__sca_name=new_sca_name).exists())
+
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
+    def test_paper_entry_reports_multiple_batch_rule_errors(self):
+        self.client.force_login(self.ao_user)
+        style_rapier_dagger = WeaponStyle.objects.create(name='Dagger', discipline=self.discipline_rapier)
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        self.grant_authorization(
+            self.ao_person,
+            style_sm_rapier,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield', 'Rapier Combat - Dagger'],
+                'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
+                'auth_date': ['2025-05-10', '2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Armored Combat - Weapon &amp; Shield')
+        self.assertContains(response, 'Concurring fighter is required for this paper authorization.')
+        self.assertContains(response, 'Rapier Combat - Dagger')
+        self.assertContains(response, 'did not have Rapier Single Sword on 2025-05-10')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=style_rapier_dagger).exists())
+
+    def test_paper_entry_requires_marshal_senior_marshal_history_on_auth_date(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.owner_person.sca_name],
+                'marshal_first_name': [self.owner_user.first_name],
+                'marshal_last_name': [self.owner_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'was not a Senior Marshal in Armored Combat on 2025-05-10')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_does_not_accept_marshal_history_that_starts_after_auth_date(self):
+        self.client.force_login(self.ao_user)
+        future_marshal_user, future_marshal = self.make_person('future_marshal', 'Future Marshal')
+        self.grant_authorization(
+            future_marshal,
+            self.style_sm_armored,
+            expiration=date(2030, 5, 10),
+            marshal=future_marshal,
+        )
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [future_marshal.sca_name],
+                'marshal_first_name': [future_marshal_user.first_name],
+                'marshal_last_name': [future_marshal_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'was not a Senior Marshal in Armored Combat on 2025-05-10')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
+    def test_paper_entry_requires_concurring_fighter_when_concurrence_required(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3639,7 +3773,615 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Concurring fighter is required for this paper authorization.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_allows_first_authorization_without_concurrence_when_disabled(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        self.assertIsNone(authorization.concurring_fighter)
+
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
+    def test_paper_entry_rejects_concurring_fighter_without_history_on_auth_date(self):
+        self.client.force_login(self.ao_user)
+        novice_user, novice_person = self.make_person('paper_novice_concurrer', 'Paper Novice Concurrer')
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'concurring_officer_sca_name': [novice_person.sca_name],
+                'concurring_officer_first_name': [novice_user.first_name],
+                'concurring_officer_last_name': [novice_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'was not authorized in Armored Combat on 2025-05-10 and cannot concur.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_requires_prerequisite_history_on_auth_date(self):
+        self.client.force_login(self.ao_user)
+        style_rapier_dagger = WeaponStyle.objects.create(name='Dagger', discipline=self.discipline_rapier)
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        self.grant_authorization(
+            self.ao_person,
+            style_sm_rapier,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Rapier Combat - Dagger'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'did not have Rapier Single Sword on 2025-05-10')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=style_rapier_dagger).exists())
+
+    def test_paper_entry_accepts_prerequisite_history_on_auth_date(self):
+        self.client.force_login(self.ao_user)
+        style_rapier_dagger = WeaponStyle.objects.create(name='Dagger', discipline=self.discipline_rapier)
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        self.grant_authorization(
+            self.ao_person,
+            style_sm_rapier,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+        self.grant_authorization(
+            self.owner_person,
+            self.style_single_rapier,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Rapier Combat - Dagger'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
+        self.assertTrue(Authorization.objects.filter(person=self.owner_person, style=style_rapier_dagger).exists())
+
+    def test_paper_entry_blocks_kao_from_equestrian_authorizations(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Equestrian - General Riding'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Only the Kingdom Equestrian Authorization Officer can enter equestrian paper authorizations.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_eq_general_riding).exists())
+
+    def test_paper_entry_blocks_keao_from_non_equestrian_authorizations(self):
+        keao_user, keao_person = self.make_person('paper_entry_keao', 'Paper Entry KEAO')
+        self.appoint(keao_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        self.client.force_login(keao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Only the Kingdom Authorization Officer can enter non-equestrian paper authorizations.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_rejects_youth_combat_for_adult_on_auth_date(self):
+        self.client.force_login(self.ao_user)
+        youth_style = WeaponStyle.objects.create(name='Gryphon - Weapon & Shield', discipline=self.discipline_youth_armored)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Youth Armored - Gryphon - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                **self.paper_concurrer_fields(),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Must be a minor to become authorized in Youth Armored combat.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=youth_style).exists())
+
+    def test_paper_entry_accepts_youth_combat_when_minor_on_auth_date(self):
+        self.client.force_login(self.ao_user)
+        youth_user, youth_person = self.make_person(
+            'paper_entry_youth',
+            'Paper Entry Youth',
+            birthday=date(2013, 5, 10),
+        )
+        youth_style = WeaponStyle.objects.create(name='Gryphon - Weapon & Shield', discipline=self.discipline_youth_armored)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [youth_person.sca_name],
+                'person_first_name': [youth_user.first_name],
+                'person_last_name': [youth_user.last_name],
+                'weapon_style': ['Youth Armored - Gryphon - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
+        authorization = Authorization.objects.get(person=youth_person, style=youth_style)
+        self.assertEqual(authorization.expiration, date(2027, 5, 10))
+
+    def test_paper_entry_blocks_kao_from_equestrian_even_with_equestrian_marshal_auth(self):
+        style_eq_sm = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_equestrian)
+        self.grant_authorization(
+            self.ao_person,
+            style_eq_sm,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Equestrian - General Riding'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Only the Kingdom Equestrian Authorization Officer can enter equestrian paper authorizations.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_eq_general_riding).exists())
+
+    def test_paper_entry_blocks_keao_from_non_equestrian_even_with_armored_marshal_auth(self):
+        keao_user, keao_person = self.make_person('paper_entry_keao_with_armored', 'Paper Entry KEAO Armored')
+        self.appoint(keao_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        self.grant_authorization(
+            keao_person,
+            self.style_sm_armored,
+            expiration=date(2029, 5, 10),
+            marshal=keao_person,
+        )
+        self.client.force_login(keao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [keao_person.sca_name],
+                'marshal_first_name': [keao_user.first_name],
+                'marshal_last_name': [keao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                **self.paper_concurrer_fields(),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Only the Kingdom Authorization Officer can enter non-equestrian paper authorizations.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_staff_can_enter_paper_authorizations_across_kao_and_keao_scopes(self):
+        staff_user, staff_person = self.make_person('paper_entry_staff', 'Paper Entry Staff')
+        staff_user.is_staff = True
+        staff_user.save(update_fields=['is_staff'])
+        style_eq_sm = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_equestrian)
+        self.grant_authorization(
+            self.ao_person,
+            style_eq_sm,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+        self.client.force_login(staff_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield', 'Equestrian - General Riding'],
+                'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
+                'auth_date': ['2025-05-10', '2025-05-10'],
+                **self.paper_concurrer_fields(count=2),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 2 paper authorization row(s).')
+        self.assertTrue(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+        self.assertTrue(Authorization.objects.filter(person=self.owner_person, style=self.style_eq_general_riding).exists())
+
+    def test_paper_entry_rejects_self_authorization(self):
+        self.grant_authorization(
+            self.owner_person,
+            self.style_sm_armored,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.owner_person.sca_name],
+                'marshal_first_name': [self.owner_user.first_name],
+                'marshal_last_name': [self.owner_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cannot make an authorization for yourself.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_rejects_pending_authorization(self):
+        Authorization.objects.create(
+            person=self.owner_person,
+            style=self.style_weapon_armored,
+            status=self.status_needs_concurrence,
+            marshal=self.ao_person,
+            expiration=date(2029, 5, 10),
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                **self.paper_concurrer_fields(),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cannot renew a pending authorization.')
+        pending_authorization = Authorization.objects.get(person=self.owner_person, style=self.style_weapon_armored)
+        self.assertEqual(pending_authorization.status, self.status_needs_concurrence)
+        self.assertFalse(LegacyAuthorizationRecoveryEntry.objects.exists())
+
+    def test_paper_entry_rejects_style_sanction_active_on_auth_date(self):
+        Sanction.objects.create(
+            person=self.owner_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date(2025, 5, 1),
+            end_date=date(2025, 5, 31),
+            issue_note='Paper entry test sanction.',
+            issued_by=self.ao_user,
+            created_by=self.ao_user,
+            updated_by=self.ao_user,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                **self.paper_concurrer_fields(),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cannot issue an authorization while a sanction is active for this style or discipline.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_ignores_sanction_outside_auth_date(self):
+        Sanction.objects.create(
+            person=self.owner_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date(2025, 4, 1),
+            end_date=date(2025, 4, 30),
+            issue_note='Expired before the paper date.',
+            issued_by=self.ao_user,
+            created_by=self.ao_user,
+            updated_by=self.ao_user,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                **self.paper_concurrer_fields(),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
+        self.assertTrue(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_uses_submitted_membership_expiration_for_marshal_rule(self):
+        self.owner_user.membership_expiration = date(2025, 5, 9)
+        self.owner_user.save(update_fields=['membership_expiration'])
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'person_membership': [self.owner_user.membership],
+                'person_membership_expiration': ['2025-05-10'],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
+        authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
+        self.assertEqual(authorization.expiration, date(2029, 5, 10))
+        self.owner_user.refresh_from_db()
+        self.assertEqual(self.owner_user.membership_expiration, date(2025, 5, 10))
+
+    def test_paper_entry_rejects_marshal_authorization_when_membership_expired_on_auth_date(self):
+        self.owner_user.membership_expiration = date(2025, 5, 9)
+        self.owner_user.save(update_fields=['membership_expiration'])
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Must be a current member to be authorized as a marshal.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_sm_armored).exists())
+
+    def test_paper_entry_rejects_youth_marshal_when_background_check_expired_on_auth_date(self):
+        self.owner_user.background_check_expiration = date(2025, 5, 9)
+        self.owner_user.save(update_fields=['background_check_expiration'])
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Youth Armored - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Youth marshal authorizations require a current background check.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_sm_youth_armored).exists())
+
+    def test_paper_entry_rejects_minor_adult_combat_without_regional_marshal_on_auth_date(self):
+        minor_user, minor_person = self.make_person(
+            'paper_entry_minor_armored',
+            'Paper Entry Minor Armored',
+            birthday=date(2008, 5, 10),
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [minor_person.sca_name],
+                'person_first_name': [minor_user.first_name],
+                'person_last_name': [minor_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+                **self.paper_concurrer_fields(),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cannot authorize a minor in Rapier, Cut &amp; Thrust, or Armored Combat unless you are a regional marshal.')
+        self.assertFalse(Authorization.objects.filter(person=minor_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_entry_rolls_back_existing_fighter_updates_when_later_row_fails(self):
+        original_email = self.owner_user.email
+        style_rapier_dagger = WeaponStyle.objects.create(name='Dagger', discipline=self.discipline_rapier)
+        style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        self.grant_authorization(
+            self.ao_person,
+            style_sm_rapier,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
+                'person_email': ['paper-update@example.com', 'paper-update@example.com'],
+                'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield', 'Rapier Combat - Dagger'],
+                'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
+                'auth_date': ['2025-05-10', '2025-05-10'],
+                **self.paper_concurrer_fields(count=2),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Rapier Combat - Dagger')
+        self.assertContains(response, 'did not have Rapier Single Sword on 2025-05-10')
+        self.owner_user.refresh_from_db()
+        self.assertEqual(self.owner_user.email, original_email)
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=style_rapier_dagger).exists())
+        self.assertFalse(LegacyAuthorizationRecoveryEntry.objects.exists())
+
+    def test_legacy_recovery_updates_existing_authorization_and_records_previous_state(self):
+        self.client.force_login(self.ao_user)
+        existing_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_weapon_armored,
+            expiration=date(2028, 5, 10),
+            marshal=self.other_person,
+        )
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
         existing_authorization.refresh_from_db()
         self.assertEqual(existing_authorization.expiration, date(2029, 5, 10))
         self.assertEqual(existing_authorization.marshal, self.ao_person)
@@ -3650,7 +4392,6 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIsNone(entry.previous_concurring_fighter)
         self.assertEqual(entry.previous_expiration, date(2028, 5, 10))
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_blocks_existing_authorization_from_moving_backward(self):
         self.client.force_login(self.ao_user)
         existing_authorization = self.grant_authorization(
@@ -3661,7 +4402,7 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3671,6 +4412,7 @@ class UserAccountViewTests(ViewTestBase):
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
                 'auth_date': ['2025-05-09'],
+                **self.paper_concurrer_fields(),
             },
             follow=True,
         )
@@ -3682,12 +4424,11 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(existing_authorization.marshal, self.other_person)
         self.assertFalse(LegacyAuthorizationRecoveryEntry.objects.exists())
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_minor_checkbox_uses_two_year_expiration(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3698,6 +4439,7 @@ class UserAccountViewTests(ViewTestBase):
                 'marshal_last_name': [self.ao_user.last_name],
                 'auth_date': ['2025-05-10'],
                 'is_minor': ['1'],
+                **self.paper_concurrer_fields(),
             },
             follow=True,
         )
@@ -3709,12 +4451,13 @@ class UserAccountViewTests(ViewTestBase):
         self.assertTrue(entry.minor_on_paperwork)
         self.assertEqual(entry.expiration, date(2027, 5, 10))
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_youth_marshal_uses_two_year_expiration(self):
         self.client.force_login(self.ao_user)
+        self.owner_user.background_check_expiration = date(2027, 5, 10)
+        self.owner_user.save(update_fields=['background_check_expiration'])
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3739,12 +4482,11 @@ class UserAccountViewTests(ViewTestBase):
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_youth_armored)
         self.assertEqual(authorization.expiration, date(2027, 5, 10))
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_junior_marshal_renewal_does_not_require_second_marshal(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3759,18 +4501,17 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_jm_armored)
         entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
         self.assertFalse(entry.marshal_promotion)
         self.assertIsNone(entry.second_marshal)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_junior_marshal_promotion_requires_second_marshal(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3789,12 +4530,11 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, 'Second Marshal is required for this marshal authorization.')
         self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_jm_armored).exists())
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_junior_marshal_records_second_marshal(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3813,19 +4553,18 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_jm_armored)
         entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
         self.assertTrue(entry.marshal_promotion)
         self.assertEqual(entry.second_marshal, self.other_person)
         self.assertIsNone(entry.concurring_officer)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_senior_marshal_renewal_does_not_require_promotion_signoffs(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3840,14 +4579,13 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
         entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
         self.assertFalse(entry.marshal_promotion)
         self.assertIsNone(entry.second_marshal)
         self.assertIsNone(entry.concurring_officer)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_senior_marshal_deactivates_same_discipline_junior_marshal(self):
         junior_authorization = self.grant_authorization(
             self.owner_person,
@@ -3857,7 +4595,7 @@ class UserAccountViewTests(ViewTestBase):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3872,11 +4610,10 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
         junior_authorization.refresh_from_db()
         self.assertEqual(junior_authorization.status.name, 'Inactive')
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_refuses_junior_marshal_when_senior_marshal_is_active(self):
         self.grant_authorization(
             self.owner_person,
@@ -3886,7 +4623,7 @@ class UserAccountViewTests(ViewTestBase):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3903,11 +4640,10 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            'already has an active Senior Marshal authorization in Armored Combat',
+            'already had a Senior Marshal authorization in Armored Combat on 2025-05-10',
         )
         self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_jm_armored).exists())
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_resolves_selected_marshal_by_id_before_names(self):
         self.client.force_login(self.ao_user)
         marshal_user, marshal_person = self.make_person(
@@ -3915,9 +4651,15 @@ class UserAccountViewTests(ViewTestBase):
             'Connal MacLagmayn',
             user_id=16054,
         )
+        self.grant_authorization(
+            marshal_person,
+            self.style_sm_armored,
+            expiration=date(2029, 5, 10),
+            marshal=marshal_person,
+        )
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
@@ -3934,19 +4676,18 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
         self.assertEqual(authorization.marshal, marshal_person)
         self.assertFalse(
             any('Marshal was not found' in message for message in self.messages_for(response))
         )
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_senior_marshal_promotion_requires_concurring_officer(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3968,13 +4709,18 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, 'Concurring Officer is required for this marshal authorization.')
         self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_sm_armored).exists())
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_senior_marshal_records_signoffs(self):
         self.client.force_login(self.ao_user)
         concurring_user, concurring_person = self.make_person('legacy_concurrer', 'Legacy Concurrer')
+        self.grant_authorization(
+            concurring_person,
+            self.style_sm_armored,
+            expiration=date(2029, 5, 10),
+            marshal=concurring_person,
+        )
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -3996,7 +4742,7 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Processed 1 legacy authorization recovery row(s).')
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
         authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
         entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
         self.assertTrue(entry.marshal_promotion)
@@ -4015,7 +4761,7 @@ class UserAccountViewTests(ViewTestBase):
                 note__contains=f'Senior Marshal Concurrence: {concurring_person.sca_name}.',
             ).exists()
         )
-        note_text = 'Authorization Added through Legacy Authorization Recovery Tool'
+        note_text = 'Authorization Added through Paper Authorization Entry Tool'
         self.assertTrue(
             UserNote.objects.filter(
                 person=self.other_person,
@@ -4039,12 +4785,11 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_add_new_fighter_from_legacy_recovery_page(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'action': 'add_legacy_recovery_fighter',
                 'sca_name': 'New Recovery Fighter',
@@ -4083,14 +4828,13 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(person.branch, self.branch_gd)
         self.assertFalse(person.user.has_usable_password())
         self.assertTrue(UserNote.objects.filter(person=person, note__contains='Account created').exists())
-        self.assertContains(response, 'New Recovery Fighter | New | Recovery')
+        self.assertContains(response, 'New Recovery Fighter | New Recovery')
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_new_minor_fighter_requires_parent_names(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'action': 'add_legacy_recovery_fighter',
                 'sca_name': 'Minor Recovery No Parent',
@@ -4120,12 +4864,11 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, 'A minor must have either a parent ID or parent first and last name.')
         self.assertFalse(Person.objects.filter(sca_name='Minor Recovery No Parent').exists())
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_new_minor_fighter_stores_parent_names(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'action': 'add_legacy_recovery_fighter',
                 'sca_name': 'Minor Recovery Fighter',
@@ -4158,13 +4901,12 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(person.parent_first_name, 'Pat')
         self.assertEqual(person.parent_last_name, 'Recovery')
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_new_minor_fighter_parent_id_discards_parent_names(self):
         self.client.force_login(self.ao_user)
         parent_user, parent = self.make_person('legacy_recovery_parent', 'Legacy Recovery Parent')
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'action': 'add_legacy_recovery_fighter',
                 'sca_name': 'Minor Recovery With Parent ID',
@@ -4199,7 +4941,6 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(person.parent_first_name, '')
         self.assertEqual(person.parent_last_name, '')
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_updates_person_membership_from_batch_row(self):
         self.client.force_login(self.ao_user)
         self.owner_user.membership = '111111'
@@ -4207,7 +4948,7 @@ class UserAccountViewTests(ViewTestBase):
         self.owner_user.save()
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
@@ -4221,9 +4962,7 @@ class UserAccountViewTests(ViewTestBase):
                 'second_marshal_sca_name': [''],
                 'second_marshal_first_name': [''],
                 'second_marshal_last_name': [''],
-                'concurring_officer_sca_name': [''],
-                'concurring_officer_first_name': [''],
-                'concurring_officer_last_name': [''],
+                **self.paper_concurrer_fields(),
                 'marshal_promotion': [''],
                 'auth_date': ['2025-05-10'],
                 'is_minor': [''],
@@ -4236,13 +4975,12 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(self.owner_user.membership, '222222')
         self.assertEqual(self.owner_user.membership_expiration, date(2030, 6, 15))
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_new_fighter_duplicate_sca_name_gets_four_digit_username_suffix(self):
         self.client.force_login(self.ao_user)
         self.make_person('existing_same_sca', 'Shared Recovery Name')
 
         response = self.client.post(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {
                 'action': 'add_legacy_recovery_fighter',
                 'sca_name': 'Shared Recovery Name',
@@ -4269,7 +5007,6 @@ class UserAccountViewTests(ViewTestBase):
         person = Person.objects.get(user__email='shared.recovery@example.com')
         self.assertRegex(person.user.username, r'^shared\.recovery\.name\.\d{4}$')
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_ao_can_download_legacy_recovery_audit_csv(self):
         self.client.force_login(self.ao_user)
         authorization = Authorization.objects.create(
@@ -4294,7 +5031,7 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         response = self.client.get(
-            reverse('legacy_authorization_recovery'),
+            reverse('paper_authorization_entry'),
             {'download': 'audit_csv'},
         )
 
@@ -4309,15 +5046,37 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIn(f'{self.other_person.sca_name},{self.other_user.first_name},{self.other_user.last_name}', content)
         self.assertIn('Yes,2025-05-10,2027-05-10,Yes', content)
 
-    @override_settings(AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT=True)
     def test_legacy_recovery_promotion_checkbox_hidden_until_marshal_style_selected(self):
         self.client.force_login(self.ao_user)
 
-        response = self.client.get(reverse('legacy_authorization_recovery'))
+        response = self.client.get(reverse('paper_authorization_entry'))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'id="marshal_promotion_field"')
         self.assertContains(response, 'd-none" id="marshal_promotion_field"')
+
+    def test_paper_entry_signoff_lookups_show_member_numbers_and_use_person_search(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.get(reverse('paper_authorization_entry'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1" data-person-search="1"')
+        self.assertContains(response, 'id="second_marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1" data-person-search="1"')
+        self.assertContains(response, 'id="concurring_officer_lookup" class="choices-dropdown form-control" data-editor-choice="1" data-person-search="1"')
+        self.assertContains(response, f'value="{self.ao_person.user_id}"')
+        self.assertContains(response, 'data-sca-name="Authorization Officer"')
+        self.assertContains(response, 'data-first-name="Auth"')
+        self.assertContains(response, 'data-last-name="Officer"')
+        self.assertContains(response, '8888888888 | Authorization Officer | Auth Officer')
+
+    def test_legacy_recovery_url_redirects_to_paper_authorization_entry(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.get(reverse('legacy_authorization_recovery'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('paper_authorization_entry'))
 
     @override_settings(AUTHZ_TEST_FEATURES=False)
     def test_self_set_regional_is_blocked_when_testing_disabled(self):
@@ -5966,7 +6725,9 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(created_auth.expiration, authorization_date + relativedelta(years=4))
+        self.assertEqual(created_auth.status, self.status_active)
 
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
     def test_rapier_single_sword_and_secondary_can_be_submitted_together_for_concurrence(self):
         style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
         self.client.login(username=self.krapier_user.username, password='StrongPass!123')
@@ -6141,6 +6902,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertEqual(created_auth.marshal, self.kao_person)
         self.assertEqual(created_auth.status, self.status_needs_kingdom_equestrian_waiver)
 
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
     def test_keao_with_non_equestrian_senior_marshal_auth_can_add_non_equestrian_as_self(self):
         eq_officer_user, eq_officer_person = self.make_person(
             'office_keao_armored_self_officer',
@@ -6299,6 +7061,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertEqual(mounted_gaming.status, self.status_needs_kingdom_equestrian_waiver)
         self.assertEqual(mounted_gaming.effective_expiration, date.today() - relativedelta(years=1))
 
+    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
     def test_cut_and_thrust_foundation_and_spear_can_be_submitted_together_for_concurrence(self):
         discipline_cut_and_thrust = Discipline.objects.create(name='Cut & Thrust')
         style_spear = WeaponStyle.objects.create(

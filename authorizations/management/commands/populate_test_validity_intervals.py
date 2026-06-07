@@ -43,7 +43,7 @@ class Command(BaseCommand):
             intervals,
             skipped_missing_expiration,
             skipped_missing_style,
-            skipped_effective_before_start,
+            adjusted_effective_before_start,
         ) = self._build_intervals(authorizations)
 
         self.stdout.write(f"Authorizations considered: {authorizations.count()}")
@@ -54,7 +54,7 @@ class Command(BaseCommand):
         self.stdout.write(f"4-year intervals: {sum(1 for interval in intervals if interval['years'] == 4)}")
         self.stdout.write(f"Skipped missing expiration: {skipped_missing_expiration}")
         self.stdout.write(f"Skipped missing style/discipline: {skipped_missing_style}")
-        self.stdout.write(f"Skipped effective expiration before calculated start: {skipped_effective_before_start}")
+        self.stdout.write(f"Adjusted effective expiration before calculated start: {adjusted_effective_before_start}")
 
         if not write:
             self.stdout.write("Dry run only. Re-run with --write to create these intervals.")
@@ -91,7 +91,7 @@ class Command(BaseCommand):
         intervals = []
         skipped_missing_expiration = 0
         skipped_missing_style = 0
-        skipped_effective_before_start = 0
+        adjusted_effective_before_start = 0
 
         for authorization in authorizations:
             if not authorization.expiration:
@@ -105,8 +105,8 @@ class Command(BaseCommand):
             start_date = authorization.expiration - relativedelta(years=years)
             end_date = authorization.effective_expiration
             if end_date < start_date:
-                skipped_effective_before_start += 1
-                continue
+                start_date = end_date - relativedelta(years=years)
+                adjusted_effective_before_start += 1
 
             intervals.append(
                 {
@@ -121,7 +121,7 @@ class Command(BaseCommand):
             intervals,
             skipped_missing_expiration,
             skipped_missing_style,
-            skipped_effective_before_start,
+            adjusted_effective_before_start,
         )
 
     def _duration_years(self, authorization):

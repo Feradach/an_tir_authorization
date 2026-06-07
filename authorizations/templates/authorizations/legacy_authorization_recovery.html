@@ -1,39 +1,177 @@
 {% extends "authorizations/inner_layout.html" %}
 
 {% block title %}
-    Legacy Authorization Recovery
+    Paper Authorization Entry
 {% endblock %}
 
 {% block body %}
-<h1>Legacy Authorization Recovery</h1>
+<style>
+    .choices.is-disabled .choices__inner,
+    .choices.is-disabled .choices__input {
+        background-color: #e9ecef;
+        color: #212529;
+        opacity: 1;
+    }
+
+    .choices.is-disabled .choices__item {
+        color: #212529;
+    }
+</style>
+
+<h1>Paper Authorization Entry</h1>
 
 <div class="mb-4">
+    <h2>Fighter</h2>
+    <div id="batch_locked_notice" class="alert alert-secondary py-2" role="alert" style="display:none;">
+        Clear the batch to change the fighter or authorization date.
+    </div>
     <div class="row g-3">
-        <div class="col-md-4">
+        <div class="col-md-8">
             <label for="person_lookup" class="form-label"><strong>Person</strong></label>
-            <select id="person_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+            <select id="person_lookup" class="choices-dropdown form-control" data-editor-choice="1" data-person-search="1">
                 <option value=""></option>
+                <option value="__new_fighter__">New Fighter</option>
                 {% for person in people %}
                     <option
-                        value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}"
+                        value="{{ person.user_id }}"
                         data-person-id="{{ person.user_id }}"
+                        data-sca-name="{{ person.sca_name }}"
+                        data-first-name="{{ person.user.first_name }}"
+                        data-last-name="{{ person.user.last_name }}"
+                        data-email="{{ person.user.email|default_if_none:'' }}"
                         data-membership="{{ person.user.membership|default_if_none:'' }}"
                         data-membership-expiration="{{ person.user.membership_expiration|date:'Y-m-d' }}"
+                        data-address="{{ person.user.address|default_if_none:'' }}"
+                        data-address2="{{ person.user.address2|default_if_none:'' }}"
+                        data-city="{{ person.user.city|default_if_none:'' }}"
+                        data-state-province="{{ person.user.state_province|default_if_none:'' }}"
+                        data-postal-code="{{ person.user.postal_code|default_if_none:'' }}"
+                        data-country="{{ person.user.country|default_if_none:'' }}"
+                        data-phone-number="{{ person.user.phone_number|default_if_none:'' }}"
+                        data-birthday="{{ person.user.birthday|date:'Y-m-d' }}"
+                        data-branch="{{ person.branch_id|default_if_none:'' }}"
+                        data-parent-id="{{ person.parent_id|default_if_none:'' }}"
+                        data-parent-sca-name="{{ person.parent_sca_name|default_if_none:'' }}"
+                        data-parent-first-name="{{ person.parent_first_name|default_if_none:'' }}"
+                        data-parent-last-name="{{ person.parent_last_name|default_if_none:'' }}"
+                        data-background-check-expiration="{{ person.user.background_check_expiration|date:'Y-m-d' }}"
+                        data-is-minor="{% if person.is_current_minor %}1{% endif %}"
                     >
-                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                        {% if person.user.membership %}{{ person.user.membership }} | {% endif %}{{ person.sca_name }} | {{ person.user.first_name }} {{ person.user.last_name }}
                     </option>
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-2">
+        <div class="col-md-4">
+            <label for="editor_auth_date" class="form-label"><strong>Authorization Date</strong></label>
+            <input id="editor_auth_date" type="date" class="form-control" required>
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_sca_name" class="form-label"><strong>SCA Name</strong></label>
+            <input id="editor_person_sca_name" class="form-control" required>
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_first_name" class="form-label"><strong>First Name</strong></label>
+            <input id="editor_person_first_name" class="form-control" required>
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_last_name" class="form-label"><strong>Last Name</strong></label>
+            <input id="editor_person_last_name" class="form-control" required>
+        </div>
+        <div class="col-md-4">
+            <label for="editor_person_address" class="form-label"><strong>Address</strong></label>
+            <input id="editor_person_address" class="form-control">
+        </div>
+        <div class="col-md-4">
+            <label for="editor_person_city" class="form-label"><strong>City</strong></label>
+            <input id="editor_person_city" class="form-control">
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_state_province" class="form-label"><strong>State/Province</strong></label>
+            <select id="editor_person_state_province" class="choices-dropdown form-control">
+                {% for value, label in new_fighter_form.fields.state_province.choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_postal_code" class="form-label"><strong>Postal Code</strong></label>
+            <input id="editor_person_postal_code" class="form-control">
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_country" class="form-label"><strong>Country</strong></label>
+            <select id="editor_person_country" class="choices-dropdown form-control">
+                {% for value, label in new_fighter_form.fields.country.choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_branch" class="form-label"><strong>Branch</strong></label>
+            <select id="editor_person_branch" class="choices-dropdown form-control">
+                <option value=""></option>
+                {% for branch in new_fighter_form.fields.branch.queryset %}
+                    <option value="{{ branch.id }}">{{ branch.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_email" class="form-label"><strong>Email</strong></label>
+            <input id="editor_person_email" type="email" class="form-control">
+        </div>
+        <div class="col-md-3">
+            <label for="editor_person_phone_number" class="form-label"><strong>Phone</strong></label>
+            <input id="editor_person_phone_number" class="form-control">
+        </div>
+        <div class="col-md-3">
             <label for="editor_person_membership" class="form-label"><strong>Member Number</strong></label>
             <input id="editor_person_membership" class="form-control">
         </div>
-        <div class="col-md-2">
+        <div class="col-md-3">
             <label for="editor_person_membership_expiration" class="form-label"><strong>Member Exp</strong></label>
             <input id="editor_person_membership_expiration" type="date" class="form-control">
         </div>
+        <div class="col-md-3">
+            <label for="editor_person_background_check_expiration" class="form-label"><strong>Background Exp</strong></label>
+            <input id="editor_person_background_check_expiration" type="date" class="form-control">
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+            <div class="form-check">
+                <input id="editor_is_minor" type="checkbox" class="form-check-input">
+                <label for="editor_is_minor" class="form-check-label"><strong>Minor</strong></label>
+            </div>
+        </div>
+        <input id="editor_person_address2" type="hidden">
+        <input id="editor_person_birthday" type="hidden">
+        <div class="col-md-3 paper-parent-field">
+            <label for="editor_person_parent_id" class="form-label"><strong>Parent ID</strong></label>
+            <select id="editor_person_parent_id" class="choices-dropdown form-control">
+                <option value=""></option>
+                {% for parent in new_fighter_form.fields.parent_id.queryset %}
+                    <option value="{{ parent.user_id }}">{{ parent.sca_name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3 paper-parent-field">
+            <label for="editor_person_parent_sca_name" class="form-label"><strong>Parent SCA Name</strong></label>
+            <input id="editor_person_parent_sca_name" class="form-control">
+        </div>
+        <div class="col-md-3 paper-parent-field">
+            <label for="editor_person_parent_first_name" class="form-label"><strong>Parent First Name</strong></label>
+            <input id="editor_person_parent_first_name" class="form-control">
+        </div>
+        <div class="col-md-3 paper-parent-field">
+            <label for="editor_person_parent_last_name" class="form-label"><strong>Parent Last Name</strong></label>
+            <input id="editor_person_parent_last_name" class="form-control">
+        </div>
+    </div>
+</div>
 
+<hr class="my-4">
+
+<div class="mb-4">
+    <h2>Auths</h2>
+    <div class="row g-3">
         <div class="col-md-5">
             <label for="editor_weapon_style" class="form-label"><strong>Weapon Style</strong></label>
             <select id="editor_weapon_style" class="choices-dropdown form-control" data-editor-choice="1">
@@ -43,43 +181,62 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-3">
-            <label for="editor_auth_date" class="form-label"><strong>Auth Date</strong></label>
-            <input id="editor_auth_date" type="date" class="form-control" required>
-        </div>
-
         <div class="col-md-4">
             <label for="marshal_lookup" class="form-label"><strong>Marshal</strong></label>
-            <select id="marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+            <select id="marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1" data-person-search="1">
                 <option value=""></option>
                 {% for person in people %}
-                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}" data-person-id="{{ person.user_id }}">
-                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                    <option
+                        value="{{ person.user_id }}"
+                        data-person-id="{{ person.user_id }}"
+                        data-sca-name="{{ person.sca_name }}"
+                        data-first-name="{{ person.user.first_name }}"
+                        data-last-name="{{ person.user.last_name }}"
+                    >
+                        {% if person.user.membership %}{{ person.user.membership }} | {% endif %}{{ person.sca_name }} | {{ person.user.first_name }} {{ person.user.last_name }}
                     </option>
                 {% endfor %}
             </select>
         </div>
         <div class="col-md-4" id="second_marshal_lookup_field" style="display:none;">
             <label for="second_marshal_lookup" class="form-label"><strong>Second Marshal</strong></label>
-            <select id="second_marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+            <select id="second_marshal_lookup" class="choices-dropdown form-control" data-editor-choice="1" data-person-search="1">
                 <option value=""></option>
                 {% for person in people %}
-                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}" data-person-id="{{ person.user_id }}">
-                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                    <option
+                        value="{{ person.user_id }}"
+                        data-person-id="{{ person.user_id }}"
+                        data-sca-name="{{ person.sca_name }}"
+                        data-first-name="{{ person.user.first_name }}"
+                        data-last-name="{{ person.user.last_name }}"
+                    >
+                        {% if person.user.membership %}{{ person.user.membership }} | {% endif %}{{ person.sca_name }} | {{ person.user.first_name }} {{ person.user.last_name }}
                     </option>
                 {% endfor %}
             </select>
         </div>
         <div class="col-md-4" id="concurring_officer_lookup_field" style="display:none;">
-            <label for="concurring_officer_lookup" class="form-label"><strong>Concurring Officer</strong></label>
-            <select id="concurring_officer_lookup" class="choices-dropdown form-control" data-editor-choice="1">
+            <label for="concurring_officer_lookup" class="form-label"><strong id="concurring_officer_label">Concurring Fighter / Officer</strong></label>
+            <select id="concurring_officer_lookup" class="choices-dropdown form-control" data-editor-choice="1" data-person-search="1">
                 <option value=""></option>
                 {% for person in people %}
-                    <option value="{{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}" data-person-id="{{ person.user_id }}">
-                        {{ person.sca_name }} | {{ person.user.first_name }} | {{ person.user.last_name }}
+                    <option
+                        value="{{ person.user_id }}"
+                        data-person-id="{{ person.user_id }}"
+                        data-sca-name="{{ person.sca_name }}"
+                        data-first-name="{{ person.user.first_name }}"
+                        data-last-name="{{ person.user.last_name }}"
+                    >
+                        {% if person.user.membership %}{{ person.user.membership }} | {% endif %}{{ person.sca_name }} | {{ person.user.first_name }} {{ person.user.last_name }}
                     </option>
                 {% endfor %}
             </select>
+        </div>
+        <div class="col-md-2 align-items-end{% if not AUTHZ_REQUIRE_FIGHTER_CONCURRENCE %} d-none{% endif %}" id="fighter_concurrence_field">
+            <div class="form-check">
+                <input id="editor_fighter_concurrence" type="checkbox" class="form-check-input">
+                <label for="editor_fighter_concurrence" class="form-check-label"><strong>Concurrence</strong></label>
+            </div>
         </div>
         <div class="col-md-2 align-items-end d-none" id="marshal_promotion_field">
             <div class="form-check">
@@ -87,18 +244,9 @@
                 <label for="editor_marshal_promotion" class="form-check-label"><strong>Promotion</strong></label>
             </div>
         </div>
-        <div class="col-md-2 d-flex align-items-end">
-            <div class="form-check">
-                <input id="editor_is_minor" type="checkbox" class="form-check-input">
-                <label for="editor_is_minor" class="form-check-label"><strong>Minor</strong></label>
-            </div>
-        </div>
     </div>
 
-    <input id="editor_person_sca_name" type="hidden">
     <input id="editor_person_id" type="hidden">
-    <input id="editor_person_first_name" type="hidden">
-    <input id="editor_person_last_name" type="hidden">
     <input id="editor_marshal_id" type="hidden">
     <input id="editor_marshal_sca_name" type="hidden">
     <input id="editor_marshal_first_name" type="hidden">
@@ -117,147 +265,6 @@
     </div>
 </div>
 
-<details class="mb-4">
-    <summary><strong>Add New Fighter</strong></summary>
-    <div id="new_fighter_batch_warning" class="alert alert-warning mt-3" role="alert" style="display:none;">
-        <strong>You must process the current batch before adding a new fighter.</strong>
-    </div>
-    <form method="post" id="new_fighter_form" class="mt-3">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="add_legacy_recovery_fighter">
-        {% if new_fighter_form.errors %}
-            <div class="alert alert-danger" role="alert">
-                <strong>Please correct the following errors:</strong>
-                <ul class="mb-0">
-                    {% for error in new_fighter_form.non_field_errors %}
-                        <li>{{ error }}</li>
-                    {% endfor %}
-                    {% for field in new_fighter_form %}
-                        {% for error in field.errors %}
-                            <li>{{ field.label }}: {{ error }}</li>
-                        {% endfor %}
-                    {% endfor %}
-                </ul>
-            </div>
-        {% endif %}
-        <div class="row g-3">
-            <div class="col-md-4">
-                <label for="id_sca_name" class="form-label">SCA Name</label>
-                <input id="id_sca_name" name="sca_name" class="form-control" value="{{ new_fighter_form.sca_name.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_email" class="form-label">Email</label>
-                <input id="id_email" name="email" type="email" class="form-control" value="{{ new_fighter_form.email.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_first_name" class="form-label">First Name</label>
-                <input id="id_first_name" name="first_name" class="form-control" value="{{ new_fighter_form.first_name.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_last_name" class="form-label">Last Name</label>
-                <input id="id_last_name" name="last_name" class="form-control" value="{{ new_fighter_form.last_name.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_membership" class="form-label">Membership Number</label>
-                <input id="id_membership" name="membership" class="form-control" value="{{ new_fighter_form.membership.value|default_if_none:'' }}">
-            </div>
-            <div class="col-md-4">
-                <label for="id_membership_expiration" class="form-label">Membership Expiration</label>
-                <input id="id_membership_expiration" name="membership_expiration" type="date" class="form-control" value="{{ new_fighter_form.membership_expiration.value|default_if_none:'' }}">
-            </div>
-            <div class="col-md-4">
-                <label for="id_address" class="form-label">Address</label>
-                <input id="id_address" name="address" class="form-control" value="{{ new_fighter_form.address.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_address2" class="form-label">Address Line 2</label>
-                <input id="id_address2" name="address2" class="form-control" value="{{ new_fighter_form.address2.value|default_if_none:'' }}">
-            </div>
-            <div class="col-md-4">
-                <label for="id_city" class="form-label">City</label>
-                <input id="id_city" name="city" class="form-control" value="{{ new_fighter_form.city.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_state_province" class="form-label">State/Province</label>
-                <select id="id_state_province" name="state_province" class="choices-dropdown form-control" required>
-                    {% for value, label in new_fighter_form.fields.state_province.choices %}
-                        <option value="{{ value }}"{% if new_fighter_form.state_province.value == value %} selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-4">
-                <label for="id_postal_code" class="form-label">Postal Code</label>
-                <input id="id_postal_code" name="postal_code" class="form-control" value="{{ new_fighter_form.postal_code.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_country" class="form-label">Country</label>
-                <select id="id_country" name="country" class="choices-dropdown form-control" required>
-                    {% for value, label in new_fighter_form.fields.country.choices %}
-                        <option value="{{ value }}"{% if new_fighter_form.country.value == value %} selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-4">
-                <label for="id_phone_number" class="form-label">Phone Number</label>
-                <input id="id_phone_number" name="phone_number" class="form-control" value="{{ new_fighter_form.phone_number.value|default_if_none:'' }}" required>
-            </div>
-            <div class="col-md-4">
-                <label for="id_branch" class="form-label">Branch</label>
-                <select id="id_branch" name="branch" class="choices-dropdown form-control" required>
-                    <option value=""></option>
-                    {% for branch in new_fighter_form.fields.branch.queryset %}
-                        <option value="{{ branch.id }}"{% if new_fighter_form.branch.value|stringformat:"s" == branch.id|stringformat:"s" %} selected{% endif %}>{{ branch.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-4">
-                <label for="id_background_check_expiration" class="form-label">Background Check Expiration</label>
-                <input id="id_background_check_expiration" name="background_check_expiration" type="date" class="form-control" value="{{ new_fighter_form.background_check_expiration.value|default_if_none:'' }}">
-            </div>
-            <div class="col-md-4 d-flex align-items-end">
-                <div class="form-check">
-                    <input id="id_is_minor" name="is_minor" type="checkbox" class="form-check-input"{% if new_fighter_form.is_minor.value %} checked{% endif %}>
-                    <label for="id_is_minor" class="form-check-label">Minor</label>
-                </div>
-            </div>
-            <div class="col-md-4" id="new_fighter_birthday_field">
-                <label for="id_birthday" class="form-label">Birthday</label>
-                <input id="id_birthday" name="birthday" type="date" class="form-control" value="{{ new_fighter_form.birthday.value|default_if_none:'' }}">
-            </div>
-            <div class="col-md-4 new-fighter-parent-field">
-                <label for="id_parent_id" class="form-label">Parent ID</label>
-                <select id="id_parent_id" name="parent_id" class="choices-dropdown form-control">
-                    <option value=""></option>
-                    {% for parent in new_fighter_form.fields.parent_id.queryset %}
-                        <option
-                            value="{{ parent.user_id }}"
-                            data-parent-sca-name="{{ parent.sca_name|default_if_none:'' }}"
-                            data-parent-first-name="{{ parent.user.first_name|default_if_none:'' }}"
-                            data-parent-last-name="{{ parent.user.last_name|default_if_none:'' }}"
-                            {% if new_fighter_form.parent_id.value|stringformat:"s" == parent.user_id|stringformat:"s" %} selected{% endif %}
-                        >{{ parent.sca_name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="col-md-4 new-fighter-parent-field">
-                <label for="id_parent_sca_name" class="form-label">Parent SCA Name</label>
-                <input id="id_parent_sca_name" name="parent_sca_name" class="form-control" value="{{ new_fighter_form.parent_sca_name.value|default_if_none:'' }}">
-            </div>
-            <div class="col-md-4 new-fighter-parent-field">
-                <label for="id_parent_first_name" class="form-label">Parent First Name</label>
-                <input id="id_parent_first_name" name="parent_first_name" class="form-control" value="{{ new_fighter_form.parent_first_name.value|default_if_none:'' }}">
-            </div>
-            <div class="col-md-4 new-fighter-parent-field">
-                <label for="id_parent_last_name" class="form-label">Parent Last Name</label>
-                <input id="id_parent_last_name" name="parent_last_name" class="form-control" value="{{ new_fighter_form.parent_last_name.value|default_if_none:'' }}">
-            </div>
-        </div>
-        <div class="mt-3">
-            <button type="submit" class="btn btn-secondary">Add Fighter</button>
-        </div>
-    </form>
-</details>
-
 <form method="post" id="recovery_batch_form" class="mb-4">
     {% csrf_token %}
     <div id="hidden_rows"></div>
@@ -265,14 +272,11 @@
     <table id="batch_table">
         <thead>
             <tr>
-                <th>Person</th>
-                <th>Member Number</th>
-                <th>Member Exp</th>
                 <th>Style</th>
                 <th>Marshal</th>
                 <th>Promotion</th>
                 <th>Second Marshal</th>
-                <th>Concurring Officer</th>
+                <th>Concurring Fighter / Officer</th>
                 <th>Auth Date</th>
                 <th>Minor</th>
                 <th>Action</th>
@@ -289,7 +293,7 @@
 {{ pending_rows|json_script:"pending_rows_data" }}
 
 <h2>Recently Processed</h2>
-<p><a href="{% url 'legacy_authorization_recovery' %}?download=audit_csv" class="btn btn-secondary">Download Recovery Audit CSV</a></p>
+<p><a href="{% url 'paper_authorization_entry' %}?download=audit_csv" class="btn btn-secondary">Download Paper Entry Audit CSV</a></p>
 {% if recent_entries %}
     <table>
         <tr>
@@ -322,7 +326,7 @@
         {% endfor %}
     </table>
 {% else %}
-    <p>No recovery rows have been processed yet.</p>
+    <p>No paper authorization rows have been processed yet.</p>
 {% endif %}
 {% endblock %}
 
@@ -332,10 +336,25 @@
         const fields = [
             'person_id',
             'person_sca_name',
+            'person_email',
             'person_first_name',
             'person_last_name',
             'person_membership',
             'person_membership_expiration',
+            'person_address',
+            'person_address2',
+            'person_city',
+            'person_state_province',
+            'person_postal_code',
+            'person_country',
+            'person_phone_number',
+            'person_birthday',
+            'person_branch',
+            'person_parent_id',
+            'person_parent_sca_name',
+            'person_parent_first_name',
+            'person_parent_last_name',
+            'person_background_check_expiration',
             'weapon_style',
             'marshal_id',
             'marshal_sca_name',
@@ -356,10 +375,25 @@
         const editor = {
             person_id: document.getElementById('editor_person_id'),
             person_sca_name: document.getElementById('editor_person_sca_name'),
+            person_email: document.getElementById('editor_person_email'),
             person_first_name: document.getElementById('editor_person_first_name'),
             person_last_name: document.getElementById('editor_person_last_name'),
             person_membership: document.getElementById('editor_person_membership'),
             person_membership_expiration: document.getElementById('editor_person_membership_expiration'),
+            person_address: document.getElementById('editor_person_address'),
+            person_address2: document.getElementById('editor_person_address2'),
+            person_city: document.getElementById('editor_person_city'),
+            person_state_province: document.getElementById('editor_person_state_province'),
+            person_postal_code: document.getElementById('editor_person_postal_code'),
+            person_country: document.getElementById('editor_person_country'),
+            person_phone_number: document.getElementById('editor_person_phone_number'),
+            person_birthday: document.getElementById('editor_person_birthday'),
+            person_branch: document.getElementById('editor_person_branch'),
+            person_parent_id: document.getElementById('editor_person_parent_id'),
+            person_parent_sca_name: document.getElementById('editor_person_parent_sca_name'),
+            person_parent_first_name: document.getElementById('editor_person_parent_first_name'),
+            person_parent_last_name: document.getElementById('editor_person_parent_last_name'),
+            person_background_check_expiration: document.getElementById('editor_person_background_check_expiration'),
             weapon_style: document.getElementById('editor_weapon_style'),
             marshal_id: document.getElementById('editor_marshal_id'),
             marshal_sca_name: document.getElementById('editor_marshal_sca_name'),
@@ -380,27 +414,52 @@
         const rows = [];
         const tbody = document.querySelector('#batch_table tbody');
         const hiddenRows = document.getElementById('hidden_rows');
-        const newFighterForm = document.getElementById('new_fighter_form');
-        const newFighterBatchWarning = document.getElementById('new_fighter_batch_warning');
-        const newFighterMinorCheckbox = document.getElementById('id_is_minor');
-        const newFighterBirthdayField = document.getElementById('new_fighter_birthday_field');
-        const newFighterParentFields = document.querySelectorAll('.new-fighter-parent-field');
-        const newFighterParentSelect = document.getElementById('id_parent_id');
-        const newFighterParentScaName = document.getElementById('id_parent_sca_name');
-        const newFighterParentFirstName = document.getElementById('id_parent_first_name');
-        const newFighterParentLastName = document.getElementById('id_parent_last_name');
+        const addRowButton = document.getElementById('add_row_button');
+        const batchLockedNotice = document.getElementById('batch_locked_notice');
         const weaponStyleSelect = document.getElementById('editor_weapon_style');
+        const personLookup = document.getElementById('person_lookup');
         const secondMarshalField = document.getElementById('second_marshal_lookup_field');
         const secondMarshalLookup = document.getElementById('second_marshal_lookup');
+        const fighterConcurrenceField = document.getElementById('fighter_concurrence_field');
+        const fighterConcurrenceCheckbox = document.getElementById('editor_fighter_concurrence');
         const concurringOfficerField = document.getElementById('concurring_officer_lookup_field');
         const concurringOfficerLookup = document.getElementById('concurring_officer_lookup');
+        const concurringOfficerLabel = document.getElementById('concurring_officer_label');
         const marshalPromotionField = document.getElementById('marshal_promotion_field');
         const marshalPromotionCheckbox = document.getElementById('editor_marshal_promotion');
+        const fighterConcurrenceEnabled = {{ AUTHZ_REQUIRE_FIGHTER_CONCURRENCE|yesno:"true,false" }};
+        const paperParentFields = document.querySelectorAll('.paper-parent-field');
+        let editingRowIndex = null;
+        const lockedBatchFieldNames = [
+            'person_sca_name',
+            'person_email',
+            'person_first_name',
+            'person_last_name',
+            'person_membership',
+            'person_membership_expiration',
+            'person_address',
+            'person_address2',
+            'person_city',
+            'person_state_province',
+            'person_postal_code',
+            'person_country',
+            'person_phone_number',
+            'person_birthday',
+            'person_branch',
+            'person_parent_id',
+            'person_parent_sca_name',
+            'person_parent_first_name',
+            'person_parent_last_name',
+            'person_background_check_expiration',
+            'auth_date',
+            'is_minor',
+        ];
 
         const editorChoicesInstances = [];
         const editorChoicesById = {};
 
         document.querySelectorAll('.choices-dropdown').forEach(function (dropdown) {
+            const isPersonLookup = dropdown.dataset.personSearch === '1';
             const instance = new Choices(dropdown, {
                 removeItemButton: true,
                 shouldSort: false,
@@ -408,13 +467,14 @@
                 searchResultLimit: 1000,
                 fuseOptions: {
                     threshold: 0.3,
+                    ignoreLocation: isPersonLookup,
                 },
                 itemSelectText: '',
             });
             if (dropdown.dataset.editorChoice === '1') {
                 editorChoicesInstances.push(instance);
-                editorChoicesById[dropdown.id] = instance;
             }
+            editorChoicesById[dropdown.id] = instance;
         });
 
         function parsePersonLookup(lookup, idId, scaId, firstId, lastId) {
@@ -424,6 +484,15 @@
             const last = document.getElementById(lastId);
             const option = lookup && lookup.selectedOptions.length ? lookup.selectedOptions[0] : null;
             id.value = option ? (option.dataset.personId || '') : '';
+            if (lookup && lookup.value === '__new_fighter__') {
+                return;
+            }
+            if (option && option.dataset.scaName) {
+                sca.value = option.dataset.scaName || '';
+                first.value = option.dataset.firstName || '';
+                last.value = option.dataset.lastName || '';
+                return;
+            }
             const parts = lookup.value.split('|').map((part) => part.trim());
             if (parts.length === 3) {
                 sca.value = parts[0];
@@ -432,11 +501,69 @@
             }
         }
 
-        function syncPersonMembershipFields() {
+        function setChoiceValue(fieldName, value) {
+            const field = editor[fieldName];
+            if (!field) {
+                return;
+            }
+            field.value = value || '';
+            if (editorChoicesById[field.id]) {
+                editorChoicesById[field.id].removeActiveItems();
+                editorChoicesById[field.id].setChoiceByValue(value || '');
+            }
+        }
+
+        function syncPersonFields() {
             const lookup = document.getElementById('person_lookup');
             const option = lookup && lookup.selectedOptions.length ? lookup.selectedOptions[0] : null;
-            editor.person_membership.value = option ? (option.dataset.membership || '') : '';
-            editor.person_membership_expiration.value = option ? (option.dataset.membershipExpiration || '') : '';
+            if (!option || lookup.value === '__new_fighter__') {
+                [
+                    'person_id',
+                    'person_sca_name',
+                    'person_email',
+                    'person_first_name',
+                    'person_last_name',
+                    'person_membership',
+                    'person_membership_expiration',
+                    'person_address',
+                    'person_address2',
+                    'person_city',
+                    'person_postal_code',
+                    'person_phone_number',
+                    'person_birthday',
+                    'person_parent_sca_name',
+                    'person_parent_first_name',
+                    'person_parent_last_name',
+                    'person_background_check_expiration',
+                ].forEach(function (fieldName) {
+                    editor[fieldName].value = '';
+                });
+                ['person_state_province', 'person_country', 'person_branch', 'person_parent_id'].forEach(function (fieldName) {
+                    setChoiceValue(fieldName, '');
+                });
+                editor.is_minor.checked = false;
+                syncPaperParentFields();
+                return;
+            }
+            editor.person_membership.value = option.dataset.membership || '';
+            editor.person_membership_expiration.value = option.dataset.membershipExpiration || '';
+            editor.person_email.value = option.dataset.email || '';
+            editor.person_address.value = option.dataset.address || '';
+            editor.person_address2.value = option.dataset.address2 || '';
+            editor.person_city.value = option.dataset.city || '';
+            setChoiceValue('person_state_province', option.dataset.stateProvince || '');
+            editor.person_postal_code.value = option.dataset.postalCode || '';
+            setChoiceValue('person_country', option.dataset.country || '');
+            editor.person_phone_number.value = option.dataset.phoneNumber || '';
+            editor.person_birthday.value = option.dataset.birthday || '';
+            setChoiceValue('person_branch', option.dataset.branch || '');
+            setChoiceValue('person_parent_id', option.dataset.parentId || '');
+            editor.person_parent_sca_name.value = option.dataset.parentScaName || '';
+            editor.person_parent_first_name.value = option.dataset.parentFirstName || '';
+            editor.person_parent_last_name.value = option.dataset.parentLastName || '';
+            editor.person_background_check_expiration.value = option.dataset.backgroundCheckExpiration || '';
+            editor.is_minor.checked = option.dataset.isMinor === '1';
+            syncPaperParentFields();
         }
 
         function wireLookup(lookupId, idId, scaId, firstId, lastId) {
@@ -444,7 +571,7 @@
             lookup.addEventListener('change', function () {
                 parsePersonLookup(lookup, idId, scaId, firstId, lastId);
                 if (lookupId === 'person_lookup') {
-                    syncPersonMembershipFields();
+                    syncPersonFields();
                 }
             });
         }
@@ -479,15 +606,22 @@
             const isMarshalStyle = isJuniorMarshalStyle(styleValue) || isSeniorMarshalStyle(styleValue);
             const isPromotion = isMarshalStyle && marshalPromotionCheckbox.checked;
             const needsSecondMarshal = isPromotion;
-            const needsConcurringOfficer = isPromotion && isSeniorMarshalStyle(styleValue);
+            const showsFighterConcurrence = fighterConcurrenceEnabled && !isMarshalStyle;
+            const needsConcurringOfficer = (showsFighterConcurrence && fighterConcurrenceCheckbox.checked)
+                || (isPromotion && isSeniorMarshalStyle(styleValue));
 
             marshalPromotionField.classList.toggle('d-none', !isMarshalStyle);
             marshalPromotionField.classList.toggle('d-flex', isMarshalStyle);
+            fighterConcurrenceField.classList.toggle('d-none', !showsFighterConcurrence);
+            fighterConcurrenceField.classList.toggle('d-flex', showsFighterConcurrence);
             secondMarshalField.style.display = needsSecondMarshal ? '' : 'none';
             concurringOfficerField.style.display = needsConcurringOfficer ? '' : 'none';
+            concurringOfficerLabel.textContent = isMarshalStyle ? 'Concurring Officer' : 'Concurring Fighter';
 
             if (!isMarshalStyle) {
                 marshalPromotionCheckbox.checked = false;
+            } else {
+                fighterConcurrenceCheckbox.checked = false;
             }
             if (!needsSecondMarshal) {
                 clearLookup('second_marshal_lookup', 'second_marshal');
@@ -504,6 +638,107 @@
             return `${row[`${prefix}_sca_name`]} (${row[`${prefix}_first_name`]} ${row[`${prefix}_last_name`]})`;
         }
 
+        function setLookupFromRow(lookupId, prefix, row) {
+            const lookupValue = row[`${prefix}_id`] || (
+                row[`${prefix}_sca_name`]
+                    ? `${row[`${prefix}_sca_name`]} | ${row[`${prefix}_first_name`]} | ${row[`${prefix}_last_name`]}`
+                    : ''
+            );
+            if (editor[`${prefix}_id`]) {
+                editor[`${prefix}_id`].value = row[`${prefix}_id`] || '';
+            }
+            editor[`${prefix}_sca_name`].value = row[`${prefix}_sca_name`] || '';
+            editor[`${prefix}_first_name`].value = row[`${prefix}_first_name`] || '';
+            editor[`${prefix}_last_name`].value = row[`${prefix}_last_name`] || '';
+            if (editorChoicesById[lookupId]) {
+                editorChoicesById[lookupId].removeActiveItems();
+                editorChoicesById[lookupId].setChoiceByValue(lookupValue);
+            }
+        }
+
+        function rowIsMarshalStyle(rowStyle) {
+            return isJuniorMarshalStyle(rowStyle) || isSeniorMarshalStyle(rowStyle);
+        }
+
+        function duplicateStyleIndex(styleValue, ignoredIndex) {
+            return rows.findIndex(function (row, index) {
+                return index !== ignoredIndex && row.weapon_style === styleValue;
+            });
+        }
+
+        function loadRowForEdit(index) {
+            const row = rows[index];
+            if (!row) {
+                return;
+            }
+            editingRowIndex = index;
+            loadRowIntoEditor(row);
+            addRowButton.textContent = 'Update';
+            weaponStyleSelect.focus();
+        }
+
+        function loadRowIntoEditor(row) {
+            const personLookupValue = row.person_id || '__new_fighter__';
+            if (editorChoicesById.person_lookup) {
+                editorChoicesById.person_lookup.removeActiveItems();
+                editorChoicesById.person_lookup.setChoiceByValue(personLookupValue);
+            }
+            setChoiceValue('weapon_style', row.weapon_style || '');
+            editor.auth_date.value = row.auth_date || '';
+            editor.is_minor.checked = Boolean(row.is_minor);
+            marshalPromotionCheckbox.checked = Boolean(row.marshal_promotion);
+            fighterConcurrenceCheckbox.checked = !rowIsMarshalStyle(row.weapon_style || '') && Boolean(row.concurring_officer_sca_name);
+            updateMarshalSignoffFields();
+            setLookupFromRow('marshal_lookup', 'marshal', row);
+            setLookupFromRow('second_marshal_lookup', 'second_marshal', row);
+            setLookupFromRow('concurring_officer_lookup', 'concurring_officer', row);
+            fields.filter(function (fieldName) {
+                return fieldName.startsWith('person_');
+            }).forEach(function (fieldName) {
+                if (!editor[fieldName]) {
+                    return;
+                }
+                if (['person_state_province', 'person_country', 'person_branch', 'person_parent_id'].includes(fieldName)) {
+                    setChoiceValue(fieldName, row[fieldName] || '');
+                } else {
+                    editor[fieldName].value = row[fieldName] || '';
+                }
+            });
+            syncPaperParentFields();
+        }
+
+        function syncPaperParentFields() {
+            paperParentFields.forEach(function (field) {
+                field.style.display = editor.is_minor.checked ? '' : 'none';
+            });
+        }
+
+        function syncBatchLockedFields() {
+            const hasRows = rows.length > 0;
+            batchLockedNotice.style.display = hasRows ? '' : 'none';
+            personLookup.disabled = hasRows;
+            if (editorChoicesById.person_lookup) {
+                if (hasRows) {
+                    editorChoicesById.person_lookup.disable();
+                } else {
+                    editorChoicesById.person_lookup.enable();
+                }
+            }
+            lockedBatchFieldNames.forEach(function (fieldName) {
+                if (!editor[fieldName]) {
+                    return;
+                }
+                editor[fieldName].disabled = hasRows;
+                if (editorChoicesById[editor[fieldName].id]) {
+                    if (hasRows) {
+                        editorChoicesById[editor[fieldName].id].disable();
+                    } else {
+                        editorChoicesById[editor[fieldName].id].enable();
+                    }
+                }
+            });
+        }
+
         function fieldIsRequiredForRow(fieldName, rowStyle) {
             if (fieldName.endsWith('_id')) {
                 return false;
@@ -517,11 +752,22 @@
             if (fieldName === 'person_membership' || fieldName === 'person_membership_expiration') {
                 return false;
             }
+            if (
+                fieldName.startsWith('person_')
+                && !['person_sca_name', 'person_first_name', 'person_last_name'].includes(fieldName)
+            ) {
+                return false;
+            }
             if (fieldName.startsWith('second_marshal_')) {
                 return editor.marshal_promotion.checked && (isJuniorMarshalStyle(rowStyle) || isSeniorMarshalStyle(rowStyle));
             }
             if (fieldName.startsWith('concurring_officer_')) {
-                return editor.marshal_promotion.checked && isSeniorMarshalStyle(rowStyle);
+                return (
+                    !isJuniorMarshalStyle(rowStyle)
+                    && !isSeniorMarshalStyle(rowStyle)
+                    && fighterConcurrenceCheckbox.checked
+                )
+                    || (editor.marshal_promotion.checked && isSeniorMarshalStyle(rowStyle));
             }
             return true;
         }
@@ -543,17 +789,14 @@
         function renderRows() {
             tbody.innerHTML = '';
             hiddenRows.innerHTML = '';
-            if (newFighterForm && newFighterBatchWarning) {
-                const hasBatchRows = rows.length > 0;
-                newFighterForm.style.display = hasBatchRows ? 'none' : '';
-                newFighterBatchWarning.style.display = hasBatchRows ? '' : 'none';
-            }
+            syncBatchLockedFields();
             rows.forEach(function (row, index) {
                 const tr = document.createElement('tr');
+                if (row.__error) {
+                    tr.className = 'table-danger';
+                    tr.style.backgroundColor = '#f8d7da';
+                }
                 [
-                    `${row.person_sca_name} (${row.person_first_name} ${row.person_last_name})`,
-                    row.person_membership || '-',
-                    row.person_membership_expiration || '-',
                     row.weapon_style,
                     `${row.marshal_sca_name} (${row.marshal_first_name} ${row.marshal_last_name})`,
                     row.marshal_promotion ? 'Yes' : 'No',
@@ -567,6 +810,12 @@
                     tr.appendChild(td);
                 });
                 const actionTd = document.createElement('td');
+                const editButton = document.createElement('button');
+                editButton.type = 'button';
+                editButton.className = 'btn btn-secondary btn-sm me-2';
+                editButton.dataset.editRow = String(index);
+                editButton.textContent = 'Edit';
+                actionTd.appendChild(editButton);
                 const removeButton = document.createElement('button');
                 removeButton.type = 'button';
                 removeButton.className = 'btn btn-danger btn-sm';
@@ -582,41 +831,6 @@
                     input.value = row[fieldName] || '';
                     hiddenRows.appendChild(input);
                 });
-            });
-        }
-
-        function syncNewFighterMinorDependentFields() {
-            if (newFighterBirthdayField && newFighterMinorCheckbox) {
-                newFighterBirthdayField.style.display = newFighterMinorCheckbox.checked ? '' : 'none';
-            }
-            newFighterParentFields.forEach(function (field) {
-                field.style.display = newFighterMinorCheckbox && newFighterMinorCheckbox.checked ? '' : 'none';
-            });
-            syncNewFighterParentNameFields();
-        }
-
-        function selectedNewFighterParentOption() {
-            return newFighterParentSelect && newFighterParentSelect.selectedOptions.length ? newFighterParentSelect.selectedOptions[0] : null;
-        }
-
-        function syncNewFighterParentNameFields() {
-            const option = selectedNewFighterParentOption();
-            const hasParent = Boolean(newFighterParentSelect && newFighterParentSelect.value);
-            if (hasParent && option) {
-                if (newFighterParentScaName) {
-                    newFighterParentScaName.value = option.dataset.parentScaName || '';
-                }
-                if (newFighterParentFirstName) {
-                    newFighterParentFirstName.value = option.dataset.parentFirstName || '';
-                }
-                if (newFighterParentLastName) {
-                    newFighterParentLastName.value = option.dataset.parentLastName || '';
-                }
-            }
-            [newFighterParentScaName, newFighterParentFirstName, newFighterParentLastName].forEach(function (input) {
-                if (input) {
-                    input.readOnly = hasParent;
-                }
             });
         }
 
@@ -664,34 +878,47 @@
                 }
                 row[fieldName] = value;
             }
-            rows.push(row);
+            const duplicateIndex = duplicateStyleIndex(row.weapon_style, editingRowIndex);
+            if (duplicateIndex !== -1) {
+                window.alert('That authorization is already in the batch.');
+                weaponStyleSelect.focus();
+                return;
+            }
+            if (editingRowIndex !== null) {
+                rows[editingRowIndex] = row;
+                editingRowIndex = null;
+                addRowButton.textContent = 'Add Row';
+            } else {
+                rows.push(row);
+            }
             renderRows();
-            editorChoicesInstances.forEach(function (instance) {
-                instance.removeActiveItems();
-                instance.setChoiceByValue('');
-            });
-            fields.forEach(function (fieldName) {
-                if (['is_minor', 'marshal_promotion'].includes(fieldName)) {
-                    editor[fieldName].checked = false;
-                } else {
-                    editor[fieldName].value = '';
-                }
-            });
             updateMarshalSignoffFields();
-            document.getElementById('person_lookup').focus();
+            weaponStyleSelect.focus();
         }
 
-        document.getElementById('add_row_button').addEventListener('click', addEditorRow);
+        addRowButton.addEventListener('click', addEditorRow);
         document.getElementById('clear_batch_button').addEventListener('click', function () {
             rows.splice(0, rows.length);
             renderRows();
         });
         tbody.addEventListener('click', function (event) {
-            const button = event.target.closest('[data-remove-row]');
-            if (!button) {
+            const editButton = event.target.closest('[data-edit-row]');
+            if (editButton) {
+                loadRowForEdit(Number(editButton.dataset.editRow));
                 return;
             }
-            rows.splice(Number(button.dataset.removeRow), 1);
+            const removeButton = event.target.closest('[data-remove-row]');
+            if (!removeButton) {
+                return;
+            }
+            const removedIndex = Number(removeButton.dataset.removeRow);
+            rows.splice(removedIndex, 1);
+            if (editingRowIndex === removedIndex) {
+                editingRowIndex = null;
+                addRowButton.textContent = 'Add Row';
+            } else if (editingRowIndex !== null && editingRowIndex > removedIndex) {
+                editingRowIndex -= 1;
+            }
             renderRows();
         });
         document.getElementById('recovery_batch_form').addEventListener('submit', function (event) {
@@ -699,26 +926,51 @@
                 event.preventDefault();
             }
         });
-        if (newFighterMinorCheckbox) {
-            newFighterMinorCheckbox.addEventListener('change', syncNewFighterMinorDependentFields);
-            syncNewFighterMinorDependentFields();
-        }
-        if (newFighterParentSelect) {
-            newFighterParentSelect.addEventListener('change', syncNewFighterParentNameFields);
-            syncNewFighterParentNameFields();
-        }
 
+        function enforceExactNumericPersonSearch(lookup, query) {
+            const numericQuery = (query || '').replace(/\D/g, '');
+            const choicesContainer = lookup.closest('.choices');
+            if (!choicesContainer) {
+                return;
+            }
+            if (!numericQuery || numericQuery !== (query || '').trim()) {
+                choicesContainer.querySelectorAll('.choices__list--dropdown .choices__item[data-choice-selectable]').forEach(function (item) {
+                    item.style.display = '';
+                });
+                return;
+            }
+            choicesContainer.querySelectorAll('.choices__list--dropdown .choices__item[data-choice-selectable]').forEach(function (item) {
+                const itemText = item.textContent || '';
+                item.style.display = itemText.includes(numericQuery) ? '' : 'none';
+            });
+        }
         wireLookup('person_lookup', 'editor_person_id', 'editor_person_sca_name', 'editor_person_first_name', 'editor_person_last_name');
+        document.querySelectorAll('[data-person-search="1"]').forEach(function (lookup) {
+            lookup.addEventListener('search', function (event) {
+                window.setTimeout(function () {
+                    enforceExactNumericPersonSearch(lookup, event.detail.value || '');
+                }, 0);
+            });
+        });
         wireLookup('marshal_lookup', 'editor_marshal_id', 'editor_marshal_sca_name', 'editor_marshal_first_name', 'editor_marshal_last_name');
         wireLookup('second_marshal_lookup', 'editor_second_marshal_id', 'editor_second_marshal_sca_name', 'editor_second_marshal_first_name', 'editor_second_marshal_last_name');
         wireLookup('concurring_officer_lookup', 'editor_concurring_officer_id', 'editor_concurring_officer_sca_name', 'editor_concurring_officer_first_name', 'editor_concurring_officer_last_name');
         weaponStyleSelect.addEventListener('change', updateMarshalSignoffFields);
         marshalPromotionCheckbox.addEventListener('change', updateMarshalSignoffFields);
+        fighterConcurrenceCheckbox.addEventListener('change', updateMarshalSignoffFields);
+        editor.is_minor.addEventListener('change', syncPaperParentFields);
         updateMarshalSignoffFields();
+        syncPaperParentFields();
+        syncBatchLockedFields();
 
         const pendingRowsScript = document.getElementById('pending_rows_data');
         if (pendingRowsScript) {
             rows.push(...JSON.parse(pendingRowsScript.textContent));
+            if (rows.length > 0) {
+                loadRowIntoEditor(rows[0]);
+                editingRowIndex = null;
+                addRowButton.textContent = 'Add Row';
+            }
             renderRows();
         }
     });

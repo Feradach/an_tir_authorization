@@ -29,8 +29,8 @@ from django.utils.html import format_html
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, is_minor_from_birthday, sync_authorization_validity_interval
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
+from .models import User, Authorization, AuthorizationValidityInterval, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, adult_age_for_jurisdiction, is_minor_from_birthday, sync_authorization_validity_interval
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, active_sanction_for_style, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_age, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _equestrian_aliases_for_style_name, _GENERAL_RIDING_STYLES, _JUNIOR_GROUND_CREW_STYLES, _MOUNTED_ARCHERY_STYLES, _MOUNTED_COMBAT_STYLES, _MOUNTED_CREST_COMBAT_STYLES, _MOUNTED_GAMING_STYLES, _MOUNTED_SPECIAL_STYLES, _MOUNTED_WEAPON_GAME_STYLES, _DRIVING_STYLES, _FOAM_TIPPED_JOUSTING_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .changelog import build_changelog_sections
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
@@ -607,6 +607,7 @@ class LegacyAuthorizationUploadForm(forms.Form):
 class LegacyAuthorizationRecoveryForm(forms.Form):
     person_id = forms.IntegerField(required=False)
     person_sca_name = forms.CharField(max_length=255, required=True)
+    person_email = forms.EmailField(required=False)
     person_first_name = forms.CharField(max_length=150, required=True)
     person_last_name = forms.CharField(max_length=150, required=True)
     person_membership = forms.CharField(
@@ -619,6 +620,20 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
         input_formats=['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'],
         widget=forms.DateInput(attrs={'type': 'date'}),
     )
+    person_address = forms.CharField(max_length=255, required=False)
+    person_address2 = forms.CharField(max_length=255, required=False)
+    person_city = forms.CharField(max_length=100, required=False)
+    person_state_province = forms.ChoiceField(choices=[], required=False)
+    person_postal_code = forms.CharField(max_length=10, required=False)
+    person_country = forms.ChoiceField(choices=[('', '-- select one --'), ('Canada', 'Canada'), ('United States', 'United States')], required=False)
+    person_phone_number = forms.CharField(max_length=20, required=False)
+    person_birthday = forms.DateField(required=False, widget=forms.DateInput(attrs={'type': 'date'}))
+    person_branch = forms.ModelChoiceField(queryset=Branch.objects.none(), required=False)
+    person_parent_id = forms.ModelChoiceField(queryset=Person.objects.none(), required=False)
+    person_parent_sca_name = forms.CharField(max_length=255, required=False)
+    person_parent_first_name = forms.CharField(max_length=150, required=False)
+    person_parent_last_name = forms.CharField(max_length=150, required=False)
+    person_background_check_expiration = forms.DateField(required=False, widget=forms.DateInput(attrs={'type': 'date'}))
     weapon_style = forms.CharField(max_length=255, required=True)
     marshal_id = forms.IntegerField(required=False)
     marshal_sca_name = forms.CharField(max_length=255, required=True)
@@ -640,6 +655,18 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
     )
     is_minor = forms.BooleanField(required=False)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['person_branch'].queryset = Branch.objects.non_regions().order_by('name')
+        self.fields['person_parent_id'].queryset = Person.objects.exclude(user_id__in=SYSTEM_USER_IDS).select_related('user')
+        self.fields['person_state_province'].choices = [('', '-- select one --')] + state_province_choices
+
+    def clean_person_phone_number(self):
+        raw = self.cleaned_data.get('person_phone_number') or ''
+        if not raw:
+            return ''
+        return _format_legacy_recovery_phone_number(raw)
+
     def clean(self):
         cleaned = super().clean()
         membership = (cleaned.get('person_membership') or '').strip()
@@ -647,6 +674,9 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
         cleaned['person_membership'] = membership
         if bool(membership) != bool(membership_expiration):
             raise forms.ValidationError('Member Number and Member Exp must be provided together.')
+        cleaned['person_parent_sca_name'] = (cleaned.get('person_parent_sca_name') or '').strip()
+        cleaned['person_parent_first_name'] = (cleaned.get('person_parent_first_name') or '').strip()
+        cleaned['person_parent_last_name'] = (cleaned.get('person_parent_last_name') or '').strip()
         return cleaned
 
 
@@ -659,6 +689,13 @@ class ParentSelect(forms.Select):
             option['attrs']['data-parent-first-name'] = parent.user.first_name or ''
             option['attrs']['data-parent-last-name'] = parent.user.last_name or ''
         return option
+
+
+def _format_legacy_recovery_phone_number(raw: str):
+    digits = re.sub(r'\D', '', raw or '')
+    if len(digits) != 10:
+        raise ValidationError("Enter a 10-digit U.S. phone number.")
+    return f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"
 
 
 class LegacyRecoveryNewFighterForm(forms.Form):
@@ -722,11 +759,7 @@ class LegacyRecoveryNewFighterForm(forms.Form):
         ])
 
     def clean_phone_number(self):
-        raw = self.cleaned_data['phone_number']
-        digits = re.sub(r'\D', '', raw)
-        if len(digits) != 10:
-            raise ValidationError("Enter a 10-digit U.S. phone number.")
-        return f"({digits[0:3]}) {digits[3:6]}-{digits[6:10]}"
+        return _format_legacy_recovery_phone_number(self.cleaned_data['phone_number'])
 
     def clean(self):
         cleaned = super().clean()
@@ -755,10 +788,25 @@ class LegacyRecoveryNewFighterForm(forms.Form):
 LEGACY_RECOVERY_BATCH_FIELDS = [
     'person_id',
     'person_sca_name',
+    'person_email',
     'person_first_name',
     'person_last_name',
     'person_membership',
     'person_membership_expiration',
+    'person_address',
+    'person_address2',
+    'person_city',
+    'person_state_province',
+    'person_postal_code',
+    'person_country',
+    'person_phone_number',
+    'person_birthday',
+    'person_branch',
+    'person_parent_id',
+    'person_parent_sca_name',
+    'person_parent_first_name',
+    'person_parent_last_name',
+    'person_background_check_expiration',
     'weapon_style',
     'marshal_id',
     'marshal_sca_name',
@@ -836,10 +884,6 @@ LEGACY_AUTH_IMPORT_DISCIPLINE_ALIASES = {
     'youth rapier': 'Youth Rapier',
     'yr': 'Youth Rapier',
 }
-
-
-def legacy_authorization_import_enabled() -> bool:
-    return bool(getattr(settings, 'AUTHZ_ENABLE_LEGACY_AUTHORIZATION_IMPORT', False))
 
 
 def _parse_legacy_date(raw: str, row_number: int, label: str, *, required: bool = True):
@@ -1135,10 +1179,7 @@ def _find_legacy_recovery_style(style_value: str):
 
 
 def _legacy_recovery_authorization_expiration(style: WeaponStyle, auth_date: date, is_minor: bool):
-    if is_minor or (
-        style.name in ['Junior Marshal', 'Senior Marshal']
-        and style.discipline.name in ['Youth Armored', 'Youth Rapier']
-    ):
+    if is_minor or style.discipline.name in ['Youth Armored', 'Youth Rapier']:
         return auth_date + relativedelta(years=2)
     return auth_date + relativedelta(years=4)
 
@@ -1147,7 +1188,80 @@ def _legacy_recovery_is_marshal_style(style: WeaponStyle):
     return style.name in ['Junior Marshal', 'Senior Marshal']
 
 
-def _legacy_recovery_active_senior_marshal_exists(person: Person, style: WeaponStyle):
+def _legacy_recovery_interval_exists(person: Person, auth_date: date, *, style_names=None, discipline=None, exclude_style_names=None):
+    query = AuthorizationValidityInterval.objects.filter(
+        authorization__person=person,
+        start_date__lte=auth_date,
+        end_date__gte=auth_date,
+    )
+    if discipline:
+        query = query.filter(authorization__style__discipline=discipline)
+    if style_names:
+        query = query.filter(authorization__style__name__in=style_names)
+    if exclude_style_names:
+        query = query.exclude(authorization__style__name__in=exclude_style_names)
+    return query.exists()
+
+
+def _legacy_recovery_senior_marshal_interval_exists(person: Person, discipline: Discipline, auth_date: date):
+    return _legacy_recovery_interval_exists(
+        person,
+        auth_date,
+        style_names=['Senior Marshal'],
+        discipline=discipline,
+    )
+
+
+def _legacy_recovery_age_on_date(person: Person, auth_date: date):
+    birthday = person.user.birthday
+    if not birthday:
+        return 30
+    return auth_date.year - birthday.year - ((auth_date.month, auth_date.day) < (birthday.month, birthday.day))
+
+
+def _legacy_recovery_minor_on_date(person: Person, auth_date: date):
+    birthday = person.user.birthday
+    if not birthday:
+        return False
+    adult_age = adult_age_for_jurisdiction(person.user.country, person.user.state_province)
+    return _legacy_recovery_age_on_date(person, auth_date) < adult_age
+
+
+def _legacy_recovery_membership_current_on_date(person: Person, auth_date: date, submitted_expiration=None):
+    membership_expiration = submitted_expiration or person.user.membership_expiration
+    return bool(membership_expiration and membership_expiration >= auth_date)
+
+
+def _legacy_recovery_background_check_current_on_date(person: Person, auth_date: date):
+    background_expiration = person.user.background_check_expiration
+    return bool(background_expiration and background_expiration >= auth_date)
+
+
+def _legacy_recovery_is_regional_marshal_on_date(user: User, discipline_name: str, auth_date: date):
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if is_kingdom_earl_marshal(user):
+        return True
+    if BranchMarshal.objects.filter(
+        person__user=user,
+        branch__name='An Tir',
+        discipline__name=discipline_name,
+        start_date__lte=auth_date,
+        end_date__gte=auth_date,
+    ).exists():
+        return True
+    return BranchMarshal.objects.filter(
+        person__user=user,
+        branch__in=Branch.objects.regions(),
+        discipline__name__in=[discipline_name, 'Earl Marshal'],
+        start_date__lte=auth_date,
+        end_date__gte=auth_date,
+    ).exists()
+
+
+def _legacy_recovery_active_senior_marshal_exists(person: Person, style: WeaponStyle, auth_date: date | None = None):
+    if auth_date:
+        return _legacy_recovery_senior_marshal_interval_exists(person, style.discipline, auth_date)
     return Authorization.objects.filter(
         person=person,
         style__discipline=style.discipline,
@@ -1155,6 +1269,255 @@ def _legacy_recovery_active_senior_marshal_exists(person: Person, style: WeaponS
         status__name='Active',
         expiration__gte=date.today(),
     ).exists()
+
+
+def _legacy_recovery_required_prerequisites(style: WeaponStyle):
+    discipline_name = style.discipline.name
+    if discipline_name == 'Rapier Combat' and style.name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']:
+        return [('Rapier Single Sword', ['Single Sword'], style.discipline)]
+    if (
+        discipline_name == 'Youth Rapier'
+        and style.name not in ['Single Sword', 'Junior Marshal', 'Senior Marshal']
+        and not style.name.endswith(' - Single Sword')
+    ):
+        single_sword_names = ['Single Sword']
+        for category in ['Lion', 'Gryphon', 'Dragon']:
+            if style.name.startswith(f'{category} - '):
+                single_sword_names.append(f'{category} - Single Sword')
+                break
+        return [('Youth Rapier Single Sword', single_sword_names, style.discipline)]
+    if discipline_name == 'Cut & Thrust' and style.name == 'Spear':
+        return [('Cut & Thrust foundation authorization', None, style.discipline)]
+    if discipline_name == 'Equestrian':
+        if style.name == 'Mounted Gaming':
+            return [('General Riding', ['General Riding'], style.discipline)]
+        if style.name in ['Mounted Heavy Combat', 'Mounted Combat']:
+            return [
+                ('Mounted Gaming', ['Mounted Gaming'], style.discipline),
+                ('General Riding', ['General Riding'], style.discipline),
+            ]
+        if style.name in [
+            'Mounted Archery',
+            'Crest Combat',
+            'Mounted Crest Combat',
+            'Jousting',
+            'Foam-Tipped Jousting',
+        ]:
+            return [('Mounted Gaming', ['Mounted Gaming'], style.discipline)]
+    return []
+
+
+def _legacy_recovery_prerequisites_were_met(person: Person, style: WeaponStyle, auth_date: date):
+    for label, style_names, discipline in _legacy_recovery_required_prerequisites(style):
+        if style.name == 'Spear' and style.discipline.name == 'Cut & Thrust':
+            found = _legacy_recovery_interval_exists(
+                person,
+                auth_date,
+                discipline=discipline,
+                exclude_style_names=['Spear', 'Junior Marshal', 'Senior Marshal'],
+            )
+        else:
+            found = _legacy_recovery_interval_exists(
+                person,
+                auth_date,
+                style_names=style_names,
+                discipline=discipline,
+            )
+        if not found:
+            return False, f'{person.sca_name} did not have {label} on {auth_date.isoformat()}.'
+    return True, ''
+
+
+def _legacy_recovery_youth_rules_were_met(person: Person, style: WeaponStyle, auth_date: date, age: int, fighter_is_minor: bool):
+    if style.discipline.name not in ['Youth Armored', 'Youth Rapier']:
+        return True, ''
+    if style.name in ['Junior Marshal', 'Senior Marshal']:
+        return True, ''
+    if not person.user.birthday or not fighter_is_minor:
+        return False, f'Must be a minor to become authorized in {style.discipline.name} combat.'
+    if age < 6:
+        return False, f'Must be at least 6 years old to become authorized in {style.discipline.name} combat.'
+
+    style_category = youth_age_category_for_style_name(style.name)
+    fighter_category = youth_age_category_for_age(age)
+    if style_category and style_category != fighter_category:
+        return False, (
+            f'{style.name} is only for {style_category} youth. '
+            f'This fighter is in the {fighter_category or "ineligible"} age category.'
+        )
+    return True, ''
+
+
+def _legacy_recovery_requires_concurrence_on_date(person: Person, style: WeaponStyle, auth_date: date):
+    if not getattr(settings, 'AUTHZ_REQUIRE_FIGHTER_CONCURRENCE', False):
+        return False
+    if style.name in ['Junior Marshal', 'Senior Marshal']:
+        return False
+    if style.discipline.name in ['Equestrian', 'Siege', 'Youth Armored', 'Youth Rapier']:
+        return False
+    cutoff = auth_date - relativedelta(years=1)
+    return not AuthorizationValidityInterval.objects.filter(
+        authorization__person=person,
+        authorization__style__discipline=style.discipline,
+        start_date__lte=auth_date,
+        end_date__gte=cutoff,
+    ).exists()
+
+
+def _legacy_recovery_paper_rules_were_met(
+    person: Person,
+    style: WeaponStyle,
+    marshal: Person,
+    auth_date: date,
+    *,
+    submitted_membership_expiration=None,
+    concurring_fighter: Person | None = None,
+):
+    age = _legacy_recovery_age_on_date(person, auth_date)
+    fighter_is_minor = _legacy_recovery_minor_on_date(person, auth_date)
+
+    if style.name == 'Junior Marshal':
+        if style.discipline.name in ['Target Archery', 'Thrown Weapons'] and fighter_is_minor:
+            return False, 'Must be an adult to become an archery or thrown weapon junior marshal.'
+        if age < 16:
+            return False, 'Must be at least 16 years old to become a junior marshal.'
+
+    if style.name == 'Senior Marshal' and fighter_is_minor:
+        return False, 'Must be an adult to become a senior marshal.'
+
+    if style.discipline.name == 'Rapier Combat' and age < 14:
+        return False, 'Must be at least 14 years old to become a rapier fighter.'
+
+    if style.discipline.name in ['Armored Combat', 'Cut & Thrust'] and age < 16:
+        return False, f'Must be at least 16 years old to become authorized in {style.discipline.name}.'
+
+    youth_ok, youth_error = _legacy_recovery_youth_rules_were_met(person, style, auth_date, age, fighter_is_minor)
+    if not youth_ok:
+        return False, youth_error
+
+    if style.name in (_GENERAL_RIDING_STYLES | _MOUNTED_GAMING_STYLES | _MOUNTED_ARCHERY_STYLES | _JUNIOR_GROUND_CREW_STYLES):
+        if age < 5:
+            return False, f'Must be at least 5 years old to become authorized in {style.name}.'
+
+    if style.name in (_MOUNTED_CREST_COMBAT_STYLES | _MOUNTED_COMBAT_STYLES | _DRIVING_STYLES | _FOAM_TIPPED_JOUSTING_STYLES):
+        if fighter_is_minor:
+            return False, f'Must be an adult to become authorized in {style.name}.'
+
+    if style.name in _SENIOR_GROUND_CREW_STYLES:
+        if age < 16:
+            return False, 'Must be at least 16 years old to become authorized as Ground Crew - Senior.'
+        if not _legacy_recovery_interval_exists(
+            person,
+            auth_date,
+            style_names=_JUNIOR_GROUND_CREW_STYLES,
+            discipline=style.discipline,
+        ):
+            return False, 'Ground Crew - Senior requires an active Ground Crew - Junior authorization.'
+
+    if style.discipline.name == 'Youth Rapier' and style.name in ['Junior Marshal', 'Senior Marshal']:
+        rapier_discipline = Discipline.objects.filter(name='Rapier Combat').first()
+        if not rapier_discipline or not _legacy_recovery_senior_marshal_interval_exists(person, rapier_discipline, auth_date):
+            return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
+
+    if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':
+        if not (
+            _legacy_recovery_interval_exists(person, auth_date, style_names=_SENIOR_GROUND_CREW_STYLES, discipline=style.discipline)
+            and _legacy_recovery_interval_exists(person, auth_date, style_names=_GENERAL_RIDING_STYLES, discipline=style.discipline)
+        ):
+            return False, 'Junior Equestrian marshal must have Ground Crew - Senior and General Riding authorization.'
+
+    if style.discipline.name == 'Equestrian' and style.name == 'Senior Marshal':
+        if not (
+            _legacy_recovery_interval_exists(person, auth_date, style_names=['Junior Marshal'], discipline=style.discipline)
+            and _legacy_recovery_interval_exists(person, auth_date, style_names=_MOUNTED_GAMING_STYLES, discipline=style.discipline)
+        ):
+            return False, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.'
+
+    if style.name in _MOUNTED_SPECIAL_STYLES:
+        style_aliases = _equestrian_aliases_for_style_name(style.name)
+        first_time_special = not Authorization.objects.filter(
+            person=person,
+            style__discipline__name='Equestrian',
+            style__name__in=style_aliases,
+        ).exists()
+        if first_time_special and not _legacy_recovery_interval_exists(
+            marshal,
+            auth_date,
+            style_names=style_aliases,
+            discipline=style.discipline,
+        ):
+            return False, f'Must be authorized in {style.name} to authorize a first-time participant in this skill.'
+
+    if style.name in ['Junior Marshal', 'Senior Marshal']:
+        if not _legacy_recovery_membership_current_on_date(person, auth_date, submitted_membership_expiration):
+            return False, 'Must be a current member to be authorized as a marshal.'
+        if style.discipline.name in ['Youth Armored', 'Youth Rapier'] and not _legacy_recovery_background_check_current_on_date(person, auth_date):
+            return False, 'Youth marshal authorizations require a current background check.'
+
+    if active_sanction_for_style(person, style, today=auth_date):
+        return False, 'Cannot issue an authorization while a sanction is active for this style or discipline.'
+
+    pending_statuses = [
+        'Awaiting Second Marshal Concurrence',
+        'Awaiting Regional Marshal Approval',
+        KINGDOM_APPROVAL_STATUS,
+        KINGDOM_EQUESTRIAN_WAIVER_STATUS,
+        'Awaiting Fighter Concurrence',
+    ]
+    if Authorization.objects.filter(
+        person=person,
+        style__name=style.name,
+        style__discipline=style.discipline,
+        status__name__in=pending_statuses,
+    ).exists():
+        return False, 'Cannot renew a pending authorization.'
+
+    if style.name == 'Junior Marshal' and _legacy_recovery_active_senior_marshal_exists(person, style, auth_date):
+        return False, (
+            f'{person.sca_name} already had a Senior Marshal authorization in {style.discipline.name} on {auth_date.isoformat()}. '
+            'Do not add a Junior Marshal authorization in the same discipline.'
+        )
+
+    if style.name == 'Senior Marshal' and Authorization.objects.filter(
+        person=person,
+        style__name='Junior Marshal',
+        style__discipline=style.discipline,
+        status__name__in=pending_statuses,
+    ).exists():
+        return False, 'Cannot have a new senior marshal if a junior marshal is pending.'
+
+    if person.user_id == marshal.user_id:
+        return False, 'Cannot make an authorization for yourself.'
+
+    if fighter_is_minor and style.discipline.name in ['Rapier Combat', 'Cut & Thrust', 'Armored Combat']:
+        if not _legacy_recovery_is_regional_marshal_on_date(marshal.user, style.discipline.name, auth_date):
+            return False, 'Cannot authorize a minor in Rapier, Cut & Thrust, or Armored Combat unless you are a regional marshal.'
+
+    if _legacy_recovery_requires_concurrence_on_date(person, style, auth_date):
+        if not concurring_fighter:
+            return False, 'Concurring fighter is required for this paper authorization.'
+        if concurring_fighter.user_id == person.user_id:
+            return False, 'Concurring fighter must be different from the fighter receiving the authorization.'
+        if concurring_fighter.user_id == marshal.user_id:
+            return False, 'Concurring fighter must be different from the authorizing marshal.'
+        if not _legacy_recovery_interval_exists(concurring_fighter, auth_date, discipline=style.discipline):
+            return False, f'{concurring_fighter.sca_name} was not authorized in {style.discipline.name} on {auth_date.isoformat()} and cannot concur.'
+
+    return True, ''
+
+
+def _legacy_recovery_actor_can_enter_style(actor: User, style: WeaponStyle):
+    if style.discipline.name == 'Equestrian':
+        return is_kingdom_equestrian_authorization_officer(actor)
+    if getattr(actor, 'is_staff', False):
+        return True
+    return is_kingdom_authorization_officer(actor) and not is_kingdom_equestrian_authorization_officer(actor)
+
+
+def _legacy_recovery_scope_error(style: WeaponStyle):
+    if style.discipline.name == 'Equestrian':
+        return 'Only the Kingdom Equestrian Authorization Officer can enter equestrian paper authorizations.'
+    return 'Only the Kingdom Authorization Officer can enter non-equestrian paper authorizations.'
 
 
 def _legacy_recovery_deactivate_superseded_junior_marshal(person: Person, style: WeaponStyle, actor: User):
@@ -1194,7 +1557,7 @@ def _legacy_recovery_optional_signoff(cleaned: dict, prefix: str, label: str, *,
 
 def _legacy_recovery_note_text(style: WeaponStyle, auth_date: date, marshal_promotion=False, second_marshal=None, concurring_officer=None):
     note = (
-        'Authorization Added through Legacy Authorization Recovery Tool. '
+        'Authorization Added through Paper Authorization Entry Tool. '
         f'Authorization: {style.discipline.name} - {style.name}. '
         f'Historical authorization date: {auth_date.isoformat()}.'
     )
@@ -1204,7 +1567,10 @@ def _legacy_recovery_note_text(style: WeaponStyle, auth_date: date, marshal_prom
     if second_marshal:
         note += f' Second Marshal: {second_marshal.sca_name}.'
     if concurring_officer:
-        note += f' Senior Marshal Concurrence: {concurring_officer.sca_name}.'
+        if _legacy_recovery_is_marshal_style(style):
+            note += f' Senior Marshal Concurrence: {concurring_officer.sca_name}.'
+        else:
+            note += f' Concurring Fighter: {concurring_officer.sca_name}.'
     return note
 
 
@@ -1257,22 +1623,116 @@ def _create_legacy_recovery_fighter(form: LegacyRecoveryNewFighterForm, actor: U
             UserNote.objects.create(
                 person=person,
                 created_by=actor,
-                note='Account created from legacy authorization recovery paperwork.',
+                note='Account created from paper authorization entry paperwork.',
             )
     except IntegrityError:
         raise ValueError('Could not create fighter. Check for duplicate legal name/email or membership number.')
     return person
 
 
+def _legacy_recovery_new_fighter_data_from_row(cleaned: dict):
+    return {
+        'sca_name': cleaned.get('person_sca_name'),
+        'email': cleaned.get('person_email'),
+        'first_name': cleaned.get('person_first_name'),
+        'last_name': cleaned.get('person_last_name'),
+        'membership': cleaned.get('person_membership'),
+        'membership_expiration': cleaned.get('person_membership_expiration'),
+        'address': cleaned.get('person_address'),
+        'address2': cleaned.get('person_address2'),
+        'city': cleaned.get('person_city'),
+        'state_province': cleaned.get('person_state_province'),
+        'postal_code': cleaned.get('person_postal_code'),
+        'country': cleaned.get('person_country'),
+        'phone_number': cleaned.get('person_phone_number'),
+        'birthday': cleaned.get('person_birthday'),
+        'branch': cleaned.get('person_branch').id if cleaned.get('person_branch') else '',
+        'parent_id': cleaned.get('person_parent_id').user_id if cleaned.get('person_parent_id') else '',
+        'parent_sca_name': cleaned.get('person_parent_sca_name'),
+        'parent_first_name': cleaned.get('person_parent_first_name'),
+        'parent_last_name': cleaned.get('person_parent_last_name'),
+        'background_check_expiration': cleaned.get('person_background_check_expiration'),
+    }
+
+
+def _resolve_or_create_legacy_recovery_person(cleaned: dict, actor: User):
+    try:
+        return _resolve_legacy_recovery_person(
+            cleaned['person_sca_name'],
+            cleaned['person_first_name'],
+            cleaned['person_last_name'],
+            'Person',
+            cleaned.get('person_id'),
+        )
+    except ValueError as original_exc:
+        if cleaned.get('person_id'):
+            raise
+        new_fighter_form = LegacyRecoveryNewFighterForm(_legacy_recovery_new_fighter_data_from_row(cleaned))
+        if not new_fighter_form.is_valid():
+            raise original_exc
+        return _create_legacy_recovery_fighter(new_fighter_form, actor)
+
+
+def _update_legacy_recovery_person_from_paper_fields(person: Person, cleaned: dict, posted: dict, actor: User):
+    user = person.user
+    user_updates = {}
+    posted_fields = set(posted.get('__posted_fields', posted.keys() if hasattr(posted, 'keys') else []))
+    for cleaned_key, user_field in [
+        ('person_email', 'email'),
+        ('person_first_name', 'first_name'),
+        ('person_last_name', 'last_name'),
+        ('person_membership', 'membership'),
+        ('person_membership_expiration', 'membership_expiration'),
+        ('person_address', 'address'),
+        ('person_address2', 'address2'),
+        ('person_city', 'city'),
+        ('person_state_province', 'state_province'),
+        ('person_postal_code', 'postal_code'),
+        ('person_country', 'country'),
+        ('person_phone_number', 'phone_number'),
+        ('person_birthday', 'birthday'),
+        ('person_background_check_expiration', 'background_check_expiration'),
+    ]:
+        if cleaned_key not in posted_fields:
+            continue
+        value = cleaned.get(cleaned_key)
+        if value in ('', None) and cleaned_key not in ['person_membership', 'person_membership_expiration', 'person_address2', 'person_birthday', 'person_background_check_expiration']:
+            continue
+        user_updates[user_field] = value or None
+    if user_updates:
+        for field, value in user_updates.items():
+            setattr(user, field, value)
+        user.updated_by = actor
+        user.save(update_fields=list(user_updates.keys()) + ['updated_by', 'updated_at'])
+
+    person_updates = {}
+    if 'person_sca_name' in posted_fields and cleaned.get('person_sca_name'):
+        person_updates['sca_name'] = cleaned.get('person_sca_name')
+    if 'person_branch' in posted_fields and cleaned.get('person_branch'):
+        person_updates['branch'] = cleaned.get('person_branch')
+    if 'person_parent_id' in posted_fields and cleaned.get('person_parent_id') is not None:
+        person_updates['parent'] = cleaned.get('person_parent_id')
+    for cleaned_key, person_field in [
+        ('person_parent_sca_name', 'parent_sca_name'),
+        ('person_parent_first_name', 'parent_first_name'),
+        ('person_parent_last_name', 'parent_last_name'),
+    ]:
+        if cleaned_key in posted_fields and cleaned.get(cleaned_key) not in ('', None):
+            person_updates[person_field] = cleaned.get(cleaned_key)
+    if person_updates:
+        for field, value in person_updates.items():
+            setattr(person, field, value)
+        person.updated_by = actor
+        person.save(update_fields=list(person_updates.keys()) + ['updated_by', 'updated_at'])
+
+
 def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm, actor: User):
     cleaned = form.cleaned_data
-    person = _resolve_legacy_recovery_person(
-        cleaned['person_sca_name'],
-        cleaned['person_first_name'],
-        cleaned['person_last_name'],
-        'Person',
-        cleaned.get('person_id'),
-    )
+    person = _resolve_or_create_legacy_recovery_person(cleaned, actor)
+    try:
+        _update_legacy_recovery_person_from_paper_fields(person, cleaned, form.data, actor)
+    except IntegrityError:
+        raise ValueError('Could not update fighter. Check for duplicate legal name/email or membership number.')
     marshal = _resolve_legacy_recovery_person(
         cleaned['marshal_sca_name'],
         cleaned['marshal_first_name'],
@@ -1282,6 +1742,8 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
     )
     style = _find_legacy_recovery_style(cleaned['weapon_style'])
     auth_date = cleaned['auth_date']
+    if not _legacy_recovery_actor_can_enter_style(actor, style):
+        raise ValueError(_legacy_recovery_scope_error(style))
     is_minor = cleaned.get('is_minor', False)
     is_marshal_style = _legacy_recovery_is_marshal_style(style)
     marshal_promotion = bool(cleaned.get('marshal_promotion')) and is_marshal_style
@@ -1297,6 +1759,37 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
         'Concurring Officer',
         required=marshal_promotion and style.name == 'Senior Marshal',
     )
+    if not is_marshal_style and not getattr(settings, 'AUTHZ_REQUIRE_FIGHTER_CONCURRENCE', False):
+        concurring_officer = None
+    if not _legacy_recovery_senior_marshal_interval_exists(marshal, style.discipline, auth_date):
+        raise ValueError(
+            f'{marshal.sca_name} was not a Senior Marshal in {style.discipline.name} on {auth_date.isoformat()}.'
+        )
+    if second_marshal and not _legacy_recovery_senior_marshal_interval_exists(second_marshal, style.discipline, auth_date):
+        raise ValueError(
+            f'{second_marshal.sca_name} was not a Senior Marshal in {style.discipline.name} on {auth_date.isoformat()}.'
+        )
+    if (
+        concurring_officer
+        and is_marshal_style
+        and not _legacy_recovery_senior_marshal_interval_exists(concurring_officer, style.discipline, auth_date)
+    ):
+        raise ValueError(
+            f'{concurring_officer.sca_name} was not a Senior Marshal in {style.discipline.name} on {auth_date.isoformat()}.'
+        )
+    prerequisites_ok, prerequisites_error = _legacy_recovery_prerequisites_were_met(person, style, auth_date)
+    if not prerequisites_ok:
+        raise ValueError(prerequisites_error)
+    paper_rules_ok, paper_rules_error = _legacy_recovery_paper_rules_were_met(
+        person,
+        style,
+        marshal,
+        auth_date,
+        submitted_membership_expiration=cleaned.get('person_membership_expiration'),
+        concurring_fighter=concurring_officer if not is_marshal_style else None,
+    )
+    if not paper_rules_ok:
+        raise ValueError(paper_rules_error)
 
     latest_recovery = LegacyAuthorizationRecoveryEntry.objects.filter(
         person=person,
@@ -1319,9 +1812,9 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
 
     active_status = _get_or_create_status_by_name('Active')
     expiration = _legacy_recovery_authorization_expiration(style, auth_date, is_minor)
-    if style.name == 'Junior Marshal' and _legacy_recovery_active_senior_marshal_exists(person, style):
+    if style.name == 'Junior Marshal' and _legacy_recovery_active_senior_marshal_exists(person, style, auth_date):
         raise ValueError(
-            f'{person.sca_name} already has an active Senior Marshal authorization in {style.discipline.name}. '
+            f'{person.sca_name} already had a Senior Marshal authorization in {style.discipline.name} on {auth_date.isoformat()}. '
             'Do not add a Junior Marshal authorization in the same discipline.'
         )
     if existing_authorization and existing_authorization.expiration and expiration <= existing_authorization.expiration:
@@ -1331,15 +1824,11 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
         )
 
     authorization_officer_person = getattr(actor, 'person', None)
+    stored_concurring_fighter = authorization_officer_person if style.name == 'Senior Marshal' else concurring_officer
     recovery_note = _legacy_recovery_note_text(style, auth_date, marshal_promotion, second_marshal, concurring_officer)
 
     try:
         with transaction.atomic():
-            person.user.membership = cleaned.get('person_membership') or None
-            person.user.membership_expiration = cleaned.get('person_membership_expiration')
-            person.user.updated_by = actor
-            person.user.save(update_fields=['membership', 'membership_expiration', 'updated_by', 'updated_at'])
-
             previous_status = None
             previous_marshal = None
             previous_concurring_fighter = None
@@ -1352,7 +1841,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
                 previous_expiration = authorization.expiration
                 authorization.status = active_status
                 authorization.marshal = marshal
-                authorization.concurring_fighter = authorization_officer_person if style.name == 'Senior Marshal' else None
+                authorization.concurring_fighter = stored_concurring_fighter
                 authorization.expiration = expiration
                 authorization.updated_by = actor
                 authorization.save()
@@ -1362,7 +1851,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
                     style=style,
                     status=active_status,
                     marshal=marshal,
-                    concurring_fighter=authorization_officer_person if style.name == 'Senior Marshal' else None,
+                    concurring_fighter=stored_concurring_fighter,
                     expiration=expiration,
                     created_by=actor,
                     updated_by=actor,
@@ -1394,7 +1883,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
             _record_legacy_imported_waiver_if_needed(
                 person.user,
                 recorded_by=actor,
-                source_filename='Legacy Authorization Recovery Tool',
+                source_filename='Paper Authorization Entry Tool',
             )
             noted_people = {person.user_id: person, marshal.user_id: marshal}
             if second_marshal:
@@ -1420,17 +1909,21 @@ def _legacy_recovery_rows_from_post(post_data):
     rows = []
     for index in range(row_count):
         row = {}
+        posted_fields = []
         for field_name in LEGACY_RECOVERY_BATCH_FIELDS:
             values = post_data.getlist(field_name)
+            if field_name in post_data:
+                posted_fields.append(field_name)
             row[field_name] = values[index] if index < len(values) else ''
-        if any((value or '').strip() for value in row.values()):
+        row['__posted_fields'] = posted_fields
+        if any((row.get(field_name) or '').strip() for field_name in LEGACY_RECOVERY_BATCH_FIELDS):
             rows.append(row)
     return rows
 
 
 def _legacy_recovery_audit_csv_response():
     response = HttpResponse(content_type='text/csv; charset=utf-8')
-    response['Content-Disposition'] = 'attachment; filename="legacy_authorization_recovery_audit.csv"'
+    response['Content-Disposition'] = 'attachment; filename="paper_authorization_entry_audit.csv"'
     response.write('\ufeff')
     writer = csv.writer(response)
     writer.writerow([
@@ -3257,7 +3750,7 @@ def index(request):
             if auth_officer or kingdom_seneschal
             else None
         ),
-        'legacy_authorization_import_enabled': auth_officer and legacy_authorization_import_enabled(),
+        'paper_authorization_entry_enabled': auth_officer or equestrian_auth_officer,
         'pending_authorization_action': pending_authorization_action,
     }
 
@@ -6751,8 +7244,6 @@ def upload_membership_roster(request):
 
 
 def upload_legacy_authorizations(request):
-    if not legacy_authorization_import_enabled():
-        raise Http404
     if not request.user.is_authenticated:
         return redirect('login')
     if not is_kingdom_authorization_officer(request.user):
@@ -6797,11 +7288,12 @@ def upload_legacy_authorizations(request):
 
 
 def legacy_authorization_recovery(request):
-    if not legacy_authorization_import_enabled():
-        raise Http404
     if not request.user.is_authenticated:
         return redirect('login')
-    if not is_kingdom_authorization_officer(request.user):
+    if not (
+        is_kingdom_authorization_officer(request.user)
+        or is_kingdom_equestrian_authorization_officer(request.user)
+    ):
         raise PermissionDenied
     if request.method == 'GET' and request.GET.get('download') == 'audit_csv':
         return _legacy_recovery_audit_csv_response()
@@ -6819,30 +7311,77 @@ def legacy_authorization_recovery(request):
                     messages.error(request, str(exc))
                 else:
                     messages.success(request, f'Added fighter {person.sca_name}.')
-                    return redirect('legacy_authorization_recovery')
+                    return redirect('paper_authorization_entry')
             else:
                 messages.error(request, 'Please correct the new fighter fields.')
+                for error in new_fighter_form.non_field_errors():
+                    messages.error(request, error)
+                for field in new_fighter_form:
+                    for error in field.errors:
+                        messages.error(request, f'{field.label}: {error}')
         else:
             submitted_rows = _legacy_recovery_rows_from_post(request.POST)
             if not submitted_rows:
-                messages.error(request, 'Add at least one recovery row before processing.')
+                messages.error(request, 'Add at least one paper authorization row before processing.')
+            fighter_keys = {
+                row.get('person_id') or (
+                    row.get('person_sca_name'),
+                    row.get('person_first_name'),
+                    row.get('person_last_name'),
+                )
+                for row in submitted_rows
+            }
+            if len(fighter_keys) > 1:
+                messages.error(request, 'Process only one fighter at a time on the paper authorization entry page.')
+                pending_rows = submitted_rows
+                submitted_rows = []
             processed_count = 0
-            failed_rows = []
+            failed_rows = list(submitted_rows)
+            valid_forms = []
+            seen_styles = {}
+            has_preflight_errors = False
             for index, row in enumerate(submitted_rows, start=1):
+                style_label = row.get('weapon_style') or 'Unknown authorization'
+                if style_label in seen_styles:
+                    row['__error'] = '1'
+                    has_preflight_errors = True
+                    messages.error(
+                        request,
+                        f'Row {index} ({style_label}): This authorization is already in the batch.',
+                    )
+                    continue
+                seen_styles[style_label] = index
                 form = LegacyAuthorizationRecoveryForm(row)
                 if not form.is_valid():
-                    failed_rows.append(row)
-                    messages.error(request, f'Row {index}: Please complete all required fields with a valid date.')
+                    row['__error'] = '1'
+                    has_preflight_errors = True
+                    messages.error(
+                        request,
+                        f'Row {index} ({style_label}): Please complete all required fields with a valid date.',
+                    )
                     continue
-                try:
-                    recovery_entry = _create_legacy_recovery_authorization(form, request.user)
-                except ValueError as exc:
-                    failed_rows.append(row)
-                    messages.error(request, f'Row {index}: {exc}')
+                valid_forms.append((index, form))
+            if not has_preflight_errors and valid_forms and len(valid_forms) == len(submitted_rows):
+                runtime_errors = False
+                with transaction.atomic():
+                    for index, form in valid_forms:
+                        try:
+                            _create_legacy_recovery_authorization(form, request.user)
+                        except ValueError as exc:
+                            row = submitted_rows[index - 1]
+                            row['__error'] = '1'
+                            style_label = row.get('weapon_style') or 'Unknown authorization'
+                            messages.error(request, f'Row {index} ({style_label}): {exc}')
+                            runtime_errors = True
+                        else:
+                            processed_count += 1
+                    if runtime_errors:
+                        transaction.set_rollback(True)
+                if runtime_errors:
+                    processed_count = 0
                 else:
-                    processed_count += 1
-            if processed_count:
-                messages.success(request, f'Processed {processed_count} legacy authorization recovery row(s).')
+                    failed_rows = []
+                    messages.success(request, f'Processed {processed_count} paper authorization row(s).')
             pending_rows = failed_rows
 
     recent_entries = LegacyAuthorizationRecoveryEntry.objects.select_related(
