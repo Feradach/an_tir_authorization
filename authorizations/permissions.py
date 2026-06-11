@@ -390,7 +390,7 @@ def _can_regionally_approve_authorization(user, discipline, fighter_region=None)
     if _has_active_office(regional_discipline_office):
         return True
 
-    return bool(fighter_region and is_regional_marshal(user, 'Earl Marshal', fighter_region))
+    return is_regional_marshal(user, 'Earl Marshal')
 
 
 def is_kingdom_marshal(user, discipline=None):

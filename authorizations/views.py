@@ -392,17 +392,27 @@ def _csv_value(row: dict, row_number: int, field_names: list[str], *, required: 
     return value
 
 
+def _normalize_membership_number(value: str) -> str:
+    value = (value or '').strip()
+    decimal_match = re.fullmatch(r'(\d+)\.0+', value)
+    if decimal_match:
+        return decimal_match.group(1)
+    return value
+
+
 def _membership_entries_from_dict_rows(rows) -> tuple[list[MembershipRosterEntry], int]:
     entries = []
     seen_memberships = set()
     skipped_rows = 0
     for row_number, row in rows:
-        membership_number = _csv_value(
-            row,
-            row_number,
-            ['Legacy ID (C)', 'Membership Number', 'Membership #'],
-            required=False,
-            digits_only=False,
+        membership_number = _normalize_membership_number(
+            _csv_value(
+                row,
+                row_number,
+                ['Legacy ID (C)', 'Membership Number', 'Membership #'],
+                required=False,
+                digits_only=False,
+            )
         )
         first_name = _csv_value(row, row_number, ['First Name'], required=False)
         last_name = _csv_value(row, row_number, ['Last Name'], required=False)
@@ -551,6 +561,43 @@ def _load_membership_rows_from_upload(uploaded_file) -> tuple[list[MembershipRos
     else:
         rows = _load_membership_csv_rows(uploaded_file)
     return _membership_entries_from_dict_rows(rows)
+
+
+def _merge_membership_roster_entries(uploaded_rows: list[MembershipRosterEntry]) -> list[MembershipRosterEntry]:
+    uploaded_membership_numbers = [row.membership_number for row in uploaded_rows]
+    existing_entries = MembershipRosterEntry.objects.in_bulk(
+        uploaded_membership_numbers,
+        field_name='membership_number',
+    )
+    rows_to_create = []
+    rows_to_update = []
+    effective_rows = []
+
+    for uploaded_row in uploaded_rows:
+        existing_row = existing_entries.get(uploaded_row.membership_number)
+        if not existing_row:
+            rows_to_create.append(uploaded_row)
+            effective_rows.append(uploaded_row)
+            continue
+
+        if uploaded_row.membership_expiration >= existing_row.membership_expiration:
+            existing_row.first_name = uploaded_row.first_name
+            existing_row.last_name = uploaded_row.last_name
+            existing_row.membership_expiration = uploaded_row.membership_expiration
+            existing_row.has_society_waiver = uploaded_row.has_society_waiver
+            rows_to_update.append(existing_row)
+        effective_rows.append(existing_row)
+
+    if rows_to_create:
+        MembershipRosterEntry.objects.bulk_create(rows_to_create, batch_size=1000)
+    if rows_to_update:
+        MembershipRosterEntry.objects.bulk_update(
+            rows_to_update,
+            ['first_name', 'last_name', 'membership_expiration', 'has_society_waiver'],
+            batch_size=1000,
+        )
+
+    return effective_rows
 
 
 def _refresh_user_membership_expirations_from_roster(rows, imported_by, source_filename: str) -> int:
@@ -7213,10 +7260,9 @@ def upload_membership_roster(request):
         return redirect(next_url)
 
     with transaction.atomic():
-        MembershipRosterEntry.objects.all().delete()
-        MembershipRosterEntry.objects.bulk_create(rows, batch_size=1000)
+        effective_rows = _merge_membership_roster_entries(rows)
         refreshed_user_count = _refresh_user_membership_expirations_from_roster(
-            rows,
+            effective_rows,
             request.user,
             uploaded_file.name,
         )
@@ -7229,7 +7275,7 @@ def upload_membership_roster(request):
             },
         )
 
-    messages.success(request, f'Membership roster updated successfully ({len(rows)} rows).')
+    messages.success(request, f'Membership roster updated successfully ({len(rows)} rows processed).')
     if refreshed_user_count:
         messages.success(
             request,

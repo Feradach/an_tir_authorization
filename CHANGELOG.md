@@ -8,10 +8,13 @@
 
 ### Changed
 
+- Membership roster uploads now preserve existing membership records and only move stored expiration dates forward when a newer roster row is uploaded.
 
 
 ### Fixed
 
+- Fixed the membership uploader to better handle unusually shaped membership numbers.
+- Principality and regional Earl Marshals can now give final marshal-promotion concurrence for fighters outside their own region.
 
 ### Removed
 

@@ -3066,7 +3066,7 @@ class UserAccountViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 403)
 
-    def test_ao_upload_membership_roster_replaces_rows(self):
+    def test_ao_upload_membership_roster_preserves_existing_rows_and_adds_new_rows(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
         MembershipRosterEntry.objects.create(
             membership_number='111111',
@@ -3091,12 +3091,74 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(MembershipRosterEntry.objects.filter(membership_number='111111').exists())
+        self.assertTrue(MembershipRosterEntry.objects.filter(membership_number='111111').exists())
         self.assertTrue(MembershipRosterEntry.objects.filter(membership_number='222222').exists())
         self.assertTrue(MembershipRosterEntry.objects.filter(membership_number='333333').exists())
         metadata = MembershipRosterImport.objects.get(pk=1)
         self.assertEqual(metadata.row_count, 2)
         self.assertEqual(metadata.source_filename, 'members.csv')
+
+    def test_ao_upload_membership_roster_does_not_shorten_existing_roster_entry(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        MembershipRosterEntry.objects.create(
+            membership_number='111111',
+            first_name='Current',
+            last_name='Member',
+            membership_expiration=date(2035, 1, 1),
+            has_society_waiver=True,
+        )
+        upload = SimpleUploadedFile(
+            'old_members.csv',
+            (
+                'Legacy ID (C),Waiver (C),First Name,Last Name,Membership Expiration Date\n'
+                '111111,,Old,Member,2/2/2031\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entry = MembershipRosterEntry.objects.get(membership_number='111111')
+        self.assertEqual(entry.first_name, 'Current')
+        self.assertEqual(entry.last_name, 'Member')
+        self.assertEqual(entry.membership_expiration, date(2035, 1, 1))
+        self.assertTrue(entry.has_society_waiver)
+
+    def test_ao_upload_membership_roster_extends_existing_roster_entry(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        MembershipRosterEntry.objects.create(
+            membership_number='111111',
+            first_name='Old',
+            last_name='Member',
+            membership_expiration=date(2030, 1, 1),
+            has_society_waiver=False,
+        )
+        upload = SimpleUploadedFile(
+            'new_members.csv',
+            (
+                'Legacy ID (C),Waiver (C),First Name,Last Name,Membership Expiration Date\n'
+                '111111,Yes,Current,Member,2/2/2031\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entry = MembershipRosterEntry.objects.get(membership_number='111111')
+        self.assertEqual(entry.first_name, 'Current')
+        self.assertEqual(entry.last_name, 'Member')
+        self.assertEqual(entry.membership_expiration, date(2031, 2, 2))
+        self.assertTrue(entry.has_society_waiver)
 
     def test_kingdom_seneschal_can_upload_membership_roster(self):
         seneschal_user, seneschal_person = self.make_person(
@@ -3183,6 +3245,38 @@ class UserAccountViewTests(ViewTestBase):
         self.assertFalse(UserNote.objects.filter(person=self.owner_person).exists())
         messages = self.messages_for(response)
         self.assertFalse(any('user membership expiration(s) were extended' in message for message in messages))
+
+    def test_ao_upload_membership_roster_refreshes_user_from_preserved_later_roster_entry(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        self.owner_user.membership = '222222'
+        self.owner_user.membership_expiration = date(2030, 1, 1)
+        self.owner_user.save()
+        MembershipRosterEntry.objects.create(
+            membership_number='222222',
+            first_name='Owner',
+            last_name='User',
+            membership_expiration=date(2035, 1, 1),
+        )
+        upload = SimpleUploadedFile(
+            'old_members.csv',
+            (
+                'Legacy ID (C),First Name,Last Name,Membership Expiration Date\n'
+                '222222,Owner,User,2/2/2031\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.owner_user.refresh_from_db()
+        self.assertEqual(self.owner_user.membership_expiration, date(2035, 1, 1))
+        entry = MembershipRosterEntry.objects.get(membership_number='222222')
+        self.assertEqual(entry.membership_expiration, date(2035, 1, 1))
 
     def test_ao_upload_membership_roster_accepts_current_society_headers(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
@@ -3299,6 +3393,52 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(entry.last_name, 'Member')
         self.assertEqual(entry.membership_expiration, date(2034, 5, 5))
         self.assertTrue(entry.has_society_waiver)
+
+    def test_ao_upload_membership_roster_accepts_xlsx_decimal_membership_number(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        rows = [
+            [
+                'Legacy ID (C)',
+                'Waiver (C)',
+                'Membership Level',
+                'Society Name (C)',
+                'First Name',
+                'Last Name',
+                'Zip Code',
+                'County',
+                'Membership Expiration Date',
+                'Kingdom ID (C)',
+            ],
+            [
+                308001.0,
+                '',
+                'Associate',
+                '',
+                'Frances',
+                'Mass',
+                '98922',
+                '',
+                (date(2026, 4, 30) - date(1899, 12, 30)).days,
+                'An Tir',
+            ],
+        ]
+        upload = SimpleUploadedFile(
+            'society_members_decimal_ids.xlsx',
+            self._build_xlsx(rows),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        response = self.client.post(
+            reverse('upload_membership_roster'),
+            {'membership_csv': upload, 'next': reverse('user_account', kwargs={'user_id': self.owner_user.id})},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        entry = MembershipRosterEntry.objects.get(membership_number='308001')
+        self.assertEqual(entry.first_name, 'Frances')
+        self.assertEqual(entry.last_name, 'Mass')
+        self.assertEqual(entry.membership_expiration, date(2026, 4, 30))
 
     def test_ao_upload_membership_roster_skips_rows_with_blank_membership_number(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
@@ -7324,10 +7464,10 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertTrue(pending['can_approve'])
         self.assertTrue(pending['can_reject'])
 
-    def test_regional_earl_marshal_does_not_see_needs_regional_buttons_outside_region(self):
+    def test_regional_earl_marshal_sees_needs_regional_buttons_outside_region(self):
         regional_earl_user, regional_earl_person = self.make_person(
-            'regional_earl_btn_no',
-            'Regional Earl Button No',
+            'regional_earl_btn_out',
+            'Regional Earl Button Outside',
             branch=self.branch_gd,
         )
         self.grant_authorization(regional_earl_person, self.style_sm_armored)
@@ -7350,8 +7490,44 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         pending = response.context['pending_authorization_list']['Rapier Combat']
-        self.assertFalse(pending['can_approve'])
+        self.assertTrue(pending['can_approve'])
         self.assertFalse(pending['can_reject'])
+
+    def test_regional_earl_marshal_can_approve_senior_marshal_they_proposed_outside_region(self):
+        regional_earl_user, regional_earl_person = self.make_person(
+            'regional_earl_approve_out',
+            'Regional Earl Approve Outside',
+            branch=self.branch_gd,
+        )
+        self.grant_authorization(regional_earl_person, self.style_sm_armored)
+        self.appoint(regional_earl_person, self.region_summits, self.discipline_earl_marshal)
+        outside_user, outside_person = self.make_person(
+            'regional_earl_approve_target',
+            'Regional Earl Approve Target',
+            branch=self.branch_lg,
+        )
+        pending_auth = Authorization.objects.create(
+            person=outside_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=regional_earl_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=regional_earl_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': outside_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'Final concurrence as Earl Marshal at large',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
 
     def test_kao_can_reject_needs_regional_using_submit_as(self):
         needs_regional = Authorization.objects.create(
