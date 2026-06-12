@@ -5060,6 +5060,107 @@ class UserAccountViewTests(ViewTestBase):
             ).exists()
         )
 
+    def test_delete_senior_marshal_restores_junior_marshal_superseded_before_restore_notes_existed(self):
+        junior_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_jm_armored,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        senior_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_sm_armored,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        promotion_time = timezone.now() - timedelta(days=1)
+        Authorization.objects.filter(pk=senior_authorization.pk).update(
+            created_at=promotion_time,
+            updated_at=promotion_time,
+        )
+        Authorization.objects.filter(pk=junior_authorization.pk).update(
+            status=self.status_inactive,
+            updated_at=promotion_time,
+        )
+        AuthorizationAuditEntry.objects.filter(authorization=junior_authorization).delete()
+        AuthorizationNote.objects.filter(authorization=junior_authorization).delete()
+
+        self.client.force_login(self.ao_user)
+        response = self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': self.owner_person.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(senior_authorization.id),
+                'action_note': 'Senior Marshal was entered for the wrong fighter.',
+            },
+            follow=True,
+        )
+
+        senior_authorization.refresh_from_db()
+        junior_authorization.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(senior_authorization.status.name, 'Inactive')
+        self.assertEqual(junior_authorization.status.name, 'Active')
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=junior_authorization,
+                note__contains='before explicit Senior/Junior restore notes were recorded',
+            ).exists()
+        )
+
+    def test_delete_senior_marshal_does_not_restore_junior_when_another_senior_remains(self):
+        junior_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_jm_armored,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        senior_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_sm_armored,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        duplicate_senior_style = WeaponStyle.objects.create(
+            name='Senior Marshal',
+            discipline=self.discipline_armored,
+        )
+        remaining_senior = self.grant_authorization(
+            self.owner_person,
+            duplicate_senior_style,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        promotion_time = timezone.now() - timedelta(days=1)
+        Authorization.objects.filter(pk=senior_authorization.pk).update(
+            created_at=promotion_time,
+            updated_at=promotion_time,
+        )
+        Authorization.objects.filter(pk=junior_authorization.pk).update(
+            status=self.status_inactive,
+            updated_at=promotion_time,
+        )
+        AuthorizationNote.objects.filter(authorization=junior_authorization).delete()
+
+        self.client.force_login(self.ao_user)
+        response = self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': self.owner_person.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(senior_authorization.id),
+                'action_note': 'Duplicate Senior Marshal was entered.',
+            },
+            follow=True,
+        )
+
+        junior_authorization.refresh_from_db()
+        senior_authorization.refresh_from_db()
+        remaining_senior.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(senior_authorization.status.name, 'Inactive')
+        self.assertEqual(remaining_senior.status.name, 'Active')
+        self.assertEqual(junior_authorization.status.name, 'Inactive')
+
     def test_legacy_recovery_refuses_junior_marshal_when_senior_marshal_is_active(self):
         self.grant_authorization(
             self.owner_person,

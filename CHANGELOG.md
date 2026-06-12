@@ -10,7 +10,7 @@
 ### Changed
 
 - Membership roster uploads now preserve existing membership records and only move stored expiration dates forward when a newer roster row is uploaded.
-- Deleting an incorrectly entered Senior Marshal authorization now restores the same-discipline Junior Marshal authorization it superseded when that relationship was recorded.
+- Deleting an incorrectly entered Senior Marshal authorization now restores the same-discipline Junior Marshal authorization it superseded when that relationship can be confirmed or safely inferred.
 
 
 ### Fixed

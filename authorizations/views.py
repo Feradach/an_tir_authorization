@@ -1524,6 +1524,59 @@ def _restore_junior_marshal_superseded_by_deleted_senior(
         )
         restored_authorization_ids.add(junior_authorization.pk)
 
+    other_senior_exists = Authorization.objects.filter(
+        person=senior_authorization.person,
+        style__discipline=senior_authorization.style.discipline,
+        style__name='Senior Marshal',
+    ).exclude(
+        pk=senior_authorization.pk,
+    ).exclude(
+        status__name='Inactive',
+    ).exists()
+    if other_senior_exists:
+        return
+
+    active_status = AuthorizationStatus.objects.filter(name='Active').order_by('id').first()
+    if not active_status:
+        return
+
+    legacy_window_start = senior_authorization.created_at - timedelta(minutes=5)
+    legacy_window_end = senior_authorization.created_at + timedelta(days=1)
+    legacy_junior_authorizations = Authorization.objects.select_related(
+        'person__user',
+        'style__discipline',
+        'status',
+    ).filter(
+        person=senior_authorization.person,
+        style__discipline=senior_authorization.style.discipline,
+        style__name='Junior Marshal',
+        status__name='Inactive',
+        updated_at__gte=legacy_window_start,
+        updated_at__lte=legacy_window_end,
+    ).order_by('-updated_at', '-id')
+
+    for junior_authorization in legacy_junior_authorizations:
+        if junior_authorization.pk in restored_authorization_ids:
+            continue
+        if junior_authorization.effective_expiration < date.today():
+            continue
+
+        junior_authorization.status = active_status
+        junior_authorization.updated_by = acting_user
+        junior_authorization.save()
+        create_authorization_note(
+            authorization=junior_authorization,
+            created_by=acting_user,
+            action='marshal_approved',
+            note=(
+                f'Restored to Active because Senior Marshal authorization {senior_authorization.pk} was deleted. '
+                'The original supersession happened before explicit Senior/Junior restore notes were recorded, '
+                'so this was inferred from the same fighter, same discipline, current Junior expiration, and '
+                f'Junior update time near the Senior Marshal creation time. Deletion note: {delete_note}'
+            ),
+        )
+        restored_authorization_ids.add(junior_authorization.pk)
+
 
 def _mark_authorization_inactive(authorization: Authorization, acting_user: User, note: str):
     inactive_status = AuthorizationStatus.objects.filter(name='Inactive').order_by('id').first()
