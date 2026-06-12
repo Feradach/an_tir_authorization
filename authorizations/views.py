@@ -1540,8 +1540,6 @@ def _restore_junior_marshal_superseded_by_deleted_senior(
     if not active_status:
         return
 
-    legacy_window_start = senior_authorization.created_at - timedelta(minutes=5)
-    legacy_window_end = senior_authorization.created_at + timedelta(days=1)
     legacy_junior_authorizations = Authorization.objects.select_related(
         'person__user',
         'style__discipline',
@@ -1551,8 +1549,7 @@ def _restore_junior_marshal_superseded_by_deleted_senior(
         style__discipline=senior_authorization.style.discipline,
         style__name='Junior Marshal',
         status__name='Inactive',
-        updated_at__gte=legacy_window_start,
-        updated_at__lte=legacy_window_end,
+        created_at__lte=senior_authorization.created_at,
     ).order_by('-updated_at', '-id')
 
     for junior_authorization in legacy_junior_authorizations:
@@ -1572,7 +1569,7 @@ def _restore_junior_marshal_superseded_by_deleted_senior(
                 f'Restored to Active because Senior Marshal authorization {senior_authorization.pk} was deleted. '
                 'The original supersession happened before explicit Senior/Junior restore notes were recorded, '
                 'so this was inferred from the same fighter, same discipline, current Junior expiration, and '
-                f'Junior update time near the Senior Marshal creation time. Deletion note: {delete_note}'
+                f'a Junior authorization that existed before the Senior Marshal was created. Deletion note: {delete_note}'
             ),
         )
         restored_authorization_ids.add(junior_authorization.pk)

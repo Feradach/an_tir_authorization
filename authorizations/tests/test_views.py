@@ -5078,9 +5078,11 @@ class UserAccountViewTests(ViewTestBase):
             created_at=promotion_time,
             updated_at=promotion_time,
         )
+        old_junior_update_time = promotion_time - timedelta(days=30)
         Authorization.objects.filter(pk=junior_authorization.pk).update(
             status=self.status_inactive,
-            updated_at=promotion_time,
+            created_at=old_junior_update_time,
+            updated_at=old_junior_update_time,
         )
         AuthorizationAuditEntry.objects.filter(authorization=junior_authorization).delete()
         AuthorizationNote.objects.filter(authorization=junior_authorization).delete()
@@ -5136,9 +5138,11 @@ class UserAccountViewTests(ViewTestBase):
             created_at=promotion_time,
             updated_at=promotion_time,
         )
+        old_junior_update_time = promotion_time - timedelta(days=30)
         Authorization.objects.filter(pk=junior_authorization.pk).update(
             status=self.status_inactive,
-            updated_at=promotion_time,
+            created_at=old_junior_update_time,
+            updated_at=old_junior_update_time,
         )
         AuthorizationNote.objects.filter(authorization=junior_authorization).delete()
 
