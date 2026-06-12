@@ -1259,6 +1259,86 @@ class IndexViewTests(ViewTestBase):
         )
         self.assertContains(response, 'target="_blank"')
 
+    def test_pending_background_check_document_shows_kao_review_alert(self):
+        ao_user, ao_person = self.make_person('index_bg_doc_ao', 'Index BG Doc AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        target_user, target_person = self.make_person('index_bg_doc_target', 'Index BG Doc Target')
+
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-document-alert.pdf', ContentFile(b'bg-document-alert'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        self.assertContains(response, 'Background Checks Needing Review')
+        self.assertContains(response, 'Index BG Doc Target')
+        self.assertContains(response, f'href="{reverse("user_account", kwargs={"user_id": target_user.id})}"')
+        self.assertContains(
+            response,
+            f'href="{reverse("supporting_document_file", kwargs={"document_id": bg_document.id})}"',
+        )
+
+    def test_pending_background_check_document_alert_suppressed_when_pending_authorization_exists(self):
+        ao_user, ao_person = self.make_person('index_bg_doc_dupe_ao', 'Index BG Doc Dupe AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bg_doc_dupe_prop', 'Index BG Doc Dupe Prop')
+        target_user, target_person = self.make_person('index_bg_doc_dupe_target', 'Index BG Doc Dupe Target')
+        self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-document-dupe.pdf', ContentFile(b'bg-document-dupe'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        self.assertContains(response, 'Awaiting Background Check')
+        self.assertNotContains(response, 'Background Checks Needing Review')
+        self.assertContains(response, 'New upload')
+
+    def test_setting_background_check_expiration_clears_document_review_alert(self):
+        ao_user, ao_person = self.make_person('index_bg_doc_clear_ao', 'Index BG Doc Clear AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        target_user, target_person = self.make_person('index_bg_doc_clear_target', 'Index BG Doc Clear Target')
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-document-clear.pdf', ContentFile(b'bg-document-clear'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        bg_date = date.today() + relativedelta(years=2)
+        payload = self.account_update_payload(
+            target_user,
+            target_person,
+            background_check_expiration=bg_date.isoformat(),
+        )
+        self.client.post(
+            reverse('user_account', kwargs={'user_id': target_user.id}),
+            payload,
+            follow=True,
+        )
+        bg_document.refresh_from_db()
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(bg_document.review_status, SupportingDocument.ReviewStatus.ACCEPTED)
+        self.assertEqual(bg_document.reviewed_by, ao_user)
+        self.assertIsNotNone(bg_document.reviewed_at)
+        self.assertNotContains(response, 'Background Checks Needing Review')
+
     def test_kingdom_equestrian_authorization_officer_queue_shows_needs_kingdom_equestrian_waiver(self):
         discipline_equestrian = Discipline.objects.create(name='Equestrian')
         style_general_riding = WeaponStyle.objects.create(

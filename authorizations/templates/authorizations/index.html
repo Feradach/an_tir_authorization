@@ -255,6 +255,44 @@
             </table>
     {% endif %}
 
+    {% if pending_background_check_documents %}
+        <h3>Background Checks Needing Review</h3>
+        <table>
+            <tr>
+                <th>SCA Name</th>
+                <th>Region</th>
+                <th>Branch</th>
+                <th>Uploaded</th>
+                <th>Uploaded By</th>
+                <th>File</th>
+                <th>Action</th>
+            </tr>
+            {% for alert in pending_background_check_documents %}
+                <tr>
+                    <td><a href="{% url 'fighter' alert.person.id %}">{{ alert.person.sca_name }}</a></td>
+                    <td>{% if alert.person.branch and alert.person.branch.region %}{{ alert.person.branch.region.name }}{% else %}-{% endif %}</td>
+                    <td>{% if alert.person.branch %}{{ alert.person.branch.name }}{% else %}-{% endif %}</td>
+                    <td>{{ alert.uploaded_at|date:"Y-m-d H:i" }}</td>
+                    <td>
+                        {% if alert.uploaded_by and alert.uploaded_by.person %}
+                            {{ alert.uploaded_by.person.sca_name }}
+                        {% elif alert.uploaded_by %}
+                            {{ alert.uploaded_by.username }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ alert.file_url }}" target="_blank" rel="noopener noreferrer">View File</a>
+                    </td>
+                    <td>
+                        <a href="{% url 'user_account' user_id=alert.person.user_id %}" class="btn btn-primary">Go To Page</a>
+                    </td>
+                </tr>
+            {% endfor %}
+        </table>
+    {% endif %}
+
     {% if pending_authorization_action %}
         <form method="post" id="clear_pending_authorization_action_form" action="">
             {% csrf_token %}

@@ -6,7 +6,6 @@
 ### Added
 
 
-
 ### Changed
 
 
@@ -20,6 +19,7 @@
 ## [1.1.6] - 2026-06-12
 ### Added
 - Added an authorization deletion tool that lets kingdom authorization officers mark incorrectly entered authorizations inactive so they can be re-entered correctly.
+- Background-check proof uploads now create a Kingdom Authorization Officer homepage review alert when the fighter is not already listed for a pending background-check authorization.
 
 
 ### Changed

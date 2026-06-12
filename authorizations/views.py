@@ -2998,6 +2998,68 @@ def _annotate_homepage_document_alerts(authorizations):
 
     return rows
 
+
+def _pending_background_check_document_alerts_for_kao():
+    pending_background_check_person_ids = set(
+        Authorization.objects.filter(
+            status__name='Awaiting Background Check',
+        ).values_list('person_id', flat=True)
+    )
+    links = (
+        SupportingDocumentPerson.objects.filter(
+            document__document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            document__review_status=SupportingDocument.ReviewStatus.PENDING,
+            person__user__merged_into__isnull=True,
+        )
+        .exclude(person_id__in=pending_background_check_person_ids)
+        .select_related(
+            'document',
+            'document__uploaded_by',
+            'document__uploaded_by__person',
+            'person',
+            'person__branch',
+            'person__branch__region',
+            'person__user',
+        )
+        .order_by('person_id', '-document__uploaded_at', '-document_id')
+    )
+
+    alerts = []
+    seen_person_ids = set()
+    for link in links:
+        if link.person_id in seen_person_ids:
+            continue
+        if not _supporting_document_file_exists(link.document):
+            continue
+        seen_person_ids.add(link.person_id)
+        alerts.append(
+            SimpleNamespace(
+                person=link.person,
+                document=link.document,
+                uploaded_at=link.document.uploaded_at,
+                uploaded_by=link.document.uploaded_by,
+                file_url=reverse('supporting_document_file', kwargs={'document_id': link.document_id}),
+            )
+        )
+    return alerts
+
+
+def _mark_pending_background_check_documents_reviewed(target_user: User, reviewed_by: User) -> int:
+    return (
+        SupportingDocument.objects.filter(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            review_status=SupportingDocument.ReviewStatus.PENDING,
+            person_links__person__user=target_user,
+        )
+        .distinct()
+        .update(
+            review_status=SupportingDocument.ReviewStatus.ACCEPTED,
+            reviewed_by=reviewed_by,
+            reviewed_at=timezone.now(),
+            review_note='Background check expiration applied.',
+        )
+    )
+
 def _sanctionable_disciplines_for_user(user):
     base = Discipline.objects.exclude(name__in=[
         'Earl Marshal',
@@ -3789,6 +3851,11 @@ def index(request):
             status_filter,
         ).order_by('effective_expiration_date')
     pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
+    pending_background_check_documents = (
+        _pending_background_check_document_alerts_for_kao()
+        if auth_officer
+        else []
+    )
 
     if request.method == 'POST':
         if not request.user.is_authenticated:
@@ -4007,6 +4074,7 @@ def index(request):
         'can_manage_sanctions': can_manage_sanctions,
         'can_view_supporting_documents': can_view_supporting_documents,
         'pending_authorizations': pending_authorizations,
+        'pending_background_check_documents': pending_background_check_documents,
         'all_people': all_people,
         'all_people_people': all_people_qs,
         'authorization_officer_sign_off_required': sign_off_required,
@@ -7250,6 +7318,7 @@ def user_account(request, user_id):
                 and user.background_check_expiration
                 and user.background_check_expiration != previous_background_check_expiration
             ):
+                _mark_pending_background_check_documents_reviewed(user, request.user)
                 _activate_pending_background_check_authorizations(user)
 
             person.sca_name = form.cleaned_data['sca_name']
@@ -8420,6 +8489,7 @@ def _apply_profile_form_to_user_and_person(profile_form, user: User, person: Per
         user.background_check_expiration
         and user.background_check_expiration != previous_background_check_expiration
     ):
+        _mark_pending_background_check_documents_reviewed(user, acting_user)
         _activate_pending_background_check_authorizations(user)
 
     person.sca_name = cleaned.get('sca_name') or f"{user.first_name} {user.last_name}".strip()
