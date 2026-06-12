@@ -29,7 +29,7 @@ from django.utils.html import format_html
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, AuthorizationValidityInterval, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, adult_age_for_jurisdiction, is_minor_from_birthday, sync_authorization_validity_interval
+from .models import User, Authorization, AuthorizationAuditEntry, AuthorizationValidityInterval, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, adult_age_for_jurisdiction, is_minor_from_birthday, sync_authorization_validity_interval
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, active_sanction_for_style, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_age, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _equestrian_aliases_for_style_name, _GENERAL_RIDING_STYLES, _JUNIOR_GROUND_CREW_STYLES, _MOUNTED_ARCHERY_STYLES, _MOUNTED_COMBAT_STYLES, _MOUNTED_CREST_COMBAT_STYLES, _MOUNTED_GAMING_STYLES, _MOUNTED_SPECIAL_STYLES, _MOUNTED_WEAPON_GAME_STYLES, _DRIVING_STYLES, _FOAM_TIPPED_JOUSTING_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .changelog import build_changelog_sections
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
@@ -1411,6 +1411,149 @@ def _legacy_recovery_requires_concurrence_on_date(person: Person, style: WeaponS
     ).exists()
 
 
+def _officer_can_delete_authorization(user: User, authorization: Authorization) -> bool:
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    discipline_name = authorization.style.discipline.name if authorization.style and authorization.style.discipline else ''
+    if discipline_name == 'Equestrian':
+        return is_kingdom_equestrian_authorization_officer(user)
+    return is_kingdom_authorization_officer(user)
+
+
+def _delete_authorization_queryset_for_user(user: User):
+    query = Authorization.objects.select_related(
+        'person__user',
+        'person__branch',
+        'style__discipline',
+        'status',
+        'marshal',
+        'concurring_fighter',
+        'created_by__person',
+        'updated_by__person',
+    ).exclude(status__name='Inactive')
+    kao = is_kingdom_authorization_officer(user)
+    keao = is_kingdom_equestrian_authorization_officer(user)
+    if kao and keao:
+        return query
+    if kao:
+        return query.exclude(style__discipline__name='Equestrian')
+    if keao:
+        return query.filter(style__discipline__name='Equestrian')
+    return query.none()
+
+
+def _close_authorization_validity_intervals_for_delete(
+    authorization: Authorization,
+    acting_user: User,
+    note: str,
+    *,
+    reason='officer deletion',
+    effective_date=None,
+):
+    effective_date = effective_date or date.today()
+    prior_day = effective_date - timedelta(days=1)
+    intervals = AuthorizationValidityInterval.objects.select_for_update().filter(
+        authorization=authorization,
+        end_date__gte=effective_date,
+    ).order_by('start_date', 'end_date', 'id')
+    for interval in intervals:
+        if interval.start_date > prior_day:
+            interval.delete()
+            continue
+        interval.end_date = prior_day
+        interval.created_by = interval.created_by or acting_user
+        interval.note = (
+            f'{interval.note}\n\n'
+            f'Closed by {reason} on {effective_date.isoformat()}: {note}'
+        ).strip()
+        interval.save(update_fields=['end_date', 'created_by', 'note', 'updated_at'])
+
+
+def _restore_junior_marshal_superseded_by_deleted_senior(
+    senior_authorization: Authorization,
+    acting_user: User,
+    delete_note: str,
+):
+    if (
+        not senior_authorization.style
+        or not senior_authorization.style.discipline
+        or senior_authorization.style.name != 'Senior Marshal'
+    ):
+        return
+
+    supersession_marker = f'Superseded by Senior Marshal authorization {senior_authorization.pk}.'
+    supersession_notes = AuthorizationNote.objects.select_related(
+        'authorization__person',
+        'authorization__style__discipline',
+        'authorization__status',
+    ).filter(
+        authorization__person=senior_authorization.person,
+        authorization__style__discipline=senior_authorization.style.discipline,
+        authorization__style__name='Junior Marshal',
+        note__contains=supersession_marker,
+    ).order_by('-created_at', '-id')
+
+    restored_authorization_ids = set()
+    for supersession_note in supersession_notes:
+        junior_authorization = supersession_note.authorization
+        if not junior_authorization or junior_authorization.pk in restored_authorization_ids:
+            continue
+        if not junior_authorization.status or junior_authorization.status.name != 'Inactive':
+            continue
+        audit_entry = AuthorizationAuditEntry.objects.filter(
+            authorization=junior_authorization,
+            after_status__name='Inactive',
+            before_status__isnull=False,
+            changed_at__lte=supersession_note.created_at,
+        ).order_by('-changed_at', '-id').first()
+        if not audit_entry or not audit_entry.before_status:
+            continue
+
+        previous_status = audit_entry.before_status
+        junior_authorization.status = previous_status
+        junior_authorization.updated_by = acting_user
+        junior_authorization.save()
+        create_authorization_note(
+            authorization=junior_authorization,
+            created_by=acting_user,
+            action='marshal_approved',
+            note=(
+                f'Restored to {previous_status.name} because Senior Marshal authorization '
+                f'{senior_authorization.pk} was deleted. Deletion note: {delete_note}'
+            ),
+        )
+        restored_authorization_ids.add(junior_authorization.pk)
+
+
+def _mark_authorization_inactive(authorization: Authorization, acting_user: User, note: str):
+    inactive_status = AuthorizationStatus.objects.filter(name='Inactive').order_by('id').first()
+    if not inactive_status:
+        inactive_status = AuthorizationStatus.objects.create(name='Inactive')
+    authorization.status = inactive_status
+    authorization.updated_by = acting_user
+    authorization.save()
+    _close_authorization_validity_intervals_for_delete(authorization, acting_user, note)
+    _restore_junior_marshal_superseded_by_deleted_senior(authorization, acting_user, note)
+    for dependent in Authorization.objects.select_related(
+        'person__user',
+        'style__discipline',
+        'status',
+    ).filter(person=authorization.person, status__name='Active').exclude(pk=authorization.pk):
+        if dependent.effective_expiration < date.today():
+            _close_authorization_validity_intervals_for_delete(
+                dependent,
+                acting_user,
+                note,
+                reason=f'related officer deletion of authorization {authorization.pk}',
+            )
+    create_authorization_note(
+        authorization=authorization,
+        created_by=acting_user,
+        action='officer_deleted',
+        note=note,
+    )
+
+
 def _legacy_recovery_paper_rules_were_met(
     person: Person,
     style: WeaponStyle,
@@ -1567,20 +1710,47 @@ def _legacy_recovery_scope_error(style: WeaponStyle):
     return 'Only the Kingdom Authorization Officer can enter non-equestrian paper authorizations.'
 
 
-def _legacy_recovery_deactivate_superseded_junior_marshal(person: Person, style: WeaponStyle, actor: User):
+def _legacy_recovery_deactivate_superseded_junior_marshal(
+    person: Person,
+    style: WeaponStyle,
+    actor: User,
+    senior_authorization: Authorization,
+    auth_date: date,
+):
     if style.name != 'Senior Marshal':
         return
     inactive_status = _get_or_create_status_by_name('Inactive')
-    Authorization.objects.filter(
+    junior_authorizations = Authorization.objects.select_for_update().select_related(
+        'status',
+        'style__discipline',
+    ).filter(
         person=person,
         style__discipline=style.discipline,
         style__name='Junior Marshal',
         status__name='Active',
-    ).update(
-        status=inactive_status,
-        updated_by=actor,
-        updated_at=timezone.now(),
     )
+    for junior_authorization in junior_authorizations:
+        previous_status_name = junior_authorization.status.name if junior_authorization.status else 'Unknown'
+        supersession_note = (
+            f'Superseded by Senior Marshal authorization {senior_authorization.pk}. '
+            f'Previous status: {previous_status_name}.'
+        )
+        junior_authorization.status = inactive_status
+        junior_authorization.updated_by = actor
+        junior_authorization.save()
+        _close_authorization_validity_intervals_for_delete(
+            junior_authorization,
+            actor,
+            supersession_note,
+            reason=f'Senior Marshal authorization {senior_authorization.pk} supersession',
+            effective_date=auth_date,
+        )
+        create_authorization_note(
+            authorization=junior_authorization,
+            created_by=actor,
+            action='marshal_approved',
+            note=supersession_note,
+        )
 
 
 def _legacy_recovery_optional_signoff(cleaned: dict, prefix: str, label: str, *, required: bool):
@@ -1903,7 +2073,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
                     created_by=actor,
                     updated_by=actor,
                 )
-            _legacy_recovery_deactivate_superseded_junior_marshal(person, style, actor)
+            _legacy_recovery_deactivate_superseded_junior_marshal(person, style, actor, authorization, auth_date)
             recovery_entry = LegacyAuthorizationRecoveryEntry.objects.create(
                 person=person,
                 style=style,
@@ -3171,6 +3341,10 @@ def officer_person_lookup(request):
             authorization__in=Authorization.objects.effectively_active().filter(
                 style__name='Senior Marshal',
             )
+        )
+    elif purpose == 'delete_authorizations':
+        scoped_people = scoped_people.filter(
+            authorization__in=_delete_authorization_queryset_for_user(request.user)
         )
     else:
         scoped_people = scoped_people.filter(
@@ -7331,6 +7505,87 @@ def upload_legacy_authorizations(request):
         ),
     )
     return redirect(next_url)
+
+
+@login_required
+def delete_authorizations(request, person_id=None):
+    if not (
+        is_kingdom_authorization_officer(request.user)
+        or is_kingdom_equestrian_authorization_officer(request.user)
+    ):
+        raise PermissionDenied
+
+    selected_person = None
+    if person_id is not None:
+        selected_person = get_object_or_404(
+            Person.objects.select_related('user', 'branch'),
+            user_id=person_id,
+        )
+
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'select_fighter':
+            selected_person_id = (request.POST.get('person_id') or '').strip()
+            if not selected_person_id:
+                messages.error(request, 'Choose a fighter before continuing.')
+                return redirect('delete_authorizations')
+            return redirect('delete_authorizations_for_person', person_id=selected_person_id)
+
+        if action != 'delete_authorization':
+            messages.error(request, 'Unknown authorization deletion action.')
+            if selected_person:
+                return redirect('delete_authorizations_for_person', person_id=selected_person.user_id)
+            return redirect('delete_authorizations')
+
+        if not selected_person:
+            messages.error(request, 'Choose a fighter before deleting an authorization.')
+            return redirect('delete_authorizations')
+
+        authorization_id = request.POST.get('authorization_id')
+        action_note = _get_action_note(request)
+        if not action_note:
+            messages.error(request, 'A note is required to delete an authorization.')
+            return redirect('delete_authorizations_for_person', person_id=selected_person.user_id)
+
+        try:
+            with transaction.atomic():
+                authorization = Authorization.objects.select_for_update().select_related(
+                    'person__user',
+                    'style__discipline',
+                    'status',
+                    'marshal',
+                ).get(pk=authorization_id, person=selected_person)
+                if authorization.status and authorization.status.name == 'Inactive':
+                    messages.info(request, 'That authorization is already inactive.')
+                    return redirect('delete_authorizations_for_person', person_id=selected_person.user_id)
+                if not _officer_can_delete_authorization(request.user, authorization):
+                    messages.error(request, 'You do not have permission to delete that authorization.')
+                    return redirect('delete_authorizations_for_person', person_id=selected_person.user_id)
+                style_label = f'{authorization.style.discipline.name} - {authorization.style.name}'
+                _mark_authorization_inactive(authorization, request.user, action_note)
+        except Authorization.DoesNotExist:
+            messages.error(request, 'Authorization not found for that fighter.')
+            return redirect('delete_authorizations_for_person', person_id=selected_person.user_id)
+
+        messages.success(request, f'Deleted {style_label} for {selected_person.sca_name}.')
+        return redirect('delete_authorizations_for_person', person_id=selected_person.user_id)
+
+    authorization_rows = []
+    if selected_person:
+        authorization_rows = list(
+            _delete_authorization_queryset_for_user(request.user)
+            .filter(person=selected_person)
+            .order_by('style__discipline__name', 'style__name', 'expiration', 'id')
+        )
+
+    return render(
+        request,
+        'authorizations/delete_authorizations.html',
+        {
+            'selected_person': selected_person,
+            'authorization_rows': authorization_rows,
+        },
+    )
 
 
 def legacy_authorization_recovery(request):

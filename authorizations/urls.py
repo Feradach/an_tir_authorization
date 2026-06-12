@@ -29,6 +29,8 @@ urlpatterns = [
         name='legacy_authorization_recovery',
     ),
     path('legacy_authorizations/upload', views.upload_legacy_authorizations, name='upload_legacy_authorizations'),
+    path('delete', views.delete_authorizations, name='delete_authorizations'),
+    path('delete/<int:person_id>', views.delete_authorizations, name='delete_authorizations_for_person'),
     path('supporting_documents', views.supporting_documents, name='supporting_documents'),
     path('supporting_documents/<int:document_id>/file', views.supporting_document_file, name='supporting_document_file'),
     path('manage_sanctions', views.manage_sanctions, name='manage_sanctions'),

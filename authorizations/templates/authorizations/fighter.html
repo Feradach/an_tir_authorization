@@ -85,6 +85,9 @@
 {% if auth_officer or request.user.id == person.user.id %}
     <p><a href="{% url 'user_account' user_id=person.id %}" class="btn btn-primary">View and Edit User Account</a></p>
 {% endif %}
+{% if auth_officer or equestrian_auth_officer %}
+    <p><a href="{% url 'delete_authorizations_for_person' person_id=person.user_id %}" class="btn btn-danger">Delete Authorizations</a></p>
+{% endif %}
     <form method="post" action="">
         {% csrf_token %}
         <input type="hidden" name="action" value="send_login_instructions">

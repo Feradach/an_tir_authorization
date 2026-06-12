@@ -492,6 +492,85 @@ class PopulateRestoreValidityIntervalsCommandTests(TestCase):
 
         self.assertEqual(expiration, date(2027, 1, 31))
 
+    def test_current_candidate_starts_on_snapshot_when_calculated_start_is_future_but_effectively_current(self):
+        command = PopulateRestoreValidityIntervalsCommand()
+        person = SimpleNamespace(
+            is_current_minor=False,
+            user=SimpleNamespace(
+                membership_expiration=date(2026, 7, 25),
+                background_check_expiration=None,
+            ),
+        )
+        style = SimpleNamespace(
+            name='Senior Marshal',
+            discipline=SimpleNamespace(name='Rapier Combat'),
+        )
+
+        candidate = command._candidate_from_authorization(
+            authorization_id=11220,
+            person=person,
+            style=style,
+            expiration=date(2035, 11, 13),
+            snapshot_date=date(2026, 6, 10),
+            source='portal_authorization',
+            note='test note',
+        )
+
+        self.assertIsInstance(candidate, IntervalCandidate)
+        self.assertEqual(candidate.start_date, date(2026, 6, 10))
+        self.assertEqual(candidate.end_date, date(2026, 7, 25))
+
+    def test_current_candidate_skips_when_effective_expiration_is_before_snapshot(self):
+        command = PopulateRestoreValidityIntervalsCommand()
+        person = SimpleNamespace(
+            is_current_minor=False,
+            user=SimpleNamespace(
+                membership_expiration=date(2026, 6, 9),
+                background_check_expiration=None,
+            ),
+        )
+        style = SimpleNamespace(
+            name='Senior Marshal',
+            discipline=SimpleNamespace(name='Rapier Combat'),
+        )
+
+        candidate = command._candidate_from_authorization(
+            authorization_id=11220,
+            person=person,
+            style=style,
+            expiration=date(2035, 11, 13),
+            snapshot_date=date(2026, 6, 10),
+            source='portal_authorization',
+            note='test note',
+        )
+
+        self.assertEqual(candidate, 'effective_expiration_before_start')
+
+    def test_raw_candidate_starts_on_snapshot_when_calculated_start_is_future_but_effectively_current(self):
+        command = PopulateRestoreValidityIntervalsCommand()
+        row = {
+            'id': 11220,
+            'expiration': date(2035, 11, 13),
+            'style_name': 'Senior Marshal',
+            'discipline_name': 'Rapier Combat',
+            'is_minor': False,
+            'birthday': None,
+            'country': 'United States',
+            'state_province': 'Washington',
+            'membership_expiration': date(2026, 7, 25),
+            'background_check_expiration': None,
+        }
+
+        candidate = command._candidate_from_raw_row(
+            row,
+            date(2026, 6, 10),
+            target_authorization_id=11220,
+        )
+
+        self.assertIsInstance(candidate, IntervalCandidate)
+        self.assertEqual(candidate.start_date, date(2026, 6, 10))
+        self.assertEqual(candidate.end_date, date(2026, 7, 25))
+
     def test_merge_candidates_extends_overlapping_intervals_and_keeps_gaps(self):
         command = PopulateRestoreValidityIntervalsCommand()
         candidates = [

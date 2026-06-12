@@ -19,8 +19,10 @@ from django.urls import reverse
 
 from authorizations.models import (
     Authorization,
+    AuthorizationAuditEntry,
     AuthorizationNote,
     AuthorizationStatus,
+    AuthorizationValidityInterval,
     AuthorizationPortalSetting,
     Branch,
     BranchMarshal,
@@ -525,6 +527,18 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Upload Society Membership CSV or Excel File')
         self.assertContains(response, 'name="membership_csv"')
         self.assertContains(response, 'Last upload:')
+
+    def test_index_kao_sees_delete_authorizations_button(self):
+        kao_user, kao_person = self.make_person('index_delete_kao_view', 'Index Delete KAO View')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse('delete_authorizations'))
+        self.assertContains(response, 'Delete Authorizations')
+        self.assertContains(response, 'Paper Authorization Entry')
 
     def test_index_kingdom_seneschal_sees_membership_upload_controls(self):
         seneschal_user, seneschal_person = self.make_person(
@@ -1516,6 +1530,223 @@ class SearchViewTests(ViewTestBase):
         self.assertIn('Search CSV B', content)
         self.assertNotIn('Search CSV C', content)
         self.assertNotIn('<a ', content)
+
+
+class DeleteAuthorizationsViewTests(ViewTestBase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        cls.style_general_riding = WeaponStyle.objects.create(name='General Riding', discipline=cls.discipline_equestrian)
+        cls.style_rapier_dagger = WeaponStyle.objects.create(name='Dagger', discipline=cls.discipline_rapier)
+
+    def make_kao(self, username='delete_kao', sca_name='Delete KAO'):
+        user, person = self.make_person(username, sca_name)
+        self.appoint(person, self.branch_an_tir, self.discipline_auth_officer)
+        return user, person
+
+    def make_keao(self, username='delete_keao', sca_name='Delete KEAO'):
+        user, person = self.make_person(username, sca_name)
+        self.appoint(person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
+        return user, person
+
+    def test_kao_can_delete_non_equestrian_authorization_and_close_current_interval(self):
+        kao_user, _ = self.make_kao()
+        _, fighter = self.make_person('delete_target', 'Delete Target')
+        authorization = self.grant_authorization(
+            fighter,
+            self.style_weapon_armored,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.assertTrue(
+            AuthorizationValidityInterval.objects.filter(
+                authorization=authorization,
+                start_date__lte=date.today(),
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(authorization.id),
+                'action_note': 'Entered under the wrong style.',
+            },
+        )
+
+        authorization.refresh_from_db()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}))
+        self.assertEqual(authorization.status.name, 'Inactive')
+        self.assertEqual(authorization.updated_by, kao_user)
+        self.assertFalse(
+            AuthorizationValidityInterval.objects.filter(
+                authorization=authorization,
+                start_date__lte=date.today(),
+                end_date__gte=date.today(),
+            ).exists()
+        )
+        note = AuthorizationNote.objects.get(authorization=authorization)
+        self.assertEqual(note.action, 'officer_deleted')
+        self.assertIn('Entered under the wrong style.', note.note)
+
+    def test_delete_authorization_requires_note(self):
+        kao_user, _ = self.make_kao('delete_note_kao', 'Delete Note KAO')
+        _, fighter = self.make_person('delete_note_target', 'Delete Note Target')
+        authorization = self.grant_authorization(fighter, self.style_weapon_armored)
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(authorization.id),
+            },
+            follow=True,
+        )
+
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status.name, 'Active')
+        self.assertFalse(AuthorizationNote.objects.filter(authorization=authorization).exists())
+        self.assertIn('A note is required to delete an authorization.', self.messages_for(response))
+
+    def test_delete_prerequisite_closes_dependent_current_interval(self):
+        kao_user, _ = self.make_kao('delete_prereq_kao', 'Delete Prereq KAO')
+        _, fighter = self.make_person('delete_prereq_target', 'Delete Prereq Target')
+        prerequisite = self.grant_authorization(
+            fighter,
+            self.style_single_rapier,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        dependent = self.grant_authorization(
+            fighter,
+            self.style_rapier_dagger,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.assertTrue(
+            AuthorizationValidityInterval.objects.filter(
+                authorization=dependent,
+                start_date__lte=date.today(),
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(prerequisite.id),
+                'action_note': 'Single Sword entered for the wrong fighter.',
+            },
+        )
+
+        prerequisite.refresh_from_db()
+        dependent.refresh_from_db()
+        self.assertEqual(prerequisite.status.name, 'Inactive')
+        self.assertEqual(dependent.status.name, 'Active')
+        self.assertFalse(
+            AuthorizationValidityInterval.objects.filter(
+                authorization=dependent,
+                start_date__lte=date.today(),
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_kao_cannot_delete_equestrian_authorization(self):
+        kao_user, _ = self.make_kao('delete_scope_kao', 'Delete Scope KAO')
+        _, fighter = self.make_person('delete_scope_target', 'Delete Scope Target')
+        authorization = self.grant_authorization(fighter, self.style_general_riding)
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        page = self.client.get(reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}))
+        self.assertNotContains(page, 'General Riding')
+
+        response = self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(authorization.id),
+                'action_note': 'Attempting out-of-scope delete.',
+            },
+            follow=True,
+        )
+
+        authorization.refresh_from_db()
+        self.assertEqual(authorization.status.name, 'Active')
+        self.assertIn('You do not have permission to delete that authorization.', self.messages_for(response))
+
+    def test_keao_can_delete_equestrian_authorization(self):
+        keao_user, _ = self.make_keao()
+        _, fighter = self.make_person('delete_eq_target', 'Delete Eq Target')
+        authorization = self.grant_authorization(fighter, self.style_general_riding)
+
+        self.client.login(username=keao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(authorization.id),
+                'action_note': 'Wrong equestrian row.',
+            },
+        )
+
+        authorization.refresh_from_db()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(authorization.status.name, 'Inactive')
+
+    def test_non_officer_cannot_access_delete_authorizations(self):
+        user, _ = self.make_person('delete_regular', 'Delete Regular')
+
+        self.client.login(username=user.username, password='StrongPass!123')
+        response = self.client.get(reverse('delete_authorizations'))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_fighter_page_links_kao_to_delete_authorizations(self):
+        kao_user, _ = self.make_kao('delete_link_kao', 'Delete Link KAO')
+        _, fighter = self.make_person('delete_link_target', 'Delete Link Target')
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('fighter', kwargs={'person_id': fighter.user_id}))
+
+        self.assertContains(response, reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}))
+        self.assertContains(response, 'Delete Authorizations')
+
+    def test_delete_page_uses_history_and_actions_modal_copy(self):
+        kao_user, _ = self.make_kao('delete_copy_kao', 'Delete Copy KAO')
+        _, fighter = self.make_person('delete_copy_target', 'Delete Copy Target')
+        self.grant_authorization(fighter, self.style_weapon_armored)
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('delete_authorizations_for_person', kwargs={'person_id': fighter.user_id}))
+
+        self.assertContains(
+            response,
+            'This marks the authorization inactive. It does not erase the notes, history, or any actions performed by the fighter.',
+        )
+
+    def test_delete_lookup_includes_fighter_with_pending_authorization(self):
+        kao_user, _ = self.make_kao('delete_lookup_kao', 'Delete Lookup KAO')
+        _, fighter = self.make_person('delete_lookup_target', 'Delete Lookup Target')
+        self.grant_authorization(
+            fighter,
+            self.style_weapon_armored,
+            status=self.status_kingdom,
+        )
+
+        self.client.login(username=kao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('officer_person_lookup'), {
+            'q': 'Delete Lookup Target',
+            'purpose': 'delete_authorizations',
+        })
+
+        payload = response.json()
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['results'][0]['user_id'], fighter.user_id)
+
 
 @override_settings(AUTHZ_TEST_FEATURES=False)
 class RegisterViewTests(ViewTestBase):
@@ -4753,6 +4984,81 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, 'Processed 1 paper authorization row(s).')
         junior_authorization.refresh_from_db()
         self.assertEqual(junior_authorization.status.name, 'Inactive')
+        senior_authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
+        audit_entry = AuthorizationAuditEntry.objects.filter(
+            authorization=junior_authorization,
+            before_status=self.status_active,
+            after_status=self.status_inactive,
+        ).first()
+        self.assertIsNotNone(audit_entry)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=junior_authorization,
+                action='marshal_approved',
+                note__contains=f'Superseded by Senior Marshal authorization {senior_authorization.id}.',
+            ).exists()
+        )
+        self.assertFalse(
+            AuthorizationValidityInterval.objects.filter(
+                authorization=junior_authorization,
+                start_date__lte=date.today(),
+                end_date__gte=date.today(),
+            ).exists()
+        )
+
+    def test_delete_senior_marshal_restores_junior_marshal_superseded_by_paper_entry(self):
+        junior_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_jm_armored,
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+        self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+        senior_authorization = Authorization.objects.get(person=self.owner_person, style=self.style_sm_armored)
+        junior_authorization.refresh_from_db()
+        self.assertEqual(junior_authorization.status.name, 'Inactive')
+
+        response = self.client.post(
+            reverse('delete_authorizations_for_person', kwargs={'person_id': self.owner_person.user_id}),
+            {
+                'action': 'delete_authorization',
+                'authorization_id': str(senior_authorization.id),
+                'action_note': 'Senior Marshal was entered for the wrong fighter.',
+            },
+            follow=True,
+        )
+
+        senior_authorization.refresh_from_db()
+        junior_authorization.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(senior_authorization.status.name, 'Inactive')
+        self.assertEqual(junior_authorization.status.name, 'Active')
+        self.assertTrue(
+            AuthorizationValidityInterval.objects.filter(
+                authorization=junior_authorization,
+                start_date__lte=date.today(),
+                end_date__gte=date.today(),
+            ).exists()
+        )
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=junior_authorization,
+                note__contains=f'Restored to Active because Senior Marshal authorization {senior_authorization.id} was deleted.',
+            ).exists()
+        )
 
     def test_legacy_recovery_refuses_junior_marshal_when_senior_marshal_is_active(self):
         self.grant_authorization(
@@ -5733,7 +6039,7 @@ class RoadmapViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, 'Version Unreleased')
-        self.assertNotContains(response, 'Renewing an active, unexpired authorization no longer moves it')
+        self.assertNotContains(response, 'Added an authorization deletion tool')
 
     def test_changelog_standalone_route_is_removed(self):
         response = self.client.get('/changelog/')

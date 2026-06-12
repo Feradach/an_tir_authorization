@@ -116,6 +116,9 @@
     {% if can_manage_sanctions %}
         <p><a href="{% url 'manage_sanctions' %}" class="btn btn-primary">Manage Sanctions</a></p>
     {% endif %}
+    {% if auth_officer or equestrian_auth_officer %}
+        <p><a href="{% url 'delete_authorizations' %}" class="btn btn-danger">Delete Authorizations</a></p>
+    {% endif %}
     {% if paper_authorization_entry_enabled %}
         <p><a href="{% url 'paper_authorization_entry' %}" class="btn btn-success">Paper Authorization Entry</a></p>
     {% endif %}

@@ -274,7 +274,9 @@ class Command(BaseCommand):
             snapshot_date=snapshot_date,
         )
         if end_date < start_date:
-            return "effective_expiration_before_start"
+            if end_date < snapshot_date:
+                return "effective_expiration_before_start"
+            start_date = snapshot_date
 
         return IntervalCandidate(authorization_id, start_date, end_date, source, note)
 
@@ -301,7 +303,9 @@ class Command(BaseCommand):
             snapshot_date=snapshot_date,
         )
         if end_date < start_date:
-            return "effective_expiration_before_start"
+            if end_date < snapshot_date:
+                return "effective_expiration_before_start"
+            start_date = snapshot_date
 
         return IntervalCandidate(
             target_authorization_id,

@@ -1326,6 +1326,7 @@ AUTHORIZATION_NOTE_ACTION_CHOICES = [
     ('marshal_concurred', 'Marshal concurred'),
     ('marshal_approved', 'Marshal approved'),
     ('marshal_rejected', 'Marshal rejected'),
+    ('officer_deleted', 'Officer deleted'),
     ('sanction_issued', 'Sanction issued'),
     ('sanction_lifted', 'Sanction lifted'),
 ]

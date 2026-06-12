@@ -4,16 +4,19 @@
 
 
 ### Added
+- Added an authorization deletion tool that lets kingdom authorization officers mark incorrectly entered authorizations inactive so they can be re-entered correctly.
 
 
 ### Changed
 
 - Membership roster uploads now preserve existing membership records and only move stored expiration dates forward when a newer roster row is uploaded.
+- Deleting an incorrectly entered Senior Marshal authorization now restores the same-discipline Junior Marshal authorization it superseded when that relationship was recorded.
 
 
 ### Fixed
 
 - Fixed the membership uploader to better handle unusually shaped membership numbers.
+- Fixed validity interval catch-up so current authorizations with unusually future-dated expirations can still get repair intervals when their effective expiration is current.
 - Principality and regional Earl Marshals can now give final marshal-promotion concurrence for fighters outside their own region.
 
 ### Removed

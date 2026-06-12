@@ -1,0 +1,211 @@
+{% extends "authorizations/inner_layout.html" %}
+
+{% block title %}
+    Delete Authorizations
+{% endblock %}
+
+{% block body %}
+<h1>Delete Authorizations</h1>
+
+<div class="card mb-4">
+    <h2>Fighter</h2>
+    <form method="post" id="fighter_select_form" action="{% url 'delete_authorizations' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="select_fighter">
+        <input id="delete_person_id" type="hidden" name="person_id" value="{% if selected_person %}{{ selected_person.user_id }}{% endif %}">
+        <div class="row g-3">
+            <div class="col-md-8">
+                <label for="delete_person_lookup" class="form-label"><strong>Person</strong></label>
+                <input
+                    id="delete_person_lookup"
+                    class="form-control"
+                    type="text"
+                    autocomplete="off"
+                    data-person-lookup="1"
+                    data-lookup-purpose="delete_authorizations"
+                    data-target-id="delete_person_id"
+                    value="{% if selected_person %}{% if selected_person.user.membership %}{{ selected_person.user.membership }} | {% endif %}{{ selected_person.sca_name }} | {{ selected_person.user.first_name }} {{ selected_person.user.last_name }}{% endif %}"
+                >
+                <div class="person-lookup-results list-group" data-results-for="delete_person_lookup"></div>
+                <small class="form-text text-muted">Search by SCA name, member number, or mundane name.</small>
+                <div class="mt-2">
+                    <button type="submit" class="btn btn-primary">Load Fighter</button>
+                </div>
+            </div>
+        </div>
+    </form>
+</div>
+
+{% if selected_person %}
+<div class="card mb-4">
+    <h2>{{ selected_person.sca_name }}</h2>
+    <p><strong>Mundane Name:</strong> {{ selected_person.user.first_name }} {{ selected_person.user.last_name }}</p>
+    <p><strong>Member Number:</strong> {{ selected_person.user.membership|default:"-" }}</p>
+    <p><strong>Branch:</strong> {% if selected_person.branch %}{{ selected_person.branch.name }}{% else %}-{% endif %}</p>
+    <p><a href="{% url 'fighter' person_id=selected_person.user_id %}" class="btn btn-secondary">Back to Fighter Page</a></p>
+</div>
+
+<div class="card">
+    <h2>Authorization Records</h2>
+    {% if authorization_rows %}
+        <div class="table-responsive">
+            <table class="table table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Discipline</th>
+                        <th>Style</th>
+                        <th>Status</th>
+                        <th>Expiration</th>
+                        <th>Authorizing Marshal</th>
+                        <th>Concurring Fighter</th>
+                        <th>Updated By</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for authorization in authorization_rows %}
+                        <tr>
+                            <td>{{ authorization.style.discipline.name }}</td>
+                            <td>{{ authorization.style.name }}</td>
+                            <td>{% if authorization.status %}{{ authorization.status.name }}{% else %}-{% endif %}</td>
+                            <td>{{ authorization.expiration|date:"Y-m-d" }}</td>
+                            <td>{% if authorization.marshal %}{{ authorization.marshal.sca_name }}{% else %}-{% endif %}</td>
+                            <td>{% if authorization.concurring_fighter %}{{ authorization.concurring_fighter.sca_name }}{% else %}-{% endif %}</td>
+                            <td>
+                                {% if authorization.updated_by and authorization.updated_by.person %}
+                                    {{ authorization.updated_by.person.sca_name }}
+                                {% elif authorization.updated_by %}
+                                    {{ authorization.updated_by.username }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button
+                                    type="button"
+                                    class="btn btn-danger btn-sm"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#deleteAuthorizationModal"
+                                    data-authorization-id="{{ authorization.id }}"
+                                    data-authorization-label="{{ authorization.style.discipline.name }} - {{ authorization.style.name }}"
+                                    data-authorization-status="{% if authorization.status %}{{ authorization.status.name }}{% else %}-{% endif %}"
+                                    data-authorization-expiration="{{ authorization.expiration|date:'Y-m-d' }}"
+                                >
+                                    Delete
+                                </button>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p>No authorizations are available for deletion by your officer role.</p>
+    {% endif %}
+</div>
+
+<div class="modal fade" id="deleteAuthorizationModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'delete_authorizations_for_person' person_id=selected_person.user_id %}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="delete_authorization">
+                <input id="delete_authorization_id" type="hidden" name="authorization_id" value="">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete Authorization</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p><strong>Fighter:</strong> {{ selected_person.sca_name }}</p>
+                    <p><strong>Authorization:</strong> <span id="delete_authorization_label"></span></p>
+                    <p><strong>Status:</strong> <span id="delete_authorization_status"></span></p>
+                    <p><strong>Expiration:</strong> <span id="delete_authorization_expiration"></span></p>
+                    <p class="text-muted">This marks the authorization inactive. It does not erase the notes, history, or any actions performed by the fighter.</p>
+                    <label for="delete_action_note" class="form-label"><strong>Deletion Note</strong></label>
+                    <textarea id="delete_action_note" name="action_note" class="form-control" rows="4" required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Delete Authorization</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block script %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const personLookupUrl = "{% url 'officer_person_lookup' %}";
+
+        function wirePersonLookup(inputElement) {
+            if (!inputElement) {
+                return;
+            }
+            const hiddenInput = document.getElementById(inputElement.dataset.targetId);
+            const resultsElement = document.querySelector(`[data-results-for="${inputElement.id}"]`);
+            if (!hiddenInput || !resultsElement) {
+                return;
+            }
+            let debounceTimer = null;
+
+            function clearResults() {
+                resultsElement.innerHTML = '';
+            }
+
+            inputElement.addEventListener('input', function () {
+                hiddenInput.value = '';
+                clearTimeout(debounceTimer);
+                const query = inputElement.value.trim();
+                if (query.length < 2) {
+                    clearResults();
+                    return;
+                }
+                debounceTimer = setTimeout(function () {
+                    const purpose = inputElement.dataset.lookupPurpose || 'active';
+                    fetch(`${personLookupUrl}?q=${encodeURIComponent(query)}&purpose=${encodeURIComponent(purpose)}`)
+                        .then(response => response.json())
+                        .then(data => {
+                            clearResults();
+                            if (!data.ok) {
+                                return;
+                            }
+                            data.results.forEach(person => {
+                                const button = document.createElement('button');
+                                button.type = 'button';
+                                button.className = 'list-group-item list-group-item-action';
+                                button.textContent = person.label;
+                                button.addEventListener('click', function () {
+                                    inputElement.value = person.label;
+                                    hiddenInput.value = person.user_id;
+                                    clearResults();
+                                });
+                                resultsElement.appendChild(button);
+                            });
+                        });
+                }, 200);
+            });
+
+            inputElement.addEventListener('blur', function () {
+                setTimeout(clearResults, 200);
+            });
+        }
+
+        document.querySelectorAll('[data-person-lookup="1"]').forEach(wirePersonLookup);
+
+        const deleteModal = document.getElementById('deleteAuthorizationModal');
+        if (deleteModal) {
+            deleteModal.addEventListener('show.bs.modal', function (event) {
+                const button = event.relatedTarget;
+                document.getElementById('delete_authorization_id').value = button.dataset.authorizationId || '';
+                document.getElementById('delete_authorization_label').textContent = button.dataset.authorizationLabel || '';
+                document.getElementById('delete_authorization_status').textContent = button.dataset.authorizationStatus || '';
+                document.getElementById('delete_authorization_expiration').textContent = button.dataset.authorizationExpiration || '';
+                document.getElementById('delete_action_note').value = '';
+            });
+        }
+    });
+</script>
+{% endblock %}
