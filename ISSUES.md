@@ -14,6 +14,7 @@
 
 ### Near Term
 * Messaging system. Let people choose to recieve email notifications and put the ability for them to get alerts on their dashboard, even if they aren't a marshal. Give the ability for marshal officers to send messages which will be delivered according the the settings for the individual recipient.
+* Ability to "tag" a person such as asking them to second a promotion.
 * Make sure quarterly reports are working and emailing to appropriate people (did I already do this?)
 * Add the ability for KAO and KEAO to delete an authorization (?).
 * Add 2FA to the system. Make it optional for now, possibly mandatory for high access users.
