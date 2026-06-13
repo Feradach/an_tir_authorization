@@ -1235,6 +1235,18 @@ def _legacy_recovery_is_marshal_style(style: WeaponStyle):
     return style.name in ['Junior Marshal', 'Senior Marshal']
 
 
+def _legacy_recovery_marshal_renewal_is_allowed(person: Person, style: WeaponStyle, auth_date: date):
+    if not _legacy_recovery_is_marshal_style(style):
+        return True
+    renewal_cutoff = auth_date - relativedelta(years=1)
+    return Authorization.objects.filter(
+        person=person,
+        style=style,
+        status__name='Active',
+        expiration__gt=renewal_cutoff,
+    ).exists()
+
+
 def _legacy_recovery_interval_exists(person: Person, auth_date: date, *, style_names=None, discipline=None, exclude_style_names=None):
     query = AuthorizationValidityInterval.objects.filter(
         authorization__person=person,
@@ -2057,6 +2069,16 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
     )
     if not paper_rules_ok:
         raise ValueError(paper_rules_error)
+    if (
+        is_marshal_style
+        and not marshal_promotion
+        and not _legacy_recovery_marshal_renewal_is_allowed(person, style, auth_date)
+    ):
+        raise ValueError(
+            f'{person.sca_name} does not have an active {style.discipline.name} - {style.name} authorization '
+            f'that is current or expired less than one year before {auth_date.isoformat()}. '
+            'Use marshal promotion when this is not a renewal.'
+        )
 
     latest_recovery = LegacyAuthorizationRecoveryEntry.objects.filter(
         person=person,
@@ -2890,6 +2912,18 @@ def _can_view_supporting_document(user, document: SupportingDocument) -> bool:
         return True
     if document.uploaded_by_id == user.id:
         return True
+    allowed_disciplines = _background_check_review_disciplines_for_user(user)
+    if (
+        allowed_disciplines
+        and document.document_type == SupportingDocument.DocumentType.BACKGROUND_CHECK
+        and document.person_links.filter(
+            person__authorization__style__name__in=['Junior Marshal', 'Senior Marshal'],
+            person__authorization__style__discipline__name__in=allowed_disciplines,
+        ).exclude(
+            person__authorization__status__name__in=['Rejected', 'Inactive', 'Revoked'],
+        ).exists()
+    ):
+        return True
     return (
         document.person_links.filter(person__user=user).exists()
         or document.authorization_links.filter(authorization__person__user=user).exists()
@@ -2999,7 +3033,8 @@ def _annotate_homepage_document_alerts(authorizations):
     return rows
 
 
-def _pending_background_check_review_alerts_for_kao():
+def _pending_background_check_review_alerts_for_user(user):
+    allowed_disciplines = _background_check_review_disciplines_for_user(user)
     pending_authorizations = list(
         Authorization.objects.with_effective_expiration()
         .filter(status__name='Awaiting Background Check')
@@ -3014,18 +3049,34 @@ def _pending_background_check_review_alerts_for_kao():
         )
         .order_by('person__sca_name', 'effective_expiration_date', 'id')
     )
+    if allowed_disciplines is not None:
+        pending_authorizations = [
+            authorization
+            for authorization in pending_authorizations
+            if authorization.style.discipline.name in allowed_disciplines
+        ]
     authorizations_by_person_id = defaultdict(list)
     people_by_id = {}
     for authorization in pending_authorizations:
         authorizations_by_person_id[authorization.person_id].append(authorization)
         people_by_id[authorization.person_id] = authorization.person
 
-    document_links = (
-        SupportingDocumentPerson.objects.filter(
-            document__document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
-            document__review_status=SupportingDocument.ReviewStatus.PENDING,
-            person__user__merged_into__isnull=True,
+    document_links = SupportingDocumentPerson.objects.filter(
+        document__document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+        document__review_status=SupportingDocument.ReviewStatus.PENDING,
+        person__user__merged_into__isnull=True,
+    )
+    if allowed_disciplines is not None:
+        document_links = document_links.filter(
+            person__authorization__style__name__in=['Junior Marshal', 'Senior Marshal'],
+            person__authorization__style__discipline__name__in=allowed_disciplines,
+        ).exclude(
+            person__authorization__status__name__in=['Rejected', 'Inactive', 'Revoked'],
         )
+
+    document_links = (
+        document_links
+        .distinct()
         .select_related(
             'document',
             'document__uploaded_by',
@@ -3171,6 +3222,32 @@ def _approve_background_check_document_with_expiration(document: SupportingDocum
     _approve_background_check_document(document, reviewed_by)
     return True, 'Background-check document approved and expiration updated.'
 
+
+def _can_user_review_background_check_for_user(
+    reviewer: User,
+    target_user: User,
+    *,
+    require_pending_background_check=False,
+) -> bool:
+    allowed_disciplines = _background_check_review_disciplines_for_user(reviewer)
+    if allowed_disciplines is None:
+        return True
+    if not allowed_disciplines:
+        return False
+    authorization_qs = Authorization.objects.filter(
+        person__user=target_user,
+        style__discipline__name__in=allowed_disciplines,
+    )
+    if require_pending_background_check:
+        return authorization_qs.filter(status__name='Awaiting Background Check').exists()
+    return (
+        authorization_qs.filter(
+            style__name__in=['Junior Marshal', 'Senior Marshal'],
+        )
+        .exclude(status__name__in=['Rejected', 'Inactive', 'Revoked'])
+        .exists()
+    )
+
 def _sanctionable_disciplines_for_user(user):
     base = Discipline.objects.exclude(name__in=[
         'Earl Marshal',
@@ -3204,6 +3281,32 @@ def _can_manage_sanctions_for_discipline(user, discipline) -> bool:
     if _is_sanctions_supervisor(user):
         return True
     return is_kingdom_marshal(user, discipline_name)
+
+
+def _background_check_review_disciplines_for_user(user):
+    if is_kingdom_authorization_officer(user):
+        return None
+    if not user or not getattr(user, 'is_authenticated', False) or not hasattr(user, 'person'):
+        return []
+    active_discipline_names = set(
+        BranchMarshal.objects.filter(
+            person=user.person,
+            branch__name='An Tir',
+            discipline__name__in=['Youth Armored', 'Youth Rapier'],
+            end_date__gte=date.today(),
+        ).values_list('discipline__name', flat=True)
+    )
+    allowed_disciplines = [
+        discipline_name
+        for discipline_name in ['Youth Armored', 'Youth Rapier']
+        if discipline_name in active_discipline_names
+    ]
+    return allowed_disciplines
+
+
+def _can_review_background_checks_on_authorizations(user) -> bool:
+    allowed_disciplines = _background_check_review_disciplines_for_user(user)
+    return allowed_disciplines is None or bool(allowed_disciplines)
 
 
 def _active_sanction_issuing_office(user, discipline, today=None):
@@ -3909,6 +4012,7 @@ def index(request):
     can_manage_sanctions = _can_access_sanctions(request.user)
     can_view_supporting_documents = _can_view_supporting_documents(request.user)
     can_manage_lock = can_manage_maintenance_lock(request.user)
+    can_review_background_checks = _can_review_background_checks_on_authorizations(request.user)
 
     # Are they in the branch marshal table at all?
     try:
@@ -3961,8 +4065,8 @@ def index(request):
         ).order_by('effective_expiration_date')
     pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
     pending_background_check_documents = (
-        _pending_background_check_review_alerts_for_kao()
-        if auth_officer
+        _pending_background_check_review_alerts_for_user(request.user)
+        if can_review_background_checks
         else []
     )
 
@@ -4077,8 +4181,8 @@ def index(request):
             messages.info(request, 'Pending marshal promotion cleared.')
             return redirect('index')
         if action == 'approve_background_check_document':
-            if not auth_officer:
-                messages.error(request, 'Only the Kingdom Authorization Officer can approve background-check documents.')
+            if not can_review_background_checks:
+                messages.error(request, 'Only authorized background-check reviewers can approve background-check documents.')
                 return redirect('index')
             background_check_expiration, expiration_error = _parse_background_check_expiration_post(request)
             if expiration_error:
@@ -4091,6 +4195,10 @@ def index(request):
                     id=document_id,
                     document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
                 )
+                target_user = _background_check_document_user(document)
+                if not target_user or not _can_user_review_background_check_for_user(request.user, target_user):
+                    messages.error(request, 'You do not have authority to review that background-check document.')
+                    return redirect('index')
                 ok, msg = _approve_background_check_document_with_expiration(
                     document,
                     request.user,
@@ -4107,6 +4215,13 @@ def index(request):
                 id=request.POST.get('user_id'),
                 merged_into__isnull=True,
             )
+            if not _can_user_review_background_check_for_user(
+                request.user,
+                target_user,
+                require_pending_background_check=True,
+            ):
+                messages.error(request, 'You do not have authority to update that background-check expiration.')
+                return redirect('index')
             target_user.background_check_expiration = background_check_expiration
             target_user.updated_by = request.user
             target_user.save(update_fields=['background_check_expiration', 'updated_by'])
@@ -4114,14 +4229,18 @@ def index(request):
             messages.success(request, 'Background-check expiration updated.')
             return redirect('index')
         if action == 'reject_background_check_document':
-            if not auth_officer:
-                messages.error(request, 'Only the Kingdom Authorization Officer can reject background-check documents.')
+            if not can_review_background_checks:
+                messages.error(request, 'Only authorized background-check reviewers can reject background-check documents.')
                 return redirect('index')
             document = get_object_or_404(
                 SupportingDocument,
                 id=request.POST.get('document_id'),
                 document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
             )
+            target_user = _background_check_document_user(document)
+            if not target_user or not _can_user_review_background_check_for_user(request.user, target_user):
+                messages.error(request, 'You do not have authority to review that background-check document.')
+                return redirect('index')
             _reject_background_check_document(document, request.user)
             messages.success(request, 'Background-check document rejected.')
             return redirect('index')

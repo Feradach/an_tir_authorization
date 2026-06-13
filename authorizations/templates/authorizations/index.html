@@ -303,7 +303,9 @@
                         {% endif %}
                     </td>
                     <td>
-                        <a href="{% url 'user_account' user_id=alert.person.user_id %}" class="btn btn-primary">Go To Page</a>
+                        {% if auth_officer %}
+                            <a href="{% url 'user_account' user_id=alert.person.user_id %}" class="btn btn-primary">Go To Page</a>
+                        {% endif %}
                         <form method="post" action="" class="d-inline" id="approve_background_check_{{ alert.person.user_id }}">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="approve_background_check_document">

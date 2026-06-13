@@ -1182,6 +1182,169 @@ class IndexViewTests(ViewTestBase):
         self.assertIn('Background-check expiration updated.', self.messages_for(response))
         self.assertNotContains(response, 'Background Checks Needing Review')
 
+    def test_kingdom_youth_armored_marshal_can_review_youth_armored_background_check_alert(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        youth_user, youth_person = self.make_person('index_bg_youth_ka', 'Index BG Youth KA')
+        self.appoint(youth_person, self.branch_an_tir, self.discipline_youth_armored)
+        proposer_user, proposer_person = self.make_person('index_bg_youth_prop', 'Index BG Youth Prop')
+        target_user, target_person = self.make_person('index_bg_youth_target', 'Index BG Youth Target')
+        pending_bg = self.grant_authorization(
+            target_person,
+            self.style_sm_youth_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+        bg_date = date.today() + relativedelta(years=2)
+
+        self.client.login(username=youth_user.username, password='StrongPass!123')
+        page = self.client.get(reverse('index'))
+
+        self.assertContains(page, 'Background Checks Needing Review')
+        self.assertContains(page, 'Index BG Youth Target')
+        self.assertContains(page, 'Awaiting Background Check')
+        self.assertNotContains(page, f'href="{reverse("user_account", kwargs={"user_id": target_user.id})}"')
+
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'approve_background_check_document',
+                'user_id': str(target_user.id),
+                'background_check_expiration': bg_date.isoformat(),
+            },
+            follow=True,
+        )
+        target_user.refresh_from_db()
+        pending_bg.refresh_from_db()
+
+        self.assertEqual(target_user.background_check_expiration, bg_date)
+        self.assertEqual(pending_bg.status, self.status_active)
+        self.assertIn('Background-check expiration updated.', self.messages_for(response))
+
+    def test_kingdom_youth_marshal_sees_only_matching_youth_background_check_alerts(self):
+        youth_user, youth_person = self.make_person('index_bg_youth_scope', 'Index BG Youth Scope')
+        self.appoint(youth_person, self.branch_an_tir, self.discipline_youth_armored)
+        proposer_user, proposer_person = self.make_person('index_bg_youth_scope_prop', 'Index BG Youth Scope Prop')
+        armored_user, armored_person = self.make_person('index_bg_youth_scope_armored', 'Index BG Youth Scope Armored')
+        rapier_user, rapier_person = self.make_person('index_bg_youth_scope_rapier', 'Index BG Youth Scope Rapier')
+        youth_rapier = Discipline.objects.create(name='Youth Rapier')
+        youth_rapier_style = WeaponStyle.objects.create(name='Senior Marshal', discipline=youth_rapier)
+        self.grant_authorization(
+            armored_person,
+            self.style_sm_youth_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+        self.grant_authorization(
+            rapier_person,
+            youth_rapier_style,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+
+        self.client.login(username=youth_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+
+        alert_names = [
+            alert.person.sca_name
+            for alert in response.context['pending_background_check_documents']
+        ]
+        self.assertIn('Index BG Youth Scope Armored', alert_names)
+        self.assertNotIn('Index BG Youth Scope Rapier', alert_names)
+
+    def test_kingdom_youth_marshal_sees_document_alert_for_live_youth_marshal_authorization(self):
+        youth_user, youth_person = self.make_person('index_bg_youth_doc', 'Index BG Youth Doc')
+        self.appoint(youth_person, self.branch_an_tir, self.discipline_youth_armored)
+        proposer_user, proposer_person = self.make_person('index_bg_youth_doc_prop', 'Index BG Youth Doc Prop')
+        target_user, target_person = self.make_person('index_bg_youth_doc_target', 'Index BG Youth Doc Target')
+        self.grant_authorization(
+            target_person,
+            self.style_sm_youth_armored,
+            status=self.status_active,
+            marshal=proposer_person,
+            expiration=date.today() - relativedelta(days=30),
+        )
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-youth-doc.pdf', ContentFile(b'bg-youth-doc'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+        bg_date = date.today() + relativedelta(years=2)
+
+        self.client.login(username=youth_user.username, password='StrongPass!123')
+        page = self.client.get(reverse('index'))
+        alert_names = [
+            alert.person.sca_name
+            for alert in page.context['pending_background_check_documents']
+        ]
+
+        self.assertIn('Index BG Youth Doc Target', alert_names)
+        self.assertContains(page, 'Pending Review')
+        self.assertContains(page, 'On file')
+        file_response = self.client.get(
+            reverse('supporting_document_file', kwargs={'document_id': bg_document.id})
+        )
+        self.assertEqual(file_response.status_code, 200)
+
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'approve_background_check_document',
+                'document_id': str(bg_document.id),
+                'background_check_expiration': bg_date.isoformat(),
+            },
+            follow=True,
+        )
+        target_user.refresh_from_db()
+        bg_document.refresh_from_db()
+
+        self.assertEqual(target_user.background_check_expiration, bg_date)
+        self.assertEqual(bg_document.review_status, SupportingDocument.ReviewStatus.ACCEPTED)
+        self.assertEqual(bg_document.reviewed_by, youth_user)
+        self.assertIn('Background-check document approved and expiration updated.', self.messages_for(response))
+
+    def test_kingdom_youth_marshal_does_not_see_document_alert_for_terminal_youth_marshal_authorization(self):
+        youth_user, youth_person = self.make_person('index_bg_youth_terminal', 'Index BG Youth Terminal')
+        self.appoint(youth_person, self.branch_an_tir, self.discipline_youth_armored)
+        proposer_user, proposer_person = self.make_person('index_bg_youth_terminal_prop', 'Index BG Youth Terminal Prop')
+        target_user, target_person = self.make_person('index_bg_youth_terminal_target', 'Index BG Youth Terminal Target')
+        self.grant_authorization(
+            target_person,
+            self.style_sm_youth_armored,
+            status=self.status_rejected,
+            marshal=proposer_person,
+        )
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-youth-terminal.pdf', ContentFile(b'bg-youth-terminal'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+
+        self.client.login(username=youth_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('index'))
+        alert_names = [
+            alert.person.sca_name
+            for alert in response.context['pending_background_check_documents']
+        ]
+
+        self.assertNotIn('Index BG Youth Terminal Target', alert_names)
+        file_response = self.client.get(
+            reverse('supporting_document_file', kwargs={'document_id': bg_document.id}),
+            follow=True,
+        )
+        self.assertRedirects(file_response, reverse('index'))
+
+    def test_kingdom_youth_armored_marshal_cannot_open_target_account_page(self):
+        youth_user, youth_person = self.make_person('index_bg_youth_no_account', 'Index BG Youth No Account')
+        self.appoint(youth_person, self.branch_an_tir, self.discipline_youth_armored)
+        target_user, target_person = self.make_person('index_bg_youth_no_account_target', 'Index BG Youth No Account Target')
+
+        self.client.login(username=youth_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('user_account', kwargs={'user_id': target_user.id}))
+
+        self.assertEqual(response.status_code, 403)
+
     def test_kao_can_reject_pending_background_check_with_required_note(self):
         ao_user, ao_person = self.make_person('index_bg_reject_ao', 'Index BG Reject AO')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
@@ -4859,6 +5022,12 @@ class UserAccountViewTests(ViewTestBase):
         self.assertTrue(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
 
     def test_paper_entry_uses_submitted_membership_expiration_for_marshal_rule(self):
+        self.grant_authorization(
+            self.owner_person,
+            self.style_sm_armored,
+            expiration=date(2025, 1, 10),
+            marshal=self.ao_person,
+        )
         self.owner_user.membership_expiration = date(2025, 5, 9)
         self.owner_user.save(update_fields=['membership_expiration'])
         self.client.force_login(self.ao_user)
@@ -5119,6 +5288,7 @@ class UserAccountViewTests(ViewTestBase):
                 'concurring_officer_last_name': [self.ao_user.last_name],
                 'auth_date': ['2025-05-10'],
                 'is_minor': [''],
+                'marshal_promotion': ['1'],
             },
             follow=True,
         )
@@ -5128,6 +5298,12 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(authorization.expiration, date(2027, 5, 10))
 
     def test_legacy_recovery_junior_marshal_renewal_does_not_require_second_marshal(self):
+        self.grant_authorization(
+            self.owner_person,
+            self.style_jm_armored,
+            expiration=date(2025, 1, 10),
+            marshal=self.ao_person,
+        )
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
@@ -5151,6 +5327,58 @@ class UserAccountViewTests(ViewTestBase):
         entry = LegacyAuthorizationRecoveryEntry.objects.get(authorization=authorization)
         self.assertFalse(entry.marshal_promotion)
         self.assertIsNone(entry.second_marshal)
+
+    def test_legacy_recovery_junior_marshal_renewal_requires_recent_same_level_authorization(self):
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Use marshal promotion when this is not a renewal.')
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_jm_armored).exists())
+
+    def test_legacy_recovery_junior_marshal_renewal_rejects_authorization_expired_more_than_one_year(self):
+        stale_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_jm_armored,
+            expiration=date(2024, 5, 9),
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'current or expired less than one year before 2025-05-10')
+        stale_authorization.refresh_from_db()
+        self.assertEqual(stale_authorization.expiration, date(2024, 5, 9))
+        self.assertFalse(LegacyAuthorizationRecoveryEntry.objects.exists())
 
     def test_legacy_recovery_junior_marshal_promotion_requires_second_marshal(self):
         self.client.force_login(self.ao_user)
@@ -5206,6 +5434,12 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIsNone(entry.concurring_officer)
 
     def test_legacy_recovery_senior_marshal_renewal_does_not_require_promotion_signoffs(self):
+        self.grant_authorization(
+            self.owner_person,
+            self.style_sm_armored,
+            expiration=date(2025, 1, 10),
+            marshal=self.ao_person,
+        )
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
@@ -5231,6 +5465,36 @@ class UserAccountViewTests(ViewTestBase):
         self.assertIsNone(entry.second_marshal)
         self.assertIsNone(entry.concurring_officer)
 
+    def test_legacy_recovery_senior_marshal_renewal_requires_same_level_authorization(self):
+        junior_authorization = self.grant_authorization(
+            self.owner_person,
+            self.style_jm_armored,
+            expiration=date(2025, 1, 10),
+            marshal=self.ao_person,
+        )
+        self.client.force_login(self.ao_user)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_sca_name': [self.owner_person.sca_name],
+                'person_first_name': [self.owner_user.first_name],
+                'person_last_name': [self.owner_user.last_name],
+                'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Use marshal promotion when this is not a renewal.')
+        junior_authorization.refresh_from_db()
+        self.assertEqual(junior_authorization.status, self.status_active)
+        self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_sm_armored).exists())
+
     def test_legacy_recovery_senior_marshal_deactivates_same_discipline_junior_marshal(self):
         junior_authorization = self.grant_authorization(
             self.owner_person,
@@ -5249,6 +5513,13 @@ class UserAccountViewTests(ViewTestBase):
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_sca_name': [self.other_person.sca_name],
+                'second_marshal_first_name': [self.other_user.first_name],
+                'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_sca_name': [self.ao_person.sca_name],
+                'concurring_officer_first_name': [self.ao_user.first_name],
+                'concurring_officer_last_name': [self.ao_user.last_name],
+                'marshal_promotion': ['1'],
                 'auth_date': ['2025-05-10'],
             },
             follow=True,
@@ -5297,6 +5568,13 @@ class UserAccountViewTests(ViewTestBase):
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_sca_name': [self.other_person.sca_name],
+                'second_marshal_first_name': [self.other_user.first_name],
+                'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_sca_name': [self.ao_person.sca_name],
+                'concurring_officer_first_name': [self.ao_user.first_name],
+                'concurring_officer_last_name': [self.ao_user.last_name],
+                'marshal_promotion': ['1'],
                 'auth_date': ['2025-05-10'],
             },
             follow=True,
@@ -5480,6 +5758,12 @@ class UserAccountViewTests(ViewTestBase):
             marshal_person,
             self.style_sm_armored,
             expiration=date(2029, 5, 10),
+            marshal=marshal_person,
+        )
+        self.grant_authorization(
+            self.owner_person,
+            self.style_sm_armored,
+            expiration=date(2025, 1, 10),
             marshal=marshal_person,
         )
 

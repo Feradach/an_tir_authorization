@@ -4,16 +4,14 @@
 
 
 ### Added
-- Background-check proof uploads now create a Kingdom Authorization Officer homepage review alert when the fighter is not already listed for a pending background-check authorization.
-- Kingdom Authorization Officers can now approve pending background-check documents directly from the homepage review notice, account page, or Supporting Documents page.
-- Kingdom Authorization Officers can now reject invalid background-check documents from the homepage review notice or account page.
+
 
 ### Changed
-- Background-check review notices now show the fighter's current background-check expiration and let Kingdom Authorization Officers update that date while approving the document.
-- Authorizations waiting on background checks now appear in the Background Checks Needing Review section instead of the Authorizations Needing Approval section.
+
 
 
 ### Fixed
+
 
 
 ### Removed
@@ -22,17 +20,22 @@
 ## [1.1.6] - 2026-06-12
 ### Added
 - Added an authorization deletion tool that lets kingdom authorization officers mark incorrectly entered authorizations inactive so they can be re-entered correctly.
+- Background-check proof uploads now create a Kingdom Authorization Officer homepage review alert when the fighter is not already listed for a pending background-check authorization.
+- Kingdom Authorization Officers can now approve pending background-check documents directly from the homepage review notice, account page, or Supporting Documents page.
 
 
 ### Changed
 - Membership roster uploads now preserve existing membership records and only move stored expiration dates forward when a newer roster row is uploaded.
 - Deleting an incorrectly entered Senior Marshal authorization now restores the same-discipline Junior Marshal authorization it superseded when that relationship can be confirmed or safely inferred.
+- Background-check review notices now show the fighter's current background-check expiration and let Kingdom Authorization Officers update that date while approving the document.
+- Authorizations waiting on background checks now appear in the Background Checks Needing Review section instead of the Authorizations Needing Approval section.
 
 
 ### Fixed
 - Fixed the membership uploader to better handle unusually shaped membership numbers.
 - Fixed validity interval catch-up so current authorizations with unusually future-dated expirations can still get repair intervals when their effective expiration is current.
 - Principality and regional Earl Marshals can now give final marshal-promotion concurrence for fighters outside their own region.
+- Paper authorization entry now rejects marshal renewals when the fighter does not already have the same marshal level current or expired less than one year before the paperwork date.
 
 
 ## [1.1.5] - 2026-06-07
