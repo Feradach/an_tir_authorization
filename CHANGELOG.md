@@ -4,10 +4,13 @@
 
 
 ### Added
-
+- Background-check proof uploads now create a Kingdom Authorization Officer homepage review alert when the fighter is not already listed for a pending background-check authorization.
+- Kingdom Authorization Officers can now approve pending background-check documents directly from the homepage review notice, account page, or Supporting Documents page.
+- Kingdom Authorization Officers can now reject invalid background-check documents from the homepage review notice or account page.
 
 ### Changed
-
+- Background-check review notices now show the fighter's current background-check expiration and let Kingdom Authorization Officers update that date while approving the document.
+- Authorizations waiting on background checks now appear in the Background Checks Needing Review section instead of the Authorizations Needing Approval section.
 
 
 ### Fixed
@@ -19,7 +22,6 @@
 ## [1.1.6] - 2026-06-12
 ### Added
 - Added an authorization deletion tool that lets kingdom authorization officers mark incorrectly entered authorizations inactive so they can be re-entered correctly.
-- Background-check proof uploads now create a Kingdom Authorization Officer homepage review alert when the fighter is not already listed for a pending background-check authorization.
 
 
 ### Changed

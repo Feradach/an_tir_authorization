@@ -2999,19 +2999,33 @@ def _annotate_homepage_document_alerts(authorizations):
     return rows
 
 
-def _pending_background_check_document_alerts_for_kao():
-    pending_background_check_person_ids = set(
-        Authorization.objects.filter(
-            status__name='Awaiting Background Check',
-        ).values_list('person_id', flat=True)
+def _pending_background_check_review_alerts_for_kao():
+    pending_authorizations = list(
+        Authorization.objects.with_effective_expiration()
+        .filter(status__name='Awaiting Background Check')
+        .select_related(
+            'person',
+            'person__branch',
+            'person__branch__region',
+            'person__user',
+            'style',
+            'style__discipline',
+            'status',
+        )
+        .order_by('person__sca_name', 'effective_expiration_date', 'id')
     )
-    links = (
+    authorizations_by_person_id = defaultdict(list)
+    people_by_id = {}
+    for authorization in pending_authorizations:
+        authorizations_by_person_id[authorization.person_id].append(authorization)
+        people_by_id[authorization.person_id] = authorization.person
+
+    document_links = (
         SupportingDocumentPerson.objects.filter(
             document__document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
             document__review_status=SupportingDocument.ReviewStatus.PENDING,
             person__user__merged_into__isnull=True,
         )
-        .exclude(person_id__in=pending_background_check_person_ids)
         .select_related(
             'document',
             'document__uploaded_by',
@@ -3024,21 +3038,58 @@ def _pending_background_check_document_alerts_for_kao():
         .order_by('person_id', '-document__uploaded_at', '-document_id')
     )
 
-    alerts = []
-    seen_person_ids = set()
-    for link in links:
-        if link.person_id in seen_person_ids:
+    latest_document_link_by_person_id = {}
+    for link in document_links:
+        people_by_id.setdefault(link.person_id, link.person)
+        if link.person_id in latest_document_link_by_person_id:
             continue
         if not _supporting_document_file_exists(link.document):
             continue
-        seen_person_ids.add(link.person_id)
+        latest_document_link_by_person_id[link.person_id] = link
+
+    alerts = []
+    for person_id, person in sorted(people_by_id.items(), key=lambda item: item[1].sca_name.casefold()):
+        authorizations = authorizations_by_person_id.get(person_id, [])
+        document_link = latest_document_link_by_person_id.get(person_id)
+        if not authorizations and not document_link:
+            continue
+
+        document = document_link.document if document_link else None
+        uploaded_at = document.uploaded_at if document else None
+        uploaded_by = document.uploaded_by if document else None
+        file_url = (
+            reverse('supporting_document_file', kwargs={'document_id': document.id})
+            if document
+            else ''
+        )
+        if document:
+            changed_at_values = [
+                authorization.updated_at or authorization.created_at
+                for authorization in authorizations
+                if authorization.updated_at or authorization.created_at
+            ]
+            changed_at = min(changed_at_values) if changed_at_values else None
+            if changed_at and uploaded_at > changed_at:
+                document_alert_state = 'new'
+                document_alert_text = 'New upload'
+            else:
+                document_alert_state = 'on_file'
+                document_alert_text = 'On file'
+        else:
+            document_alert_state = 'missing'
+            document_alert_text = 'No file'
+
         alerts.append(
             SimpleNamespace(
-                person=link.person,
-                document=link.document,
-                uploaded_at=link.document.uploaded_at,
-                uploaded_by=link.document.uploaded_by,
-                file_url=reverse('supporting_document_file', kwargs={'document_id': link.document_id}),
+                person=person,
+                document=document,
+                pending_authorizations=authorizations,
+                has_pending_authorizations=bool(authorizations),
+                uploaded_at=uploaded_at,
+                uploaded_by=uploaded_by,
+                file_url=file_url,
+                document_alert_state=document_alert_state,
+                document_alert_text=document_alert_text,
             )
         )
     return alerts
@@ -3059,6 +3110,66 @@ def _mark_pending_background_check_documents_reviewed(target_user: User, reviewe
             review_note='Background check expiration applied.',
         )
     )
+
+
+def _approve_background_check_document(document: SupportingDocument, reviewed_by: User) -> bool:
+    if document.document_type != SupportingDocument.DocumentType.BACKGROUND_CHECK:
+        return False
+    if document.review_status == SupportingDocument.ReviewStatus.ACCEPTED:
+        return True
+    document.review_status = SupportingDocument.ReviewStatus.ACCEPTED
+    document.reviewed_by = reviewed_by
+    document.reviewed_at = timezone.now()
+    document.review_note = 'Background check proof approved.'
+    document.save(update_fields=['review_status', 'reviewed_by', 'reviewed_at', 'review_note'])
+    return True
+
+
+def _reject_background_check_document(document: SupportingDocument, reviewed_by: User) -> bool:
+    if document.document_type != SupportingDocument.DocumentType.BACKGROUND_CHECK:
+        return False
+    document.review_status = SupportingDocument.ReviewStatus.REJECTED
+    document.reviewed_by = reviewed_by
+    document.reviewed_at = timezone.now()
+    document.review_note = 'Background check proof rejected.'
+    document.save(update_fields=['review_status', 'reviewed_by', 'reviewed_at', 'review_note'])
+    return True
+
+
+def _background_check_document_user(document: SupportingDocument):
+    link = (
+        document.person_links.select_related('person__user')
+        .order_by('person_id')
+        .first()
+    )
+    if not link:
+        return None
+    return link.person.user
+
+
+def _parse_background_check_expiration_post(request):
+    raw_value = (request.POST.get('background_check_expiration') or '').strip()
+    if not raw_value:
+        return None, 'Background check expiration is required.'
+    try:
+        return date.fromisoformat(raw_value), ''
+    except (TypeError, ValueError):
+        return None, 'Enter a valid background check expiration date.'
+
+
+def _approve_background_check_document_with_expiration(document: SupportingDocument, reviewed_by: User, expiration: date) -> tuple[bool, str]:
+    if document.document_type != SupportingDocument.DocumentType.BACKGROUND_CHECK:
+        return False, 'Only background-check documents can be approved here.'
+    target_user = _background_check_document_user(document)
+    if not target_user:
+        return False, 'Background-check document is not attached to an account.'
+
+    target_user.background_check_expiration = expiration
+    target_user.updated_by = reviewed_by
+    target_user.save(update_fields=['background_check_expiration', 'updated_by'])
+    _activate_pending_background_check_authorizations(target_user)
+    _approve_background_check_document(document, reviewed_by)
+    return True, 'Background-check document approved and expiration updated.'
 
 def _sanctionable_disciplines_for_user(user):
     base = Discipline.objects.exclude(name__in=[
@@ -3837,13 +3948,11 @@ def index(request):
         status_filter = Q()
         if auth_officer:
             status_filter |= Q(status__name=KINGDOM_APPROVAL_STATUS) & ~Q(style__discipline__name='Equestrian')
-            status_filter |= Q(status__name='Awaiting Background Check') & ~Q(style__discipline__name='Equestrian')
         if equestrian_auth_officer:
             status_filter |= Q(
                 status__name__in=[
                     KINGDOM_APPROVAL_STATUS,
                     KINGDOM_EQUESTRIAN_WAIVER_STATUS,
-                    'Awaiting Background Check',
                 ],
                 style__discipline__name='Equestrian',
             )
@@ -3852,7 +3961,7 @@ def index(request):
         ).order_by('effective_expiration_date')
     pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
     pending_background_check_documents = (
-        _pending_background_check_document_alerts_for_kao()
+        _pending_background_check_review_alerts_for_kao()
         if auth_officer
         else []
     )
@@ -3966,6 +4075,55 @@ def index(request):
                 del request.session[pending_key]
                 request.session.modified = True
             messages.info(request, 'Pending marshal promotion cleared.')
+            return redirect('index')
+        if action == 'approve_background_check_document':
+            if not auth_officer:
+                messages.error(request, 'Only the Kingdom Authorization Officer can approve background-check documents.')
+                return redirect('index')
+            background_check_expiration, expiration_error = _parse_background_check_expiration_post(request)
+            if expiration_error:
+                messages.error(request, expiration_error)
+                return redirect('index')
+            document_id = (request.POST.get('document_id') or '').strip()
+            if document_id:
+                document = get_object_or_404(
+                    SupportingDocument,
+                    id=document_id,
+                    document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                )
+                ok, msg = _approve_background_check_document_with_expiration(
+                    document,
+                    request.user,
+                    background_check_expiration,
+                )
+                if ok:
+                    messages.success(request, msg)
+                else:
+                    messages.error(request, msg)
+                return redirect('index')
+
+            target_user = get_object_or_404(
+                User,
+                id=request.POST.get('user_id'),
+                merged_into__isnull=True,
+            )
+            target_user.background_check_expiration = background_check_expiration
+            target_user.updated_by = request.user
+            target_user.save(update_fields=['background_check_expiration', 'updated_by'])
+            _activate_pending_background_check_authorizations(target_user)
+            messages.success(request, 'Background-check expiration updated.')
+            return redirect('index')
+        if action == 'reject_background_check_document':
+            if not auth_officer:
+                messages.error(request, 'Only the Kingdom Authorization Officer can reject background-check documents.')
+                return redirect('index')
+            document = get_object_or_404(
+                SupportingDocument,
+                id=request.POST.get('document_id'),
+                document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            )
+            _reject_background_check_document(document, request.user)
+            messages.success(request, 'Background-check document rejected.')
             return redirect('index')
         if action == 'approve_authorization':
             authorization_id = request.POST.get('authorization_id')
@@ -4932,7 +5090,7 @@ def _activate_pending_background_check_authorizations(target_user: User) -> int:
     """
     Promote any 'Awaiting Background Check' authorizations for target_user when the
     user's background check is currently valid.
-    - If KAO sign-off is enabled: move to 'Awaiting Kingdom Authorization Officer Review'
+    - If KAO sign-off is enabled: move non-equestrian rows to KAO review and equestrian rows to equestrian review
     - Otherwise: move to 'Active'
     Returns the number of records updated.
     """
@@ -4947,10 +5105,13 @@ def _activate_pending_background_check_authorizations(target_user: User) -> int:
     if count == 0:
         return 0
 
-    next_status = _get_or_create_status_by_name(
-        'Awaiting Kingdom Authorization Officer Review' if authorization_officer_sign_off_enabled() else 'Active'
-    )
-    pending_qs.update(status=next_status)
+    if authorization_officer_sign_off_enabled():
+        kingdom_status = _get_or_create_status_by_name('Awaiting Kingdom Authorization Officer Review')
+        equestrian_status = _get_or_create_status_by_name(KINGDOM_EQUESTRIAN_WAIVER_STATUS)
+        pending_qs.filter(style__discipline__name='Equestrian').update(status=equestrian_status)
+        pending_qs.exclude(style__discipline__name='Equestrian').update(status=kingdom_status)
+    else:
+        pending_qs.update(status=_get_or_create_status_by_name('Active'))
     return count
 
 
@@ -7044,6 +7205,34 @@ def user_account(request, user_id):
                 messages.error(request, message)
             return redirect(next_url)
 
+        if action == 'approve_background_check_document':
+            if not is_kingdom_authorization_officer(request.user):
+                messages.error(request, 'Only the Kingdom Authorization Officer can approve background-check documents.')
+                return redirect('user_account', user_id=user.id)
+            document = get_object_or_404(
+                SupportingDocument,
+                id=request.POST.get('document_id'),
+                document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                person_links__person=person,
+            )
+            _approve_background_check_document(document, request.user)
+            messages.success(request, 'Background-check document approved.')
+            return redirect('user_account', user_id=user.id)
+
+        if action == 'reject_background_check_document':
+            if not is_kingdom_authorization_officer(request.user):
+                messages.error(request, 'Only the Kingdom Authorization Officer can reject background-check documents.')
+                return redirect('user_account', user_id=user.id)
+            document = get_object_or_404(
+                SupportingDocument,
+                id=request.POST.get('document_id'),
+                document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+                person_links__person=person,
+            )
+            _reject_background_check_document(document, request.user)
+            messages.success(request, 'Background-check document rejected.')
+            return redirect('user_account', user_id=user.id)
+
         if action == 'record_paper_waiver':
             if not _can_record_paper_waiver(request.user):
                 raise PermissionDenied
@@ -7426,6 +7615,7 @@ def user_account(request, user_id):
         'supporting_document_jurisdiction_choices': SupportingDocument.Jurisdiction.choices,
         'recent_supporting_documents': recent_supporting_documents,
         'can_upload_equestrian_for_anyone': can_upload_equestrian_for_anyone,
+        'can_review_background_check_documents': is_kingdom_authorization_officer(request.user),
         'waiver_records': waiver_records,
         'can_record_paper_waiver': can_record_paper_waiver,
         'paper_waiver_relationship_choices': [
@@ -7847,6 +8037,18 @@ def supporting_documents(request):
             else:
                 messages.error(request, message)
             return redirect('supporting_documents')
+        if request.POST.get('action') == 'approve_background_check_document':
+            if not is_kingdom_authorization_officer(request.user):
+                messages.error(request, 'Only the Kingdom Authorization Officer can approve background-check documents.')
+                return redirect('supporting_documents')
+            document = get_object_or_404(
+                SupportingDocument,
+                id=request.POST.get('document_id'),
+                document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            )
+            _approve_background_check_document(document, request.user)
+            messages.success(request, 'Background-check document approved.')
+            return redirect('supporting_documents')
         return redirect('supporting_documents')
 
     can_view_all_documents = _can_view_all_supporting_documents(request.user)
@@ -7892,6 +8094,7 @@ def supporting_documents(request):
         'can_view_all_documents': can_view_all_documents,
         'is_authenticated': request.user.is_authenticated,
         'can_upload_supporting_documents': request.user.is_authenticated and hasattr(request.user, 'person'),
+        'can_approve_background_check_documents': is_kingdom_authorization_officer(request.user),
         'can_upload_background_check_for_anyone': _can_upload_background_check_for_anyone(request.user),
         'can_upload_equestrian_for_anyone': (
             request.user.is_authenticated and (

@@ -1069,7 +1069,7 @@ class IndexViewTests(ViewTestBase):
         self.assertContains(response, 'Require Kingdom Authorization Officer Verification is now Off.')
         self.assertContains(response, 'Automatically approved all 2 authorizations waiting for Kingdom approval.')
 
-    def test_authorization_officer_queue_shows_kingdom_and_background_not_equestrian_waiver(self):
+    def test_authorization_officer_queue_shows_kingdom_and_background_review_not_equestrian_waiver(self):
         ao_user, ao_person = self.make_person('index_queue_ao', 'Index Queue AO')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
         proposer_user, proposer_person = self.make_person('index_queue_prop', 'Index Queue Prop')
@@ -1114,6 +1114,7 @@ class IndexViewTests(ViewTestBase):
 
         self.assertContains(response, 'Awaiting Kingdom Authorization Officer Review')
         self.assertContains(response, 'Awaiting Background Check')
+        self.assertContains(response, 'Background Checks Needing Review')
         self.assertNotContains(response, 'Awaiting Equestrian Authorization Officer Review')
         self.assertNotContains(response, 'Awaiting Regional Marshal Approval')
         self.assertNotContains(response, 'Approve As (optional):')
@@ -1143,10 +1144,43 @@ class IndexViewTests(ViewTestBase):
 
         self.assertContains(response, 'Awaiting Background Check')
         self.assertContains(response, 'Awaiting Kingdom Authorization Officer Review')
+        self.assertContains(response, 'Background Checks Needing Review')
         self.assertContains(response, 'Go To Page')
         self.assertContains(response, f'href="{reverse("user_account", kwargs={"user_id": target_user.id})}"')
         self.assertContains(response, 'class="btn btn-primary">Go To Page')
-        self.assertContains(response, f'name="bad_authorization_id" value="{pending_bg.id}"')
+        self.assertNotContains(response, f'name="bad_authorization_id" value="{pending_bg.id}"')
+
+    def test_kao_can_approve_pending_background_check_authorization_from_review_alert_without_document(self):
+        AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
+        ao_user, ao_person = self.make_person('index_bg_auth_approve_ao', 'Index BG Auth Approve AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        proposer_user, proposer_person = self.make_person('index_bg_auth_approve_prop', 'Index BG Auth Approve Prop')
+        target_user, target_person = self.make_person('index_bg_auth_approve_target', 'Index BG Auth Approve Target')
+        pending_bg = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_pending_background_check,
+            marshal=proposer_person,
+        )
+        bg_date = date.today() + relativedelta(years=2)
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'approve_background_check_document',
+                'user_id': str(target_user.id),
+                'background_check_expiration': bg_date.isoformat(),
+            },
+            follow=True,
+        )
+        target_user.refresh_from_db()
+        pending_bg.refresh_from_db()
+
+        self.assertEqual(target_user.background_check_expiration, bg_date)
+        self.assertEqual(pending_bg.status, self.status_active)
+        self.assertIn('Background-check expiration updated.', self.messages_for(response))
+        self.assertNotContains(response, 'Background Checks Needing Review')
 
     def test_kao_can_reject_pending_background_check_with_required_note(self):
         ao_user, ao_person = self.make_person('index_bg_reject_ao', 'Index BG Reject AO')
@@ -1262,7 +1296,12 @@ class IndexViewTests(ViewTestBase):
     def test_pending_background_check_document_shows_kao_review_alert(self):
         ao_user, ao_person = self.make_person('index_bg_doc_ao', 'Index BG Doc AO')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
-        target_user, target_person = self.make_person('index_bg_doc_target', 'Index BG Doc Target')
+        background_expiration = date.today() + relativedelta(months=6)
+        target_user, target_person = self.make_person(
+            'index_bg_doc_target',
+            'Index BG Doc Target',
+            background_check_expiration=background_expiration,
+        )
 
         bg_document = SupportingDocument.objects.create(
             document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
@@ -1276,13 +1315,83 @@ class IndexViewTests(ViewTestBase):
 
         self.assertContains(response, 'Background Checks Needing Review')
         self.assertContains(response, 'Index BG Doc Target')
+        self.assertContains(response, background_expiration.isoformat())
+        self.assertContains(response, 'approve_background_check_document')
+        self.assertContains(response, f'value="{background_expiration.isoformat()}"')
         self.assertContains(response, f'href="{reverse("user_account", kwargs={"user_id": target_user.id})}"')
         self.assertContains(
             response,
             f'href="{reverse("supporting_document_file", kwargs={"document_id": bg_document.id})}"',
         )
 
-    def test_pending_background_check_document_alert_suppressed_when_pending_authorization_exists(self):
+    def test_kao_can_approve_background_check_document_from_homepage_alert(self):
+        ao_user, ao_person = self.make_person('index_bg_doc_approve_ao', 'Index BG Doc Approve AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        target_user, target_person = self.make_person('index_bg_doc_approve_target', 'Index BG Doc Approve Target')
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-document-approve.pdf', ContentFile(b'bg-document-approve'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        bg_date = date.today() + relativedelta(years=3)
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'approve_background_check_document',
+                'document_id': str(bg_document.id),
+                'background_check_expiration': bg_date.isoformat(),
+            },
+            follow=True,
+        )
+        bg_document.refresh_from_db()
+        target_user.refresh_from_db()
+
+        self.assertEqual(bg_document.review_status, SupportingDocument.ReviewStatus.ACCEPTED)
+        self.assertEqual(bg_document.reviewed_by, ao_user)
+        self.assertIsNotNone(bg_document.reviewed_at)
+        self.assertEqual(target_user.background_check_expiration, bg_date)
+        self.assertIn('Background-check document approved and expiration updated.', self.messages_for(response))
+        self.assertNotContains(response, 'Background Checks Needing Review')
+
+    def test_reject_background_check_document_from_homepage_keeps_saved_expiration(self):
+        ao_user, ao_person = self.make_person('index_bg_doc_reject_ao', 'Index BG Doc Reject AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        saved_expiration = date.today() + relativedelta(months=4)
+        target_user, target_person = self.make_person(
+            'index_bg_doc_reject_target',
+            'Index BG Doc Reject Target',
+            background_check_expiration=saved_expiration,
+        )
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=target_user,
+        )
+        bg_document.file.save('bg-document-reject.pdf', ContentFile(b'bg-document-reject'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=target_person)
+
+        self.client.login(username=ao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('index'),
+            {
+                'action': 'reject_background_check_document',
+                'document_id': str(bg_document.id),
+                'background_check_expiration': (date.today() + relativedelta(years=5)).isoformat(),
+            },
+            follow=True,
+        )
+        bg_document.refresh_from_db()
+        target_user.refresh_from_db()
+
+        self.assertEqual(bg_document.review_status, SupportingDocument.ReviewStatus.REJECTED)
+        self.assertEqual(bg_document.reviewed_by, ao_user)
+        self.assertEqual(target_user.background_check_expiration, saved_expiration)
+        self.assertIn('Background-check document rejected.', self.messages_for(response))
+        self.assertNotContains(response, 'Background Checks Needing Review')
+
+    def test_pending_background_check_document_alert_combines_with_pending_authorization(self):
         ao_user, ao_person = self.make_person('index_bg_doc_dupe_ao', 'Index BG Doc Dupe AO')
         self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
         proposer_user, proposer_person = self.make_person('index_bg_doc_dupe_prop', 'Index BG Doc Dupe Prop')
@@ -1305,7 +1414,7 @@ class IndexViewTests(ViewTestBase):
         response = self.client.get(reverse('index'))
 
         self.assertContains(response, 'Awaiting Background Check')
-        self.assertNotContains(response, 'Background Checks Needing Review')
+        self.assertContains(response, 'Background Checks Needing Review')
         self.assertContains(response, 'New upload')
 
     def test_setting_background_check_expiration_clears_document_review_alert(self):
@@ -2983,6 +3092,80 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.owner_user.background_check_expiration, bg_date)
 
+    def test_account_page_shows_background_check_document_review_controls_to_kao(self):
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=self.owner_user,
+        )
+        bg_document.file.save('account-bg-review.pdf', ContentFile(b'account-bg-review'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=self.owner_person)
+
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('user_account', kwargs={'user_id': self.owner_user.id}))
+
+        self.assertContains(response, 'approve_background_check_document')
+        self.assertContains(response, 'reject_background_check_document')
+        self.assertContains(response, 'name="background_check_expiration"', count=1)
+
+    def test_kao_can_approve_background_check_document_from_account_page_without_changing_expiration(self):
+        saved_expiration = date.today() + relativedelta(months=3)
+        self.owner_user.background_check_expiration = saved_expiration
+        self.owner_user.save(update_fields=['background_check_expiration'])
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=self.owner_user,
+        )
+        bg_document.file.save('account-bg-approve.pdf', ContentFile(b'account-bg-approve'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=self.owner_person)
+
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'approve_background_check_document',
+                'document_id': str(bg_document.id),
+                'background_check_expiration': (date.today() + relativedelta(years=2)).isoformat(),
+            },
+            follow=True,
+        )
+        self.owner_user.refresh_from_db()
+        bg_document.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.owner_user.background_check_expiration, saved_expiration)
+        self.assertEqual(bg_document.review_status, SupportingDocument.ReviewStatus.ACCEPTED)
+        self.assertEqual(bg_document.reviewed_by, self.ao_user)
+        self.assertIn('Background-check document approved.', self.messages_for(response))
+
+    def test_kao_can_reject_background_check_document_from_account_page_without_changing_expiration(self):
+        saved_expiration = date.today() + relativedelta(months=5)
+        self.owner_user.background_check_expiration = saved_expiration
+        self.owner_user.save(update_fields=['background_check_expiration'])
+        bg_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            uploaded_by=self.owner_user,
+        )
+        bg_document.file.save('account-bg-reject.pdf', ContentFile(b'account-bg-reject'), save=True)
+        SupportingDocumentPerson.objects.create(document=bg_document, person=self.owner_person)
+
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        response = self.client.post(
+            reverse('user_account', kwargs={'user_id': self.owner_user.id}),
+            {
+                'action': 'reject_background_check_document',
+                'document_id': str(bg_document.id),
+                'background_check_expiration': (date.today() + relativedelta(years=4)).isoformat(),
+            },
+            follow=True,
+        )
+        self.owner_user.refresh_from_db()
+        bg_document.refresh_from_db()
+
+        self.assertEqual(self.owner_user.background_check_expiration, saved_expiration)
+        self.assertEqual(bg_document.review_status, SupportingDocument.ReviewStatus.REJECTED)
+        self.assertEqual(bg_document.reviewed_by, self.ao_user)
+        self.assertIn('Background-check document rejected.', self.messages_for(response))
+
     def test_setting_background_check_promotes_pending_background_check_to_active_when_sign_off_off(self):
         AuthorizationPortalSetting.objects.update_or_create(pk=1, defaults={'require_kao_verification': False})
         pending_auth = Authorization.objects.create(
@@ -3019,6 +3202,15 @@ class UserAccountViewTests(ViewTestBase):
             marshal=self.ao_person,
             expiration=date.today() + relativedelta(years=1),
         )
+        discipline_equestrian = Discipline.objects.create(name='Equestrian')
+        style_equestrian = WeaponStyle.objects.create(name='General Riding', discipline=discipline_equestrian)
+        pending_equestrian = Authorization.objects.create(
+            person=self.owner_person,
+            style=style_equestrian,
+            status=self.status_pending_background_check,
+            marshal=self.ao_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
 
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
         bg_date = date.today() + relativedelta(years=1)
@@ -3034,8 +3226,10 @@ class UserAccountViewTests(ViewTestBase):
         )
 
         pending_auth.refresh_from_db()
+        pending_equestrian.refresh_from_db()
         self.assertEqual(response.status_code, 200)
         self.assertEqual(pending_auth.status, self.status_kingdom)
+        self.assertEqual(pending_equestrian.status.name, 'Awaiting Equestrian Authorization Officer Review')
 
     def test_account_update_skips_roster_check_when_membership_unchanged(self):
         self.client.login(username=self.owner_user.username, password='StrongPass!123')
@@ -6044,6 +6238,45 @@ class SupportingDocumentsViewTests(ViewTestBase):
         self.assertContains(
             response,
             reverse('supporting_document_file', kwargs={'document_id': self.eq_document.id}),
+        )
+        self.assertContains(response, 'approve_background_check_document')
+
+    def test_kao_can_approve_background_check_document_from_documents_page(self):
+        self.client.login(username=self.kao_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('supporting_documents'),
+            {
+                'action': 'approve_background_check_document',
+                'document_id': str(self.bg_document.id),
+            },
+            follow=True,
+        )
+        self.bg_document.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.bg_document.review_status, SupportingDocument.ReviewStatus.ACCEPTED)
+        self.assertEqual(self.bg_document.reviewed_by, self.kao_user)
+        self.assertIsNotNone(self.bg_document.reviewed_at)
+        self.assertIn('Background-check document approved.', self.messages_for(response))
+
+    def test_non_kao_cannot_approve_background_check_document_from_documents_page(self):
+        self.client.login(username=self.seneschal_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('supporting_documents'),
+            {
+                'action': 'approve_background_check_document',
+                'document_id': str(self.bg_document.id),
+            },
+            follow=True,
+        )
+        self.bg_document.refresh_from_db()
+
+        self.assertEqual(self.bg_document.review_status, SupportingDocument.ReviewStatus.PENDING)
+        self.assertIn(
+            'Only the Kingdom Authorization Officer can approve background-check documents.',
+            self.messages_for(response),
         )
 
     def test_kingdom_equestrian_officer_sees_only_associated_documents(self):

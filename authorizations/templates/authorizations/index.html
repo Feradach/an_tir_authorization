@@ -262,6 +262,8 @@
                 <th>SCA Name</th>
                 <th>Region</th>
                 <th>Branch</th>
+                <th>Status</th>
+                <th>Current Background Expiration</th>
                 <th>Uploaded</th>
                 <th>Uploaded By</th>
                 <th>File</th>
@@ -272,7 +274,18 @@
                     <td><a href="{% url 'fighter' alert.person.id %}">{{ alert.person.sca_name }}</a></td>
                     <td>{% if alert.person.branch and alert.person.branch.region %}{{ alert.person.branch.region.name }}{% else %}-{% endif %}</td>
                     <td>{% if alert.person.branch %}{{ alert.person.branch.name }}{% else %}-{% endif %}</td>
-                    <td>{{ alert.uploaded_at|date:"Y-m-d H:i" }}</td>
+                    <td>{% if alert.has_pending_authorizations %}Awaiting Background Check{% else %}Pending Review{% endif %}</td>
+                    <td>
+                        <input
+                            type="date"
+                            name="background_check_expiration"
+                            value="{{ alert.person.user.background_check_expiration|date:'Y-m-d' }}"
+                            class="form-control form-control-sm"
+                            form="approve_background_check_{{ alert.person.user_id }}"
+                            required
+                        >
+                    </td>
+                    <td>{% if alert.uploaded_at %}{{ alert.uploaded_at|date:"Y-m-d H:i" }}{% else %}-{% endif %}</td>
                     <td>
                         {% if alert.uploaded_by and alert.uploaded_by.person %}
                             {{ alert.uploaded_by.person.sca_name }}
@@ -283,10 +296,31 @@
                         {% endif %}
                     </td>
                     <td>
-                        <a href="{{ alert.file_url }}" target="_blank" rel="noopener noreferrer">View File</a>
+                        {% if alert.file_url %}
+                            <a href="{{ alert.file_url }}" target="_blank" rel="noopener noreferrer">{{ alert.document_alert_text }}</a>
+                        {% else %}
+                            <span class="badge text-bg-secondary">{{ alert.document_alert_text }}</span>
+                        {% endif %}
                     </td>
                     <td>
                         <a href="{% url 'user_account' user_id=alert.person.user_id %}" class="btn btn-primary">Go To Page</a>
+                        <form method="post" action="" class="d-inline" id="approve_background_check_{{ alert.person.user_id }}">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="approve_background_check_document">
+                            <input type="hidden" name="user_id" value="{{ alert.person.user_id }}">
+                            {% if alert.document %}
+                                <input type="hidden" name="document_id" value="{{ alert.document.id }}">
+                            {% endif %}
+                            <button type="submit" class="btn btn-success">Approve</button>
+                        </form>
+                        {% if alert.document %}
+                            <form method="post" action="" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="reject_background_check_document">
+                                <input type="hidden" name="document_id" value="{{ alert.document.id }}">
+                                <button type="submit" class="btn btn-danger">Reject</button>
+                            </form>
+                        {% endif %}
                     </td>
                 </tr>
             {% endfor %}

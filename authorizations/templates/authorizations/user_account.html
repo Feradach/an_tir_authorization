@@ -196,6 +196,9 @@
                                     <th>Uploaded By</th>
                                     <th>Status</th>
                                     <th>File</th>
+                                    {% if can_review_background_check_documents %}
+                                        <th>Action</th>
+                                    {% endif %}
                                 </tr>
                             </thead>
                             <tbody>
@@ -221,6 +224,26 @@
                                         </td>
                                         <td>{{ doc.get_review_status_display }}</td>
                                         <td><a href="{% url 'supporting_document_file' document_id=doc.id %}" target="_blank" rel="noopener">View</a></td>
+                                        {% if can_review_background_check_documents %}
+                                            <td>
+                                                {% if doc.document_type == "background_check" and doc.review_status == "pending" %}
+                                                    <form method="post" action="" class="d-inline">
+                                                        {% csrf_token %}
+                                                        <input type="hidden" name="action" value="approve_background_check_document">
+                                                        <input type="hidden" name="document_id" value="{{ doc.id }}">
+                                                        <button type="submit" class="btn btn-success btn-sm">Approve</button>
+                                                    </form>
+                                                    <form method="post" action="" class="d-inline">
+                                                        {% csrf_token %}
+                                                        <input type="hidden" name="action" value="reject_background_check_document">
+                                                        <input type="hidden" name="document_id" value="{{ doc.id }}">
+                                                        <button type="submit" class="btn btn-danger btn-sm">Reject</button>
+                                                    </form>
+                                                {% else %}
+                                                    <span class="text-muted">-</span>
+                                                {% endif %}
+                                            </td>
+                                        {% endif %}
                                     </tr>
                                 {% endfor %}
                             </tbody>

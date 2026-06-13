@@ -72,6 +72,9 @@
                     <th>Uploaded By</th>
                     <th>Status</th>
                     <th>File</th>
+                    {% if can_approve_background_check_documents %}
+                        <th>Action</th>
+                    {% endif %}
                 </tr>
             </thead>
             <tbody>
@@ -103,6 +106,20 @@
                                 <span class="text-muted">Missing file</span>
                             {% endif %}
                         </td>
+                        {% if can_approve_background_check_documents %}
+                            <td>
+                                {% if document.document_type == "background_check" and document.review_status == "pending" %}
+                                    <form method="post" action="" class="d-inline">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="approve_background_check_document">
+                                        <input type="hidden" name="document_id" value="{{ document.id }}">
+                                        <button type="submit" class="btn btn-success btn-sm">Approve</button>
+                                    </form>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        {% endif %}
                     </tr>
                 {% endfor %}
             </tbody>
