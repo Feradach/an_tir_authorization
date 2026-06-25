@@ -31,6 +31,11 @@ workload of the authorization officer will be reduced.
 - [Maintenance runbook](maintenance_runbook.md)
 - [Secret rotation policy](secret_rotation_policy.md)
 
+### Data Integrity Invariants
+
+- Internal person/account workflows must use `Person.user_id` / `User.id` after a person has been selected. Names, branches, member numbers, and email addresses are for search and display, not for identifying rows during writes.
+- Changes that touch person-linked records should account for merged accounts: source accounts may be tombstoned, and history should remain attached to the survivor account.
+
 ## Features:
 The primary purpose of this project is to create a database of authorized fighters and marshals.
 

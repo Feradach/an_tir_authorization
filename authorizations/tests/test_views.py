@@ -2685,6 +2685,206 @@ class TombstoneBehaviorTests(ViewTestBase):
         self.assertIn(active_user.id, returned_ids)
         self.assertNotIn(merged_user.id, returned_ids)
 
+    def test_account_merge_reattaches_source_history_to_survivor(self):
+        self.client.login(username=self.ao_user.username, password='StrongPass!123')
+        survivor_user, survivor_person = self.make_person('merge_history_survivor', 'Merge History Name')
+        source_user, source_person = self.make_person('merge_history_source', 'Merge History Name')
+
+        survivor_auth = self.grant_authorization(
+            survivor_person,
+            self.style_weapon_armored,
+            status=self.status_pending,
+            marshal=source_person,
+        )
+        source_auth = self.grant_authorization(
+            source_person,
+            self.style_weapon_armored,
+            status=self.status_pending,
+            marshal=source_person,
+        )
+        source_auth.updated_at = timezone.now() + timedelta(minutes=1)
+        source_auth.save(update_fields=['updated_at'])
+
+        AuthorizationValidityInterval.objects.create(
+            authorization=survivor_auth,
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 12, 31),
+            source='legacy_import',
+            created_by=source_user,
+            note='Survivor duplicate interval',
+        )
+        AuthorizationValidityInterval.objects.create(
+            authorization=source_auth,
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 12, 31),
+            source='legacy_import',
+            created_by=source_user,
+            note='Source interval',
+        )
+        AuthorizationNote.objects.create(
+            authorization=survivor_auth,
+            created_by=source_user,
+            action='marshal_proposed',
+            note='Loser authorization note',
+        )
+        AuthorizationNote.objects.create(
+            authorization=source_auth,
+            created_by=source_user,
+            action='marshal_concurred',
+            note='Winner authorization note',
+        )
+        UserNote.objects.create(
+            person=source_person,
+            created_by=source_user,
+            note_type='officer_note',
+            note='Source user officer note',
+        )
+        AuthorizationAuditEntry.objects.create(
+            authorization=survivor_auth,
+            person=source_person,
+            style=self.style_weapon_armored,
+            event_type='created',
+            changed_by=source_user,
+            before_person=source_person,
+            after_person=source_person,
+            before_marshal=source_person,
+            after_marshal=source_person,
+            before_created_by=source_user,
+            after_created_by=source_user,
+        )
+        source_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            file=SimpleUploadedFile('merge-history-bg.pdf', b'merge history bg'),
+            uploaded_by=source_user,
+            reviewed_by=source_user,
+            reviewed_at=timezone.now(),
+        )
+        duplicate_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            file=SimpleUploadedFile('merge-history-duplicate-bg.pdf', b'merge history duplicate bg'),
+            uploaded_by=source_user,
+        )
+        SupportingDocumentPerson.objects.create(document=source_document, person=source_person)
+        SupportingDocumentPerson.objects.create(document=duplicate_document, person=source_person)
+        SupportingDocumentPerson.objects.create(document=duplicate_document, person=survivor_person)
+        SupportingDocumentAuthorization.objects.create(document=source_document, authorization=survivor_auth)
+        WaiverRecord.objects.create(
+            covered_user=source_user,
+            signer_user=source_user,
+            recorded_by=source_user,
+            source=WaiverRecord.Source.PAPER_WAIVER,
+            waiver_type=WaiverRecord.WaiverType.ADULT,
+            resulting_waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        LegacyAuthorizationRecoveryEntry.objects.create(
+            person=source_person,
+            style=self.style_weapon_armored,
+            marshal=source_person,
+            second_marshal=source_person,
+            concurring_officer=source_person,
+            auth_date=date(2025, 5, 1),
+            expiration=date(2029, 5, 1),
+            authorization=survivor_auth,
+            previous_marshal=source_person,
+            previous_concurring_fighter=source_person,
+            created_by=source_user,
+        )
+        Sanction.objects.create(
+            person=source_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today(),
+            end_date=date.today() + timedelta(days=30),
+            issue_note='Source sanction',
+            issued_by=source_user,
+            created_by=source_user,
+            updated_by=source_user,
+        )
+
+        payload = self.account_update_payload(
+            survivor_user,
+            survivor_person,
+            action='execute',
+            old_sca_name=source_person.sca_name,
+            new_sca_name=survivor_person.sca_name,
+            source_user_id=str(source_user.id),
+            survivor_user_id=str(survivor_user.id),
+            merge_action_note='Consolidating duplicate history.',
+        )
+        response = self.client.post(reverse('merge_accounts'), payload, follow=True)
+
+        source_user.refresh_from_db()
+        source_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(source_user.merged_into, survivor_user)
+        self.assertEqual(source_auth.person, survivor_person)
+        self.assertFalse(Authorization.objects.filter(pk=survivor_auth.pk).exists())
+
+        interval_dates = set(
+            AuthorizationValidityInterval.objects.filter(authorization=source_auth)
+            .values_list('start_date', 'end_date')
+        )
+        self.assertIn((date(2024, 1, 1), date(2024, 12, 31)), interval_dates)
+        self.assertIn((date(2025, 1, 1), date(2025, 12, 31)), interval_dates)
+        self.assertEqual(
+            AuthorizationNote.objects.filter(authorization=source_auth, created_by=survivor_user).count(),
+            2,
+        )
+        self.assertTrue(UserNote.objects.filter(person=survivor_person, created_by=survivor_user).exists())
+        self.assertTrue(
+            AuthorizationAuditEntry.objects.filter(
+                authorization=source_auth,
+                person=survivor_person,
+                changed_by=survivor_user,
+                before_person=survivor_person,
+                after_person=survivor_person,
+            ).exists()
+        )
+        self.assertEqual(
+            SupportingDocumentPerson.objects.filter(document=source_document, person=survivor_person).count(),
+            1,
+        )
+        self.assertEqual(
+            SupportingDocumentPerson.objects.filter(document=duplicate_document, person=survivor_person).count(),
+            1,
+        )
+        self.assertTrue(
+            SupportingDocumentAuthorization.objects.filter(
+                document=source_document,
+                authorization=source_auth,
+            ).exists()
+        )
+        source_document.refresh_from_db()
+        self.assertEqual(source_document.uploaded_by, survivor_user)
+        self.assertEqual(source_document.reviewed_by, survivor_user)
+        self.assertTrue(
+            WaiverRecord.objects.filter(
+                covered_user=survivor_user,
+                signer_user=survivor_user,
+                recorded_by=survivor_user,
+            ).exists()
+        )
+        self.assertTrue(
+            LegacyAuthorizationRecoveryEntry.objects.filter(
+                person=survivor_person,
+                marshal=survivor_person,
+                second_marshal=survivor_person,
+                concurring_officer=survivor_person,
+                previous_marshal=survivor_person,
+                previous_concurring_fighter=survivor_person,
+                authorization=source_auth,
+                created_by=survivor_user,
+            ).exists()
+        )
+        self.assertTrue(
+            Sanction.objects.filter(
+                person=survivor_person,
+                issued_by=survivor_user,
+                created_by=survivor_user,
+                updated_by=self.ao_user,
+            ).exists()
+        )
+
 
 @override_settings(AUTHZ_TEST_FEATURES=False)
 class UserAccountViewTests(ViewTestBase):

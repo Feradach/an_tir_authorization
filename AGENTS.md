@@ -13,6 +13,8 @@ Instructions for coding agents working in this repository. Keep changes focused,
 - Avoid account/email enumeration in recovery flows unless explicitly approved by the owner.
 - Keep rate limiting/throttling in place for account recovery and login-instruction flows.
 - Prefer server-side enforcement for any action that appears conditionally in UI.
+- Treat selected people/accounts as ID-first internally. Names, branches, member numbers, and emails are search/display aids; once a person is selected, carry and use `Person.user_id`/`User.id` for all writes and follow-up lookups.
+- When changing workflows that touch people, authorizations, documents, notes, waivers, offices, sanctions, or history, confirm the behavior accounts for tombstoned merged accounts and survivor-account redirects.
 
 ## Where Things Live
 - Main app logic: `authorizations/views.py`, `authorizations/permissions.py`, `authorizations/models.py`
@@ -30,6 +32,7 @@ Instructions for coding agents working in this repository. Keep changes focused,
 
 ## Testing Expectations
 - Add/update targeted tests when behavior changes.
+- For person/account workflows, include duplicate-name and merged-account coverage when IDs, history, documents, or authorization ownership are affected.
 - Prefer focused test execution first, then broader tests when feasible.
 - If local DB/services are unavailable, report what was attempted and what blocked validation.
 

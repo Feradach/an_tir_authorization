@@ -10,9 +10,11 @@ from unittest.mock import patch
 from dateutil.relativedelta import relativedelta
 from django.core import mail
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command, CommandError
 from django.db import IntegrityError
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from django.urls import reverse
 
 from authorizations.models import (
@@ -31,7 +33,13 @@ from authorizations.models import (
     Sanction,
     MembershipRosterEntry,
     Title,
+    LegacyAuthorizationRecoveryEntry,
     User,
+    UserNote,
+    WaiverRecord,
+    SupportingDocument,
+    SupportingDocumentAuthorization,
+    SupportingDocumentPerson,
     WeaponStyle,
 )
 from authorizations.permissions import validate_reject_authorization
@@ -641,6 +649,238 @@ class CatchUpValidityIntervalsCommandTests(TestCase):
     def test_requires_since_or_all(self):
         with self.assertRaises(CommandError):
             call_command('catch_up_validity_intervals')
+
+
+class RepairMergedAccountHistoryCommandTests(AdditionalCoverageBase):
+    def _merged_pair(self, source_username='repair_merge_source', survivor_username='repair_merge_survivor'):
+        survivor_user, survivor_person = self.make_person(survivor_username, 'Repair Merge Shared')
+        source_user, source_person = self.make_person(source_username, 'Repair Merge Shared')
+        source_user.merged_into = survivor_user
+        source_user.merged_at = timezone.now()
+        source_user.is_active = False
+        source_user.save()
+        return source_user, source_person, survivor_user, survivor_person
+
+    def test_dry_run_reports_repair_without_changing_rows(self):
+        source_user, source_person, survivor_user, survivor_person = self._merged_pair(
+            'repair_merge_dry_source',
+            'repair_merge_dry_survivor',
+        )
+        source_auth = self.grant_authorization(source_person, self.style_weapon_armored)
+        UserNote.objects.create(
+            person=source_person,
+            created_by=source_user,
+            note_type='officer_note',
+            note='Source note still on tombstoned account.',
+        )
+        out = StringIO()
+
+        call_command('repair_merged_account_history', stdout=out)
+
+        source_auth.refresh_from_db()
+        self.assertEqual(source_auth.person, source_person)
+        self.assertTrue(UserNote.objects.filter(person=source_person, created_by=source_user).exists())
+        self.assertIn('Merged source accounts found: 1', out.getvalue())
+        self.assertIn(f'source_user_id={source_user.id} -> survivor_user_id={survivor_user.id}', out.getvalue())
+        self.assertIn('Dry run only.', out.getvalue())
+
+    def test_apply_reattaches_surviving_source_history_to_survivor(self):
+        source_user, source_person, survivor_user, survivor_person = self._merged_pair()
+        survivor_auth = self.grant_authorization(
+            survivor_person,
+            self.style_weapon_armored,
+            marshal=source_person,
+        )
+        source_auth = self.grant_authorization(
+            source_person,
+            self.style_weapon_armored,
+            marshal=source_person,
+        )
+        source_auth.updated_at = timezone.now() + timedelta(minutes=1)
+        source_auth.save(update_fields=['updated_at'])
+        source_only_auth = self.grant_authorization(
+            source_person,
+            self.style_polearm_armored,
+            marshal=source_person,
+        )
+
+        AuthorizationValidityInterval.objects.create(
+            authorization=survivor_auth,
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 12, 31),
+            source='legacy_import',
+            created_by=source_user,
+            note='Loser interval still exists.',
+        )
+        AuthorizationValidityInterval.objects.create(
+            authorization=source_auth,
+            start_date=date(2025, 1, 1),
+            end_date=date(2025, 12, 31),
+            source='legacy_import',
+            created_by=source_user,
+            note='Winner interval still exists.',
+        )
+        AuthorizationNote.objects.create(
+            authorization=survivor_auth,
+            created_by=source_user,
+            action='marshal_proposed',
+            note='Loser note still exists.',
+        )
+        UserNote.objects.create(
+            person=source_person,
+            created_by=source_user,
+            note_type='officer_note',
+            note='Source user note still exists.',
+        )
+        AuthorizationAuditEntry.objects.create(
+            authorization=survivor_auth,
+            person=source_person,
+            style=self.style_weapon_armored,
+            event_type='created',
+            changed_by=source_user,
+            before_person=source_person,
+            after_person=source_person,
+            before_marshal=source_person,
+            after_marshal=source_person,
+            before_created_by=source_user,
+            after_created_by=source_user,
+        )
+        document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            file=SimpleUploadedFile('repair-merged-history-bg.pdf', b'repair merged history bg'),
+            uploaded_by=source_user,
+            reviewed_by=source_user,
+            reviewed_at=timezone.now(),
+        )
+        duplicate_document = SupportingDocument.objects.create(
+            document_type=SupportingDocument.DocumentType.BACKGROUND_CHECK,
+            file=SimpleUploadedFile('repair-merged-history-dupe-bg.pdf', b'repair merged history duplicate bg'),
+            uploaded_by=source_user,
+        )
+        SupportingDocumentPerson.objects.create(document=document, person=source_person)
+        SupportingDocumentPerson.objects.create(document=duplicate_document, person=source_person)
+        SupportingDocumentPerson.objects.create(document=duplicate_document, person=survivor_person)
+        SupportingDocumentAuthorization.objects.create(document=document, authorization=survivor_auth)
+        WaiverRecord.objects.create(
+            covered_user=source_user,
+            signer_user=source_user,
+            recorded_by=source_user,
+            source=WaiverRecord.Source.PAPER_WAIVER,
+            waiver_type=WaiverRecord.WaiverType.ADULT,
+            resulting_waiver_expiration=date.today() + relativedelta(years=1),
+        )
+        LegacyAuthorizationRecoveryEntry.objects.create(
+            person=source_person,
+            style=self.style_weapon_armored,
+            marshal=source_person,
+            second_marshal=source_person,
+            concurring_officer=source_person,
+            auth_date=date(2025, 5, 1),
+            expiration=date(2029, 5, 1),
+            authorization=survivor_auth,
+            previous_marshal=source_person,
+            previous_concurring_fighter=source_person,
+            created_by=source_user,
+        )
+        Sanction.objects.create(
+            person=source_person,
+            discipline=self.discipline_armored,
+            style=self.style_weapon_armored,
+            start_date=date.today(),
+            end_date=date.today() + timedelta(days=30),
+            issue_note='Source sanction still exists.',
+            issued_by=source_user,
+            created_by=source_user,
+            updated_by=source_user,
+        )
+        BranchMarshal.objects.create(
+            person=source_person,
+            branch=self.branch_gd,
+            discipline=self.discipline_armored,
+            start_date=date.today() - timedelta(days=1),
+            end_date=date.today() + timedelta(days=30),
+            created_by=source_user,
+            updated_by=source_user,
+        )
+        out = StringIO()
+
+        call_command('repair_merged_account_history', '--apply', stdout=out)
+
+        source_auth.refresh_from_db()
+        source_only_auth.refresh_from_db()
+        self.assertEqual(source_auth.person, survivor_person)
+        self.assertEqual(source_auth.marshal, survivor_person)
+        self.assertEqual(source_only_auth.person, survivor_person)
+        self.assertFalse(Authorization.objects.filter(pk=survivor_auth.pk).exists())
+
+        interval_dates = set(
+            AuthorizationValidityInterval.objects.filter(authorization=source_auth)
+            .values_list('start_date', 'end_date')
+        )
+        self.assertIn((date(2024, 1, 1), date(2024, 12, 31)), interval_dates)
+        self.assertIn((date(2025, 1, 1), date(2025, 12, 31)), interval_dates)
+        self.assertTrue(
+            AuthorizationNote.objects.filter(
+                authorization=source_auth,
+                created_by=survivor_user,
+            ).exists()
+        )
+        self.assertTrue(UserNote.objects.filter(person=survivor_person, created_by=survivor_user).exists())
+        self.assertTrue(
+            AuthorizationAuditEntry.objects.filter(
+                authorization=source_auth,
+                person=survivor_person,
+                changed_by=survivor_user,
+                before_person=survivor_person,
+                after_person=survivor_person,
+            ).exists()
+        )
+        self.assertEqual(SupportingDocumentPerson.objects.filter(document=document, person=survivor_person).count(), 1)
+        self.assertEqual(
+            SupportingDocumentPerson.objects.filter(document=duplicate_document, person=survivor_person).count(),
+            1,
+        )
+        self.assertTrue(
+            SupportingDocumentAuthorization.objects.filter(document=document, authorization=source_auth).exists()
+        )
+        document.refresh_from_db()
+        self.assertEqual(document.uploaded_by, survivor_user)
+        self.assertEqual(document.reviewed_by, survivor_user)
+        self.assertTrue(
+            WaiverRecord.objects.filter(
+                covered_user=survivor_user,
+                signer_user=survivor_user,
+                recorded_by=survivor_user,
+            ).exists()
+        )
+        self.assertTrue(
+            LegacyAuthorizationRecoveryEntry.objects.filter(
+                person=survivor_person,
+                marshal=survivor_person,
+                second_marshal=survivor_person,
+                concurring_officer=survivor_person,
+                previous_marshal=survivor_person,
+                previous_concurring_fighter=survivor_person,
+                authorization=source_auth,
+                created_by=survivor_user,
+            ).exists()
+        )
+        self.assertTrue(
+            Sanction.objects.filter(
+                person=survivor_person,
+                issued_by=survivor_user,
+                created_by=survivor_user,
+                updated_by=survivor_user,
+            ).exists()
+        )
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=survivor_person,
+                created_by=survivor_user,
+                updated_by=survivor_user,
+            ).exists()
+        )
+        self.assertIn('Merged account history repair complete.', out.getvalue())
 
 
 class ActivatePendingWaiverAuthorizationsCommandTests(AdditionalCoverageBase):

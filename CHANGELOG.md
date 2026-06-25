@@ -5,6 +5,7 @@
 
 ### Added
 
+- Added a dry-run-first repair command for reattaching surviving history from previously merged accounts to the survivor account.
 
 ### Changed
 
@@ -13,6 +14,7 @@
 ### Fixed
 
 - Fixed a bug where people who had merged accounts were not able to be appointed as officers.
+- Account merges now keep authorization history, notes, waiver records, supporting documents, sanctions, and legacy recovery records attached to the survivor account.
 - Senior Equestrian Marshal renewals were being blocked because they didn't have an active junior marshal authorization.
 
 

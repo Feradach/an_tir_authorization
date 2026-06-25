@@ -2,6 +2,30 @@
 
 Operational notes for recurring maintenance tasks on the An Tir authorization portal.
 
+## Merged Account History Repair
+
+Use this after deploying a merge-history fix, or when investigating older merged accounts that may still have notes, waiver evidence, documents, sanctions, offices, or authorization history attached to a tombstoned source account.
+
+Dry run first from the deployed application directory:
+
+```bash
+python manage.py repair_merged_account_history
+```
+
+To limit review to one source account:
+
+```bash
+python manage.py repair_merged_account_history --source-user-id 17272
+```
+
+If the dry run looks correct, apply the repair:
+
+```bash
+python manage.py repair_merged_account_history --apply
+```
+
+The command can only reattach rows that still exist. If an older merge already deleted duplicate authorization rows and cascaded dependent records, recover those deleted rows from backup before expecting this command to restore them.
+
 ## Minor Transition Cleanup
 
 The application infers current minor status from birthday and jurisdiction:

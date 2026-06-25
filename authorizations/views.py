@@ -8874,6 +8874,90 @@ def _tombstone_user_for_merge(user: User, survivor_user: User, acting_user: User
     user.save()
 
 
+def _move_supporting_document_person_links(source_person: Person, survivor_person: Person):
+    for link in SupportingDocumentPerson.objects.filter(person=source_person).select_related('document'):
+        duplicate = SupportingDocumentPerson.objects.filter(
+            document=link.document,
+            person=survivor_person,
+        ).exclude(pk=link.pk).exists()
+        if duplicate:
+            link.delete()
+        else:
+            link.person = survivor_person
+            link.save(update_fields=['person'])
+
+
+def _move_supporting_document_authorization_links(source_auth: Authorization, target_auth: Authorization):
+    for link in SupportingDocumentAuthorization.objects.filter(authorization=source_auth).select_related('document'):
+        duplicate = SupportingDocumentAuthorization.objects.filter(
+            document=link.document,
+            authorization=target_auth,
+        ).exclude(pk=link.pk).exists()
+        if duplicate:
+            link.delete()
+        else:
+            link.authorization = target_auth
+            link.save(update_fields=['authorization'])
+
+
+def _reattach_authorization_history_to_winner(loser: Authorization, winner: Authorization):
+    AuthorizationNote.objects.filter(authorization=loser).update(authorization=winner)
+    AuthorizationValidityInterval.objects.filter(authorization=loser).update(authorization=winner)
+    AuthorizationAuditEntry.objects.filter(authorization=loser).update(authorization=winner)
+    LegacyAuthorizationRecoveryEntry.objects.filter(authorization=loser).update(authorization=winner)
+    _move_supporting_document_authorization_links(loser, winner)
+
+
+def _reattach_person_history_to_survivor(source_user: User, survivor_user: User):
+    source_person = source_user.person
+    survivor_person = survivor_user.person
+
+    UserNote.objects.filter(person=source_person).update(person=survivor_person)
+    UserNote.objects.filter(created_by=source_user).update(created_by=survivor_user)
+    AuthorizationNote.objects.filter(created_by=source_user).update(created_by=survivor_user)
+
+    Authorization.objects.filter(created_by=source_user).update(created_by=survivor_user)
+    Authorization.objects.filter(updated_by=source_user).update(updated_by=survivor_user)
+    AuthorizationValidityInterval.objects.filter(created_by=source_user).update(created_by=survivor_user)
+
+    AuthorizationAuditEntry.objects.filter(person=source_person).update(person=survivor_person)
+    AuthorizationAuditEntry.objects.filter(changed_by=source_user).update(changed_by=survivor_user)
+    AuthorizationAuditEntry.objects.filter(before_person=source_person).update(before_person=survivor_person)
+    AuthorizationAuditEntry.objects.filter(after_person=source_person).update(after_person=survivor_person)
+    AuthorizationAuditEntry.objects.filter(before_marshal=source_person).update(before_marshal=survivor_person)
+    AuthorizationAuditEntry.objects.filter(after_marshal=source_person).update(after_marshal=survivor_person)
+    AuthorizationAuditEntry.objects.filter(before_concurring_fighter=source_person).update(before_concurring_fighter=survivor_person)
+    AuthorizationAuditEntry.objects.filter(after_concurring_fighter=source_person).update(after_concurring_fighter=survivor_person)
+    AuthorizationAuditEntry.objects.filter(before_created_by=source_user).update(before_created_by=survivor_user)
+    AuthorizationAuditEntry.objects.filter(after_created_by=source_user).update(after_created_by=survivor_user)
+    AuthorizationAuditEntry.objects.filter(before_updated_by=source_user).update(before_updated_by=survivor_user)
+    AuthorizationAuditEntry.objects.filter(after_updated_by=source_user).update(after_updated_by=survivor_user)
+
+    BranchMarshal.objects.filter(created_by=source_user).update(created_by=survivor_user)
+    BranchMarshal.objects.filter(updated_by=source_user).update(updated_by=survivor_user)
+
+    Sanction.objects.filter(issued_by=source_user).update(issued_by=survivor_user)
+    Sanction.objects.filter(lifted_by=source_user).update(lifted_by=survivor_user)
+    Sanction.objects.filter(created_by=source_user).update(created_by=survivor_user)
+    Sanction.objects.filter(updated_by=source_user).update(updated_by=survivor_user)
+
+    WaiverRecord.objects.filter(covered_user=source_user).update(covered_user=survivor_user)
+    WaiverRecord.objects.filter(signer_user=source_user).update(signer_user=survivor_user)
+    WaiverRecord.objects.filter(recorded_by=source_user).update(recorded_by=survivor_user)
+
+    SupportingDocument.objects.filter(uploaded_by=source_user).update(uploaded_by=survivor_user)
+    SupportingDocument.objects.filter(reviewed_by=source_user).update(reviewed_by=survivor_user)
+    _move_supporting_document_person_links(source_person, survivor_person)
+
+    LegacyAuthorizationRecoveryEntry.objects.filter(person=source_person).update(person=survivor_person)
+    LegacyAuthorizationRecoveryEntry.objects.filter(marshal=source_person).update(marshal=survivor_person)
+    LegacyAuthorizationRecoveryEntry.objects.filter(second_marshal=source_person).update(second_marshal=survivor_person)
+    LegacyAuthorizationRecoveryEntry.objects.filter(concurring_officer=source_person).update(concurring_officer=survivor_person)
+    LegacyAuthorizationRecoveryEntry.objects.filter(previous_marshal=source_person).update(previous_marshal=survivor_person)
+    LegacyAuthorizationRecoveryEntry.objects.filter(previous_concurring_fighter=source_person).update(previous_concurring_fighter=survivor_person)
+    LegacyAuthorizationRecoveryEntry.objects.filter(created_by=source_user).update(created_by=survivor_user)
+
+
 def _execute_account_merge(
     request,
     survivor_user: User,
@@ -8896,7 +8980,7 @@ def _execute_account_merge(
     Authorization.objects.filter(marshal=source_person).update(marshal=survivor_person)
     Authorization.objects.filter(concurring_fighter=source_person).update(concurring_fighter=survivor_person)
     Person.objects.filter(parent=source_person).update(parent=survivor_person)
-    UserNote.objects.filter(person=source_person).update(person=survivor_person)
+    _reattach_person_history_to_survivor(source_user, survivor_user)
 
     all_auths = list(
         Authorization.objects.select_related('status', 'style')
@@ -8917,7 +9001,7 @@ def _execute_account_merge(
         losers = [candidate for candidate in candidates if candidate.id != winner.id]
 
         for loser in losers:
-            AuthorizationNote.objects.filter(authorization=loser).update(authorization=winner)
+            _reattach_authorization_history_to_winner(loser, winner)
 
         for loser in losers:
             loser.delete()

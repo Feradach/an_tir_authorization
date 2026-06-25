@@ -2,7 +2,6 @@
 * Is trying to promote equestrian instead of renewing 
     * William Brannan	12/06/2025
     * Equestrian - Senior Marshal - Tassi Hestamadr Parker
-* How do we handle duplicated accounts and history?
 
 ## Features
 
