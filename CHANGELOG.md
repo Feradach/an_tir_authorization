@@ -24,6 +24,9 @@
 - Account merges now keep authorization history, notes, waiver records, supporting documents, sanctions, and legacy recovery records attached to the survivor account.
 - Senior Equestrian Marshal renewals were being blocked because they didn't have an active junior marshal authorization.
 
+### Changed
+- Updated the portal youth waiver text to match the Society minor consent and hold harmless agreement.
+- Fighter pages now show expired and suspended authorizations to all viewers in the not-currently-valid authorization section.
 
 ## [1.1.6] - 2026-06-12
 ### Added

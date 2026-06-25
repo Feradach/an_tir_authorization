@@ -4955,7 +4955,7 @@ def _apply_waiver_coverage(request_user: User, target_user: User):
 
 
 ADULT_WAIVER_VERSION = 'adult-portal-2026-05'
-MINOR_WAIVER_VERSION = 'minor-portal-2026-05'
+MINOR_WAIVER_VERSION = 'minor-portal-2026-06'
 
 ADULT_WAIVER_TEXT = (
     'CONSENT TO PARTICIPATE AND RELEASE OF LIABILITY\n\n'
@@ -4983,63 +4983,75 @@ ADULT_WAIVER_TEXT = (
 )
 
 MINOR_WAIVER_TEXT = (
-    'MINOR\'S CONSENT TO PARTICIPATE\n\n'
-    'I hereby state that {minor_legal_name}, (hereafter referred to as "the minor") wishes to participate in activities '
-    'sponsored by the internation organization known as the Society for Creative Anachronism, Inc., a California '
-    'not-for-profit corporation (hereafter "SCA").\n\n'
+    'The Society for Creative Anachronism, Inc.\n'
+    'P.O. Box 66347  Scotts Valley, CA 95067  Tel (408) 912-1524  Fax: (408) 217-5499\n\n'
+    'MINOR\'S CONSENT TO PARTICIPATE AND HOLD HARMLESS AGREEMENT\n\n'
+    '{minor_legal_name} (hereafter referred to as "the minor") does hereby state that the minor wishes to participate '
+    'in activities sponsored by the international organization known as the Society for Creative Anachronism, Inc., '
+    'a California not-for-profit corporation (hereafter "SCA").\n\n'
     'The SCA has rules which govern and may restrict the activities in which the minor can participate. These rules '
     'include, but are not limited to: Corpora, the By-laws, the various kingdom laws and the Rules for combat related '
     'activities.\n\n'
     'The SCA makes no representations or claims as to the condition or safety of the land, structures or surroundings, '
     'whether or not owned, leased, operated or maintained by the SCA.\n\n'
+    'The minor\'s parent(s) or guardian(s) understand that all activities are VOLUNTARY and that the minor does not '
+    'have to participate. It is understood that these activities are potentially dangerous or harmful to the minor\'s '
+    'person or property, and that by participating, the minor\'s parent(s) or guardian(s) voluntarily accepts and '
+    'assumes the risk of injury to the minor or damage to the minor\'s property.\n\n'
     'It is understood that the SCA does NOT provide any insurance coverage for the minor\'s person or property; and '
-    'the minor\'s parent(s) or guardian(s) aknowledge that they are responsible for the minor\'s safety and minor\'s '
-    'own health care needs, and for the protection of the minor\'s property.\n\n'
+    'the minor\'s parent(s) or guardian(s) acknowledge that they are responsible for the minor\'s safety and the '
+    'minor\'s own health care needs, and for the protection of the minor\'s property.\n\n'
     'In exchange for allowing the minor to participate in these SCA activities and events, the minor by and through '
     'the undersigned agrees to release from liability, agrees to indemnify, and hold harmless the SCA, and any SCA '
     'agent, officer, or SCA employee acting within the scope of their duties, for any injury to the minor\'s person '
     'or damage to the minor\'s property.\n\n'
-    'This Release shall be binding upon the minor, the parent(s) or guardian(s), successors in interest, and/or any '
-    'person(s) suing on the minor\'s behalf.\n\n'
+    'This Release shall be binding upon the minor, the parent(s) or guardian(s), any successors in interest, and/or '
+    'any person(s) suing on the minor\'s behalf.\n\n'
     'The minor\'s parent(s) or guardian(s) understand that this document is complete unto itself and that any oral '
     'promises or representations made to them concerning this document and/or its terms are not binding upon the SCA, '
     'its officers, agents and/or employees.\n\n'
     'PARENT OR LEGAL GUARDIAN MUST SIGN BELOW:\n\n'
     'I, the undersigned, state that I am the parent or legal guardian of the minor whose name appears above. I '
     'understand that the above terms and conditions apply to said minor and to myself. I further understand that said '
-    'minor cannot participate under ANY circumstances in armored marial arts, any combat-related activites, '
+    'minor cannot participate under ANY circumstances in armored martial arts, any combat-related activities, '
     'combat-archery, or fencing without parental consent where such participation is allowed by kingdom law. The '
     'minor will not be able to participate in any SCA activities without entering into this agreement. This document '
-    'is binding on myself, the said minor and any person suing on behalf of said minor.'
+    'is binding on myself, the said minor and any person suing on behalf of said minor.\n\n'
+    'Minor\'s Name (PRINT): {minor_legal_name}\n'
+    'Birthdate of minor: {minor_birthdate}  Home State of minor: {minor_home_state}\n'
+    'Legal Name (PRINT): {parent_legal_name}\n'
+    'Legal Name (SIGN): {parent_signature_name}  Date: {signature_date}'
 )
 
 
-def _parent_legal_name_for_minor(target_user: User):
+def _posted_parent_signature_is_valid(request, target_user: User) -> bool:
     person = getattr(target_user, 'person', None)
     if not person or not person.is_current_minor:
-        return None
-    if person.parent:
-        return person.parent.user.first_name, person.parent.user.last_name
-    if person.parent_first_name and person.parent_last_name:
-        return person.parent_first_name, person.parent_last_name
-    return None
-
-
-def _posted_parent_name_matches(request, target_user: User) -> bool:
-    parent_name = _parent_legal_name_for_minor(target_user)
-    if not parent_name:
         return True
-    posted_first = (request.POST.get('parent_first_name') or '').strip()
-    posted_last = (request.POST.get('parent_last_name') or '').strip()
-    parent_first, parent_last = parent_name
+    parent_legal_name = (request.POST.get('parent_legal_name') or '').strip()
+    parent_signature_name = (request.POST.get('parent_signature_name') or '').strip()
     return (
-        posted_first.casefold() == (parent_first or '').strip().casefold()
-        and posted_last.casefold() == (parent_last or '').strip().casefold()
+        bool(parent_legal_name)
+        and bool(parent_signature_name)
+        and parent_legal_name.casefold() == parent_signature_name.casefold()
     )
+
+
+def _split_legal_name(full_name: str):
+    parts = (full_name or '').strip().split()
+    if not parts:
+        return '', ''
+    if len(parts) == 1:
+        return parts[0], ''
+    return parts[0], ' '.join(parts[1:])
 
 
 def _user_legal_name(user: User) -> str:
     return f'{user.first_name} {user.last_name}'.strip()
+
+
+def _user_birthdate_text(user: User) -> str:
+    return user.birthday.isoformat() if user.birthday else ''
 
 
 def _client_ip(request):
@@ -6138,10 +6150,7 @@ def fighter(request, person_id):
     ).filter(
         person_id=person_id,
         status__name='Active',
-        expiration__gte=date.today(),
         effective_expiration_date__lt=date.today(),
-    ).exclude(
-        style__name__in=['Junior Marshal', 'Senior Marshal'],
     ).order_by('style__discipline__name', 'effective_expiration_date', 'style__name')
 
     grouped_authorizations = {}
@@ -6197,22 +6206,31 @@ def fighter(request, person_id):
 
     limited_authorizations = {}
     for auth in limited_authorization_list:
-        actual_expiration = actual_expiration_detail(auth)
-        if not actual_expiration:
-            continue
+        is_expired = auth.expiration < date.today()
+        actual_expiration = {
+            'style': auth.style.name,
+            'expiration': auth.expiration,
+            'display_date': auth.expiration,
+            'limit_date': auth.expiration if is_expired else auth.effective_expiration,
+            'status': 'Actually Expired' if is_expired else 'Effectively Expired',
+        }
         discipline_name = auth.style.discipline.name
-        if discipline_name not in limited_authorizations:
-            limited_authorizations[discipline_name] = {
+        group_key = (discipline_name, actual_expiration['status'])
+        if group_key not in limited_authorizations:
+            limited_authorizations[group_key] = {
+                'discipline': discipline_name,
                 'styles': [auth.style.name],
                 'actual_expirations': [actual_expiration],
                 'earliest_effective_expiration': auth.effective_expiration,
+                'display_status': actual_expiration['status'],
             }
         else:
-            if auth.style.name not in limited_authorizations[discipline_name]['styles']:
-                limited_authorizations[discipline_name]['styles'].append(auth.style.name)
-            limited_authorizations[discipline_name]['actual_expirations'].append(actual_expiration)
-            if auth.effective_expiration < limited_authorizations[discipline_name]['earliest_effective_expiration']:
-                limited_authorizations[discipline_name]['earliest_effective_expiration'] = auth.effective_expiration
+            if auth.style.name not in limited_authorizations[group_key]['styles']:
+                limited_authorizations[group_key]['styles'].append(auth.style.name)
+            limited_authorizations[group_key]['actual_expirations'].append(actual_expiration)
+            if auth.effective_expiration < limited_authorizations[group_key]['earliest_effective_expiration']:
+                limited_authorizations[group_key]['earliest_effective_expiration'] = auth.effective_expiration
+    limited_authorizations = list(limited_authorizations.values())
 
     pending_authorizations = {}
     pending_authorization_groups_by_status = {}
@@ -7787,8 +7805,8 @@ def sign_waiver(request, user_id):
         if not _can_sign_waiver_for_user(request.user, user):
             messages.error(request, 'You can only sign a waiver for your own account or linked child account.')
             return redirect('index')
-        if not _posted_parent_name_matches(request, user):
-            messages.error(request, "The first and last name must match the parent's name.")
+        if not _posted_parent_signature_is_valid(request, user):
+            messages.error(request, "The parent or guardian's printed legal name and signature must match.")
             return redirect('sign_waiver', user_id=user.id)
         ok, msg = _apply_waiver_coverage(request.user, user)
         if ok:
@@ -7796,10 +7814,18 @@ def sign_waiver(request, user_id):
             if is_minor_waiver:
                 waiver_source = WaiverRecord.Source.PORTAL_MINOR_SIGNATURE
                 waiver_type = WaiverRecord.WaiverType.MINOR
-                waiver_text = MINOR_WAIVER_TEXT.format(minor_legal_name=_user_legal_name(user))
+                parent_legal_name = (request.POST.get('parent_legal_name') or '').strip()
+                parent_signature_name = (request.POST.get('parent_signature_name') or '').strip()
+                waiver_text = MINOR_WAIVER_TEXT.format(
+                    minor_legal_name=_user_legal_name(user),
+                    minor_birthdate=_user_birthdate_text(user),
+                    minor_home_state=user.state_province or '',
+                    parent_legal_name=parent_legal_name,
+                    parent_signature_name=parent_signature_name,
+                    signature_date=date.today().isoformat(),
+                )
                 waiver_version = MINOR_WAIVER_VERSION
-                signer_first_name = (request.POST.get('parent_first_name') or '').strip()
-                signer_last_name = (request.POST.get('parent_last_name') or '').strip()
+                signer_first_name, signer_last_name = _split_legal_name(parent_legal_name)
                 signer_relationship = 'parent_guardian'
             else:
                 waiver_source = WaiverRecord.Source.PORTAL_ADULT_SIGNATURE
@@ -7836,6 +7862,9 @@ def sign_waiver(request, user_id):
             'waiver_user': user,
             'is_minor_waiver': bool(getattr(user, 'person', None) and user.person.is_current_minor),
             'minor_legal_name': _user_legal_name(user),
+            'minor_birthdate': _user_birthdate_text(user),
+            'minor_home_state': user.state_province or '',
+            'signature_date': date.today(),
         })
 
 def reject_authorization(request, authorization):

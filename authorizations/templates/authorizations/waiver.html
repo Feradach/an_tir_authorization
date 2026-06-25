@@ -7,28 +7,36 @@
 
 {% block body %}
 {% if is_minor_waiver %}
-    <h2>MINOR'S CONSENT TO PARTICIPATE</h2>
-    <p>I hereby state that {{ minor_legal_name }}, (hereafter referred to as "the minor") wishes to participate in activities sponsored by the internation organization known as the Society for Creative Anachronism, Inc., a California not-for-profit corporation (hereafter "SCA").</p>
+    <h2>The Society for Creative Anachronism, Inc.</h2>
+    <p>P.O. Box 66347 Scotts Valley, CA 95067 Tel (408) 912-1524 Fax: (408) 217-5499</p>
+    <h3>MINOR'S CONSENT TO PARTICIPATE AND HOLD HARMLESS AGREEMENT</h3>
+    <p>{{ minor_legal_name }} (hereafter referred to as "the minor") does hereby state that the minor wishes to participate in activities sponsored by the international organization known as the Society for Creative Anachronism, Inc., a California not-for-profit corporation (hereafter "SCA").</p>
     <p>The SCA has rules which govern and may restrict the activities in which the minor can participate. These rules include, but are not limited to: Corpora, the By-laws, the various kingdom laws and the Rules for combat related activities.</p>
     <p>The SCA makes no representations or claims as to the condition or safety of the land, structures or surroundings, whether or not owned, leased, operated or maintained by the SCA.</p>
-    <p>It is understood that the SCA does NOT provide any insurance coverage for the minor's person or property; and the minor's parent(s) or guardian(s) aknowledge that they are responsible for the minor's safety and minor's own health care needs, and for the protection of the minor's property.</p>
+    <p>The minor's parent(s) or guardian(s) understand that all activities are VOLUNTARY and that the minor does not have to participate. It is understood that these activities are potentially dangerous or harmful to the minor's person or property, and that by participating, the minor's parent(s) or guardian(s) voluntarily accepts and assumes the risk of injury to the minor or damage to the minor's property.</p>
+    <p>It is understood that the SCA does NOT provide any insurance coverage for the minor's person or property; and the minor's parent(s) or guardian(s) acknowledge that they are responsible for the minor's safety and the minor's own health care needs, and for the protection of the minor's property.</p>
     <p>In exchange for allowing the minor to participate in these SCA activities and events, the minor by and through the undersigned agrees to release from liability, agrees to indemnify, and hold harmless the SCA, and any SCA agent, officer, or SCA employee acting within the scope of their duties, for any injury to the minor's person or damage to the minor's property.</p>
-    <p>This Release shall be binding upon the minor, the parent(s) or guardian(s), successors in interest, and/or any person(s) suing on the minor's behalf.</p>
+    <p>This Release shall be binding upon the minor, the parent(s) or guardian(s), any successors in interest, and/or any person(s) suing on the minor's behalf.</p>
     <p>The minor's parent(s) or guardian(s) understand that this document is complete unto itself and that any oral promises or representations made to them concerning this document and/or its terms are not binding upon the SCA, its officers, agents and/or employees.</p>
     <p><strong>PARENT OR LEGAL GUARDIAN MUST SIGN BELOW:</strong></p>
-    <p>I, the undersigned, state that I am the parent or legal guardian of the minor whose name appears above. I understand that the above terms and conditions apply to said minor and to myself. I further understand that said minor cannot participate under ANY circumstances in armored marial arts, any combat-related activites, combat-archery, or fencing without parental consent where such participation is allowed by kingdom law. The minor will not be able to participate in any SCA activities without entering into this agreement. This document is binding on myself, the said minor and any person suing on behalf of said minor.</p>
+    <p>I, the undersigned, state that I am the parent or legal guardian of the minor whose name appears above. I understand that the above terms and conditions apply to said minor and to myself. I further understand that said minor cannot participate under ANY circumstances in armored martial arts, any combat-related activities, combat-archery, or fencing without parental consent where such participation is allowed by kingdom law. The minor will not be able to participate in any SCA activities without entering into this agreement. This document is binding on myself, the said minor and any person suing on behalf of said minor.</p>
+    <div class="mb-3">
+        <p><strong>Minor's Name (PRINT):</strong> {{ minor_legal_name }}</p>
+        <p><strong>Birthdate of minor:</strong> {{ minor_birthdate|default:"-" }} <strong>Home State of minor:</strong> {{ minor_home_state|default:"-" }}</p>
+    </div>
     <form method="post">
         {% csrf_token %}
         <div class="row">
-            <div class="form-group col-md-4">
-                <label for="parent_first_name">Parent First Name</label>
-                <input type="text" id="parent_first_name" name="parent_first_name" class="form-control" required>
+            <div class="form-group col-md-6">
+                <label for="parent_legal_name">Legal Name (PRINT) - Parent/Guardian</label>
+                <input type="text" id="parent_legal_name" name="parent_legal_name" class="form-control" required>
             </div>
-            <div class="form-group col-md-4">
-                <label for="parent_last_name">Parent Last Name</label>
-                <input type="text" id="parent_last_name" name="parent_last_name" class="form-control" required>
+            <div class="form-group col-md-6">
+                <label for="parent_signature_name">Legal Name (SIGN) - Parent/Guardian</label>
+                <input type="text" id="parent_signature_name" name="parent_signature_name" class="form-control" required>
             </div>
         </div>
+        <p><strong>Date:</strong> {{ signature_date|date:"Y-m-d" }}</p>
         <button type="submit" class="btn btn-success">Sign</button>
     </form>
 {% else %}

@@ -93,6 +93,30 @@
         <input type="hidden" name="action" value="send_login_instructions">
         <button type="submit" class="btn btn-primary mb-3">Send Login Instructions</button>
     </form>
+    <h4>Download Fighter Card</h4>
+    <div class="row mb-3">
+        {% if fighter %}
+            <div class="col-md-2">
+                <a href="{% url 'fighter' person_id=person.id %}?pdf=true&template_id=1" class="btn btn-primary" target="_blank">
+                    PDF Fighter Card
+                </a>
+            </div>
+        {% endif %}
+        {% if youth %}
+            <div class="col-md-2">
+                <a href="{% url 'fighter' person_id=person.id %}?pdf=true&template_id=2" class="btn btn-primary" target="_blank">
+                    PDF Youth Fighter Card
+                </a>
+            </div>
+        {% endif %}
+        {% if equestrian %}
+            <div class="col-md-2">
+                <a href="{% url 'fighter' person_id=person.id %}?pdf=true&template_id=3" class="btn btn-primary" target="_blank">
+                    PDF Equestrian Fighter Card
+                </a>
+            </div>
+        {% endif %}
+    </div>
     <h4>Authorizations</h4>
     <div class="row">
         {% for discipline, data in authorization_list.items %}
@@ -156,36 +180,33 @@
     {% if limited_authorization_list %}
         <h4>Authorizations Not Currently Valid</h4>
         <div class="row">
-            {% for discipline, data in limited_authorization_list.items %}
+            {% for data in limited_authorization_list %}
                 <div class="col-md-3">
                     <div class="card mb-3" style="border: 1px solid #ccc; padding: 15px; background: #fff3cd; color: #333;">
-                        <h5>{{ discipline }}</h5>
-                        <p><strong>Styles:</strong>
+                        <h5>{{ data.discipline }}</h5>
+                        <p><strong>Status:</strong> {{ data.display_status }}</p>
                         <ul>
-                        {% for style in data.styles %}
-                          <li>{{ style }}{% if not forloop.last %}, {% endif %}</li>
-                        {% endfor %}
+                            {% for actual_expiration in data.actual_expirations %}
+                                <li>
+                                    <strong>{{ actual_expiration.style }}</strong> -
+                                    <span class="{% if actual_expiration.status == 'Actually Expired' %}past-expiration{% else %}future-expiration{% endif %}">{{ actual_expiration.display_date }}</span>
+                                    {% if actual_expiration.status == "Effectively Expired" %}
+                                        <br>
+                                        <small>
+                                            <details class="d-inline">
+                                                <summary class="d-inline" style="cursor: pointer; list-style: none;">
+                                                    [?]
+                                                </summary>
+                                                <span class="ms-1 text-muted">
+                                                    This authorization has a future renewal date, but is not currently valid because a required membership, background check, or prerequisite authorization is missing or expired.
+                                                </span>
+                                            </details>
+                                            <span class="text-muted">Effective expiration {{ actual_expiration.limit_date }}</span>
+                                        </small>
+                                    {% endif %}
+                                </li>
+                            {% endfor %}
                         </ul>
-                        </p>
-                        <p><strong>Status:</strong> Not currently valid</p>
-                        <p>
-                            <details class="d-inline">
-                                <summary class="d-inline" style="cursor: pointer; list-style: none;">
-                                    [?]
-                                </summary>
-                                <span class="ms-1 small text-muted">
-                                    These authorizations have future renewal dates, but are not currently valid because a prerequisite authorization is missing or expired.
-                                </span>
-                            </details>
-                            <strong>Prerequisite Valid Through:</strong>
-                            <span class="past-expiration">{{ data.earliest_effective_expiration }}</span>
-                        </p>
-                        {% for actual_expiration in data.actual_expirations %}
-                            <p>
-                                <strong>{{ actual_expiration.style }} Renewal:</strong>
-                                <span class="future-expiration">{{ actual_expiration.expiration }}</span>
-                            </p>
-                        {% endfor %}
                     </div>
                 </div>
             {% endfor %}
@@ -488,34 +509,6 @@
         </form>
         {% endif %}
     {% endif %}
-</div>
-
-<div class="card">
-    <h3>Download Fighter Card</h3>
-    <div class="row">
-
-        {% if fighter %}
-            <div class="col-md-2">
-                <a href="{% url 'fighter' person_id=person.id %}?pdf=true&template_id=1" class="btn btn-primary" target="_blank">
-                    PDF Fighter Card
-                </a>
-            </div>
-        {% endif %}
-        {% if youth %}
-            <div class="col-md-2">
-                <a href="{% url 'fighter' person_id=person.id %}?pdf=true&template_id=2" class="btn btn-primary" target="_blank">
-                    PDF Youth Fighter Card
-                </a>
-            </div>
-        {% endif %}
-        {% if equestrian %}
-            <div class="col-md-2">
-                <a href="{% url 'fighter' person_id=person.id %}?pdf=true&template_id=3" class="btn btn-primary" target="_blank">
-                    PDF Equestrian Fighter Card
-                </a>
-            </div>
-        {% endif %}
-    </div>
 </div>
 
 {% if can_view_officer_comments %}

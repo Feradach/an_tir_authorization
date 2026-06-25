@@ -1,12 +1,9 @@
 # Bugs
-* Is trying to promote equestrian instead of renewing 
-    * William Brannan	12/06/2025
-    * Equestrian - Senior Marshal - Tassi Hestamadr Parker
+
 
 ## Features
 
 ### Urgent
-* Create an "expired" section on the fighter page.
 * Create person search page. Open up to those with an active senior marshal authorization.
 * Add optional middle name and suffix to person form.
 * Remove "country" from the address and infer it from state/province. (make sure that minor calculates correctly, do a check for bad data.)

@@ -7546,10 +7546,20 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn('Rapier Combat', response.context['authorization_list'])
-        self.assertIn('Rapier Combat', response.context['limited_authorization_list'])
+        limited_groups = response.context['limited_authorization_list']
+        self.assertTrue(any(
+            group['discipline'] == 'Rapier Combat' and group['display_status'] == 'Effectively Expired'
+            for group in limited_groups
+        ))
+        self.assertTrue(any(
+            group['discipline'] == 'Rapier Combat' and group['display_status'] == 'Actually Expired'
+            for group in limited_groups
+        ))
         self.assertContains(response, 'Authorizations Not Currently Valid')
-        self.assertContains(response, 'Case Renewal:')
+        self.assertContains(response, 'Effectively Expired')
+        self.assertContains(response, 'Case')
         self.assertContains(response, formatted_case_expiration)
+        self.assertNotContains(response, 'Case Renewal:')
 
     def test_auth_officer_can_view_dependency_limited_authorization_not_currently_valid(self):
         style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
@@ -7573,15 +7583,22 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn('Rapier Combat', response.context['limited_authorization_list'])
+        limited_groups = response.context['limited_authorization_list']
+        self.assertTrue(any(
+            group['discipline'] == 'Rapier Combat' and group['display_status'] == 'Effectively Expired'
+            for group in limited_groups
+        ))
         self.assertContains(response, 'Authorizations Not Currently Valid')
-        self.assertContains(response, 'Case Renewal:')
+        self.assertContains(response, 'Effectively Expired')
+        self.assertContains(response, 'Case')
         self.assertContains(response, formatted_case_expiration)
+        self.assertNotContains(response, 'Case Renewal:')
 
-    def test_unrelated_viewer_cannot_view_dependency_limited_authorization_not_currently_valid(self):
+    def test_unrelated_viewer_can_view_dependency_limited_authorization_not_currently_valid(self):
         style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
         single_sword_expiration = date.today() - timedelta(days=1)
         case_expiration = date.today() + relativedelta(years=1)
+        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
         self.grant_authorization(
             self.candidate_ao_person,
             self.style_single_rapier,
@@ -7600,9 +7617,73 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_ao_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context['limited_authorization_list'], {})
-        self.assertNotContains(response, 'Authorizations Not Currently Valid')
+        limited_groups = response.context['limited_authorization_list']
+        self.assertTrue(any(
+            group['discipline'] == 'Rapier Combat' and group['display_status'] == 'Effectively Expired'
+            for group in limited_groups
+        ))
+        self.assertContains(response, 'Authorizations Not Currently Valid')
+        self.assertContains(response, 'Effectively Expired')
+        self.assertContains(response, 'Case')
+        self.assertContains(response, formatted_case_expiration)
         self.assertNotContains(response, 'Case Renewal:')
+
+    def test_anonymous_viewer_can_view_expired_authorization_not_currently_valid(self):
+        expired_authorization = self.grant_authorization(
+            self.candidate_armored_person,
+            self.style_weapon_armored,
+            expiration=date.today() - timedelta(days=1),
+            marshal=self.kao_person,
+        )
+        formatted_expiration = (
+            f'{expired_authorization.expiration.strftime("%B")} '
+            f'{expired_authorization.expiration.day}, {expired_authorization.expiration.year}'
+        )
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        limited_groups = response.context['limited_authorization_list']
+        self.assertTrue(any(
+            group['discipline'] == 'Armored Combat' and group['display_status'] == 'Actually Expired'
+            for group in limited_groups
+        ))
+        self.assertContains(response, 'Authorizations Not Currently Valid')
+        self.assertContains(response, 'Actually Expired')
+        self.assertContains(response, 'Weapon &amp; Shield')
+        self.assertContains(response, formatted_expiration)
+        self.assertNotContains(response, 'Expired On:')
+
+    def test_anonymous_viewer_can_view_membership_suspended_marshal_authorization(self):
+        suspended_user, suspended_person = self.make_person(
+            'membership_suspended_marshal',
+            'Membership Suspended Marshal',
+            membership_expiration=date.today() - timedelta(days=1),
+        )
+        marshal_authorization = self.grant_authorization(
+            suspended_person,
+            self.style_sm_armored,
+            expiration=date.today() + relativedelta(years=1),
+            marshal=self.kao_person,
+        )
+        formatted_expiration = (
+            f'{marshal_authorization.expiration.strftime("%B")} '
+            f'{marshal_authorization.expiration.day}, {marshal_authorization.expiration.year}'
+        )
+
+        response = self.client.get(reverse('fighter', kwargs={'person_id': suspended_user.id}))
+
+        self.assertEqual(response.status_code, 200)
+        limited_groups = response.context['limited_authorization_list']
+        self.assertTrue(any(
+            group['discipline'] == 'Armored Combat' and group['display_status'] == 'Effectively Expired'
+            for group in limited_groups
+        ))
+        self.assertContains(response, 'Authorizations Not Currently Valid')
+        self.assertContains(response, 'Effectively Expired')
+        self.assertContains(response, 'Senior Marshal')
+        self.assertContains(response, formatted_expiration)
+        self.assertNotContains(response, 'Senior Marshal Renewal:')
 
     def test_equestrian_actual_expiration_visibility_is_scoped_to_keao(self):
         discipline_equestrian, _ = Discipline.objects.get_or_create(name='Equestrian')
@@ -9454,19 +9535,21 @@ class WaiverWorkflowTests(ViewTestBase):
         response = self.client.get(reverse('sign_waiver', kwargs={'user_id': self.minor_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'I hereby state that Waiver Minor')
+        self.assertContains(response, "MINOR'S CONSENT TO PARTICIPATE AND HOLD HARMLESS AGREEMENT")
         self.assertContains(response, 'Waiver Minor')
-        self.assertContains(response, 'name="parent_first_name"')
-        self.assertContains(response, 'name="parent_last_name"')
+        self.assertContains(response, self.minor_user.birthday.isoformat())
+        self.assertContains(response, 'Oregon')
+        self.assertContains(response, 'name="parent_legal_name"')
+        self.assertContains(response, 'name="parent_signature_name"')
 
-    def test_minor_waiver_rejects_parent_name_mismatch(self):
+    def test_minor_waiver_rejects_parent_signature_mismatch(self):
         self.client.login(username=self.minor_user.username, password='StrongPass!123')
 
         response = self.client.post(
             reverse('sign_waiver', kwargs={'user_id': self.minor_user.id}),
             {
-                'parent_first_name': 'Wrong',
-                'parent_last_name': 'Guardian',
+                'parent_legal_name': 'Parent Guardian',
+                'parent_signature_name': 'Wrong Guardian',
             },
             follow=True,
         )
@@ -9474,16 +9557,19 @@ class WaiverWorkflowTests(ViewTestBase):
         self.minor_user.refresh_from_db()
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(self.minor_user.waiver_expiration)
-        self.assertIn("The first and last name must match the parent's name.", self.messages_for(response))
+        self.assertIn(
+            "The parent or guardian's printed legal name and signature must match.",
+            self.messages_for(response),
+        )
 
-    def test_minor_waiver_accepts_matching_parent_name(self):
+    def test_minor_waiver_accepts_matching_parent_signature(self):
         self.client.login(username=self.minor_user.username, password='StrongPass!123')
 
         response = self.client.post(
             reverse('sign_waiver', kwargs={'user_id': self.minor_user.id}),
             {
-                'parent_first_name': 'Parent',
-                'parent_last_name': 'Guardian',
+                'parent_legal_name': 'Parent Guardian',
+                'parent_signature_name': 'Parent Guardian',
             },
             follow=True,
         )
@@ -9495,6 +9581,11 @@ class WaiverWorkflowTests(ViewTestBase):
         self.assertEqual(record.source, WaiverRecord.Source.PORTAL_MINOR_SIGNATURE)
         self.assertEqual(record.signer_first_name, 'Parent')
         self.assertEqual(record.signer_last_name, 'Guardian')
+        self.assertEqual(record.waiver_version, 'minor-portal-2026-06')
+        self.assertIn('MINOR\'S CONSENT TO PARTICIPATE AND HOLD HARMLESS AGREEMENT', record.waiver_text)
+        self.assertIn(f'Birthdate of minor: {self.minor_user.birthday.isoformat()}', record.waiver_text)
+        self.assertIn('Home State of minor: Oregon', record.waiver_text)
+        self.assertIn('Legal Name (SIGN): Parent Guardian', record.waiver_text)
 
     def test_authorization_officer_cannot_view_other_users_waiver_page(self):
         self.client.login(username=self.ao_user.username, password='StrongPass!123')
