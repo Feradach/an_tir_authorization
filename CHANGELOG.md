@@ -19,7 +19,7 @@
 ### Removed
 
 
-## [1.1.7] - 2026-10-18
+## [1.1.7] - 2026-06-25
 ### Added
 - If you search for a user who has no authorizations (or no authorizations in the current filter), the search results will now show a matching fighter record so you can still open the fighter page.
 
