@@ -5629,6 +5629,8 @@ def search(request):
     if email_addr := request.GET.get('email'):
         # Using 'iexact' makes the email search case-insensitive
         dynamic_filter &= Q(person__user__email__iexact=email_addr)
+
+    person_identifying_search = bool(sca_name or membership_num or email_addr)
     
     
     # === STEP 4: LOGIC FOR DIFFERENT VIEW MODES ===
@@ -5699,6 +5701,39 @@ def search(request):
         paginator = Paginator(authorization_list, items_per_page)
         page_obj = paginator.get_page(request.GET.get('page', 1))
 
+    person_fallback_results = []
+    if page_obj.paginator.count == 0 and person_identifying_search:
+        person_matches = _exclude_system_people(
+            Person.objects.select_related('branch__region', 'user').filter(
+                user__merged_into__isnull=True,
+            )
+        )
+        if sca_name:
+            person_matches = person_matches.filter(sca_name=sca_name)
+        if region:
+            person_matches = person_matches.filter(branch__region__name=region)
+        if branch:
+            person_matches = person_matches.filter(branch__name=branch)
+        if membership_num:
+            person_matches = person_matches.filter(user__membership=membership_num)
+        if email_addr:
+            person_matches = person_matches.filter(user__email__iexact=email_addr)
+        if minor_filter_value is not None:
+            person_matches = person_matches.annotate(
+                inferred_minor=_inferred_minor_annotation('user__'),
+            ).filter(inferred_minor=minor_filter_value)
+
+        person_matches = person_matches.order_by('sca_name', 'user_id')
+        for person in person_matches:
+            if Authorization.objects.filter(person_id=person.user_id).exists():
+                match_status = 'No authorizations match the selected filters.'
+            else:
+                match_status = 'No authorizations on file.'
+            person_fallback_results.append({
+                'person': person,
+                'match_status': match_status,
+            })
+
     # === STEP 4: RENDER THE TEMPLATE ===
     query_params = request.GET.copy()
     if 'page' in query_params:
@@ -5718,6 +5753,7 @@ def search(request):
             'view_mode': view_mode,
             'today': date.today(),
             'querystring': query_params.urlencode(),
+            'person_fallback_results': person_fallback_results,
             
             # Add these back in for the table header filters
             'sca_name_options': sca_name_options,

@@ -12,6 +12,9 @@
     <div class="col-md-12 content-loading" id="main-content">
         {# Responsive View-Switcher Links #}
         <div class="mb-3">
+            <a href="{% url 'search' %}?goal=search&{{ request.GET.urlencode }}" class="btn btn-secondary btn-sm">
+                New/Modify Search
+            </a>
 
             {% if view_mode == 'table' %}
                 {# If we are currently in TABLE view, the link should offer to switch to CARD view. #}
@@ -31,8 +34,6 @@
         {% if view_mode == 'card' %}
             {# --- CARD VIEW HTML --- #}
             <div id="card-view">
-                <a href="{% url 'search' %}?goal=search&{{ request.GET.urlencode }}" class="btn btn-secondary mb-3">New/Modify Search</a>
-                
                 <div class="cards mt-3">
                     {% for person in page_obj %}
                     <div class="card mb-3">
@@ -59,148 +60,205 @@
                         </div>
                     </div>
                     {% empty %}
-                        <p>No people found matching your criteria.</p>
+                        {% if person_fallback_results %}
+                            {% for result in person_fallback_results %}
+                                <div class="card mb-3">
+                                    <div class="card-body">
+                                        <h5 class="card-title">
+                                            <a href="{% url 'fighter' person_id=result.person.user_id %}">{{ result.person.sca_name }}</a>
+                                        </h5>
+                                        <h6 class="card-subtitle mb-2 text-muted">
+                                            {% if result.person.branch %}{{ result.person.branch.name }}{% else %}-{% endif %}
+                                            {% if result.person.branch and result.person.branch.region %}, {{ result.person.branch.region.name }}{% endif %}
+                                        </h6>
+                                        <p class="card-text"><strong>Minor Status:</strong> {{ result.person.minor_status }}</p>
+
+                                        <h6>Authorizations:</h6>
+                                        <ul class="list-group list-group-flush">
+                                            <li class="list-group-item">{{ result.match_status }}</li>
+                                        </ul>
+                                        <a href="{% url 'fighter' person_id=result.person.user_id %}" class="btn btn-primary mt-3">View Fighter Page</a>
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p>No people found matching your criteria.</p>
+                        {% endif %}
                     {% endfor %}
                 </div>
             </div>
             
         {% else %}
             {# --- TABLE VIEW HTML --- #}
-            <div id="table-view" class="table-responsive">
-                {# Items per page form can go here #}
+            {% if not person_fallback_results %}
+                <div id="table-view" class="table-responsive">
+                    {# Items per page form can go here #}
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                {# --- SCA Name Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=person__sca_name&{{ request.GET.urlencode }}">SCA Name</a>
+                                    <form method="get" class="mt-1">
+                                        <select name="sca_name" class="choices-dropdown">
+                                            <option value="">All</option>
+                                            {% for option in sca_name_options %}
+                                                <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>{{ option }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </form>
+                                </th>
+
+                                {# --- Region Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=person__branch__region__name&{{ request.GET.urlencode }}">Region</a>
+                                    <form method="get" class="mt-1">
+                                        <select name="region" class="choices-dropdown">
+                                            <option value="">All</option>
+                                            {% for option in region_options %}
+                                                <option value="{{ option }}" {% if request.GET.region == option %}selected{% endif %}>{{ option }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </form>
+                                </th>
+
+                                {# --- Branch Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=person__branch__name&{{ request.GET.urlencode }}">Branch</a>
+                                    <form method="get" class="mt-1">
+                                        <select name="branch" class="choices-dropdown">
+                                            <option value="">All</option>
+                                            {% for option in branch_options %}
+                                                <option value="{{ option }}" {% if request.GET.branch == option %}selected{% endif %}>{{ option }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </form>
+                                </th>
+
+                                {# --- Discipline Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=style__discipline__name&{{ request.GET.urlencode }}">Discipline</a>
+                                    <form method="get" class="mt-1">
+                                        <select name="discipline" class="choices-dropdown">
+                                            <option value="">All</option>
+                                            {% for option in discipline_options %}
+                                                <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>{{ option }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </form>
+                                </th>
+
+                                {# --- Weapon Style Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=style__name&{{ request.GET.urlencode }}">Weapon Style</a>
+                                    <form method="get" class="mt-1">
+                                        <select name="style" class="choices-dropdown">
+                                            <option value="">All</option>
+                                            {% for option in style_options %}
+                                                <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>{{ option }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </form>
+                                </th>
+
+                                {# --- Authorizing Marshal Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=marshal__sca_name&{{ request.GET.urlencode }}">Marshal</a>
+                                    <form method="get" class="mt-1">
+                                        <select name="marshal" class="choices-dropdown">
+                                            <option value="">All</option>
+                                            {% for option in marshal_options %}
+                                                <option value="{{ option }}" {% if request.GET.marshal == option %}selected{% endif %}>{{ option }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </form>
+                                </th>
+
+                                {# --- Expiration Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=expiration&{{ request.GET.urlencode }}">Expiration</a>
+                                    <form method="get" id="date_filter_form" class="mt-1">
+                                        <div class="form-check mb-1">
+                                            <input class="form-check-input" type="checkbox" id="is_current" name="is_current" value="1" {% if request.GET.is_current %}checked{% endif %}>
+                                            <label class="form-check-label" for="is_current">Is Current</label>
+                                        </div>
+                                        <label for="start_date" class="form-label small d-block">After:</label>
+                                        <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date|default:'' }}" class="form-control form-control-sm">
+
+                                        <label for="end_date" class="form-label small d-block mt-1">Before:</label>
+                                        <input type="date" name="end_date" id="end_date" value="{{ request.GET.end_date|default:'' }}" class="form-control form-control-sm">
+                                    </form>
+                                </th>
+
+                                {# --- Minor Status Column --- #}
+                                <th>
+                                    <a class="sort" href="?sort=person__is_minor&{{ request.GET.urlencode }}">Minor</a>
+                                    <form method="get" class="mt-1">
+                                        <select name="is_minor" class="choices-dropdown">
+                                            <option value="" {% if request.GET.is_minor == "" %}selected{% endif %}>All</option>
+                                            <option value="True" {% if request.GET.is_minor == "True" %}selected{% endif %}>Yes</option>
+                                            <option value="False" {% if request.GET.is_minor == "False" %}selected{% endif %}>No</option>
+                                        </select>
+                                    </form>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for auth in page_obj %}
+                            <tr>
+                                <td><a href="{% url 'fighter' person_id=auth.person.id %}">{{ auth.person.sca_name }}</a></td>
+                                <td>{{ auth.person.branch.region.name }}</td>
+                                <td>{{ auth.person.branch.name }}</td>
+                                <td>{{ auth.style.discipline.name }}</td>
+                                <td>{{ auth.style.name }}</td>
+                                <td>{{ auth.marshal.sca_name }}</td>
+                                <td class="{% if auth.effective_expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.effective_expiration }}</td>
+                                <td>{{ auth.person.minor_status }}</td>
+                            </tr>
+                            {% empty %}
+                                <tr>
+                                    <td colspan="8">No authorizations found matching your criteria.</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% endif %}
+        {% endif %}
+
+        {% if person_fallback_results %}
+            {% if view_mode == 'table' %}
+            <div class="table-responsive">
+                <h3>Fighter Records Matching This Search</h3>
+                <p>No matching authorizations were found. These fighter records match the person information in your search.</p>
                 <table class="table table-striped table-hover">
                     <thead>
                         <tr>
-                            {# --- SCA Name Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=person__sca_name&{{ request.GET.urlencode }}">SCA Name</a>
-                                <form method="get" class="mt-1">
-                                    <select name="sca_name" class="choices-dropdown">
-                                        <option value="">All</option>
-                                        {% for option in sca_name_options %}
-                                            <option value="{{ option }}" {% if request.GET.sca_name == option %}selected{% endif %}>{{ option }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </form>
-                            </th>
-                    
-                            {# --- Region Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=person__branch__region__name&{{ request.GET.urlencode }}">Region</a>
-                                <form method="get" class="mt-1">
-                                    <select name="region" class="choices-dropdown">
-                                        <option value="">All</option>
-                                        {% for option in region_options %}
-                                            <option value="{{ option }}" {% if request.GET.region == option %}selected{% endif %}>{{ option }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </form>
-                            </th>
-                    
-                            {# --- Branch Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=person__branch__name&{{ request.GET.urlencode }}">Branch</a>
-                                <form method="get" class="mt-1">
-                                    <select name="branch" class="choices-dropdown">
-                                        <option value="">All</option>
-                                        {% for option in branch_options %}
-                                            <option value="{{ option }}" {% if request.GET.branch == option %}selected{% endif %}>{{ option }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </form>
-                            </th>
-                    
-                            {# --- Discipline Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=style__discipline__name&{{ request.GET.urlencode }}">Discipline</a>
-                                <form method="get" class="mt-1">
-                                    <select name="discipline" class="choices-dropdown">
-                                        <option value="">All</option>
-                                        {% for option in discipline_options %}
-                                            <option value="{{ option }}" {% if request.GET.discipline == option %}selected{% endif %}>{{ option }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </form>
-                            </th>
-                    
-                            {# --- Weapon Style Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=style__name&{{ request.GET.urlencode }}">Weapon Style</a>
-                                <form method="get" class="mt-1">
-                                    <select name="style" class="choices-dropdown">
-                                        <option value="">All</option>
-                                        {% for option in style_options %}
-                                            <option value="{{ option }}" {% if request.GET.style == option %}selected{% endif %}>{{ option }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </form>
-                            </th>
-                    
-                            {# --- Authorizing Marshal Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=marshal__sca_name&{{ request.GET.urlencode }}">Marshal</a>
-                                <form method="get" class="mt-1">
-                                    <select name="marshal" class="choices-dropdown">
-                                        <option value="">All</option>
-                                        {% for option in marshal_options %}
-                                            <option value="{{ option }}" {% if request.GET.marshal == option %}selected{% endif %}>{{ option }}</option>
-                                        {% endfor %}
-                                    </select>
-                                </form>
-                            </th>
-                    
-                            {# --- Expiration Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=expiration&{{ request.GET.urlencode }}">Expiration</a>
-                                <form method="get" id="date_filter_form" class="mt-1">
-                                    <div class="form-check mb-1">
-                                        <input class="form-check-input" type="checkbox" id="is_current" name="is_current" value="1" {% if request.GET.is_current %}checked{% endif %}>
-                                        <label class="form-check-label" for="is_current">Is Current</label>
-                                    </div>
-                                    <label for="start_date" class="form-label small d-block">After:</label>
-                                    <input type="date" name="start_date" id="start_date" value="{{ request.GET.start_date|default:'' }}" class="form-control form-control-sm">
-                                    
-                                    <label for="end_date" class="form-label small d-block mt-1">Before:</label>
-                                    <input type="date" name="end_date" id="end_date" value="{{ request.GET.end_date|default:'' }}" class="form-control form-control-sm">
-                                </form>
-                            </th>
-                            
-                            {# --- Minor Status Column --- #}
-                            <th>
-                                <a class="sort" href="?sort=person__is_minor&{{ request.GET.urlencode }}">Minor</a>
-                                <form method="get" class="mt-1">
-                                    <select name="is_minor" class="choices-dropdown">
-                                        <option value="" {% if request.GET.is_minor == "" %}selected{% endif %}>All</option>
-                                        <option value="True" {% if request.GET.is_minor == "True" %}selected{% endif %}>Yes</option>
-                                        <option value="False" {% if request.GET.is_minor == "False" %}selected{% endif %}>No</option>
-                                    </select>
-                                </form>
-                            </th>
+                            <th>SCA Name</th>
+                            <th>Region</th>
+                            <th>Branch</th>
+                            <th>Authorization Match</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for auth in page_obj %}
-                        <tr>
-                            <td><a href="{% url 'fighter' person_id=auth.person.id %}">{{ auth.person.sca_name }}</a></td>
-                            <td>{{ auth.person.branch.region.name }}</td>
-                            <td>{{ auth.person.branch.name }}</td>
-                            <td>{{ auth.style.discipline.name }}</td>
-                            <td>{{ auth.style.name }}</td>
-                            <td>{{ auth.marshal.sca_name }}</td>
-                            <td class="{% if auth.effective_expiration >= today %}future-expiration{% else %}past-expiration{% endif %}">{{ auth.effective_expiration }}</td>
-                            <td>{{ auth.person.minor_status }}</td>
-                        </tr>
-                        {% empty %}
+                        {% for result in person_fallback_results %}
                             <tr>
-                                <td colspan="8">No authorizations found matching your criteria.</td>
+                                <td><a href="{% url 'fighter' person_id=result.person.user_id %}">{{ result.person.sca_name }}</a></td>
+                                <td>{% if result.person.branch and result.person.branch.region %}{{ result.person.branch.region.name }}{% else %}-{% endif %}</td>
+                                <td>{% if result.person.branch %}{{ result.person.branch.name }}{% else %}-{% endif %}</td>
+                                <td>{{ result.match_status }}</td>
+                                <td><a href="{% url 'fighter' person_id=result.person.user_id %}" class="btn btn-primary btn-sm">View Fighter Page</a></td>
                             </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
+            {% endif %}
         {% endif %}
 
         {# --- PAGINATION CONTROLS (works for both views) --- #}
+        {% if not person_fallback_results %}
         <nav aria-label="Page navigation">
             <ul class="pagination">
                 {% if page_obj.has_previous %}
@@ -229,6 +287,7 @@
                 Download CSV
             </a>
         </div>
+        {% endif %}
         {% endif %}
     </div>
 {% endblock %}

@@ -2542,6 +2542,65 @@ class SearchFilteringAndPaginationTests(AdditionalCoverageBase):
         page_ids = [auth.id for auth in response.context['page_obj'].object_list]
         self.assertEqual(page_ids, [target_auth.id])
 
+    def test_person_specific_empty_search_shows_fighter_record_fallback(self):
+        _, target = self.make_person('search_empty_person', 'Search Empty Person')
+
+        response = self.client.get(reverse('search'), {'sca_name': target.sca_name})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['page_obj'].paginator.count, 0)
+        fallback_results = response.context['person_fallback_results']
+        self.assertEqual(len(fallback_results), 1)
+        self.assertEqual(fallback_results[0]['person'], target)
+        self.assertEqual(fallback_results[0]['match_status'], 'No authorizations on file.')
+        self.assertContains(response, 'Fighter Records Matching This Search')
+        self.assertContains(response, 'No authorizations on file.')
+        self.assertNotContains(response, 'Download CSV')
+        self.assertNotContains(response, '<td colspan="8">No authorizations found matching your criteria.</td>', html=True)
+
+    def test_person_specific_empty_search_distinguishes_nonmatching_authorizations(self):
+        _, target = self.make_person('search_filtered_person', 'Search Filtered Person')
+        self.grant_authorization(target, self.style_weapon_armored, status=self.status_active)
+
+        response = self.client.get(
+            reverse('search'),
+            {'sca_name': target.sca_name, 'discipline': self.discipline_rapier.name},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['page_obj'].paginator.count, 0)
+        fallback_results = response.context['person_fallback_results']
+        self.assertEqual(len(fallback_results), 1)
+        self.assertEqual(fallback_results[0]['person'], target)
+        self.assertEqual(
+            fallback_results[0]['match_status'],
+            'No authorizations match the selected filters.',
+        )
+        self.assertContains(response, 'No authorizations match the selected filters.')
+
+    def test_card_view_person_fallback_uses_card_layout(self):
+        _, target = self.make_person('search_empty_card_person', 'Search Empty Card Person')
+
+        response = self.client.get(reverse('search'), {'view': 'card', 'sca_name': target.sca_name})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['page_obj'].paginator.count, 0)
+        self.assertContains(response, 'class="card mb-3"')
+        self.assertContains(response, 'No authorizations on file.')
+        self.assertContains(response, 'View Fighter Page')
+        self.assertNotContains(response, 'Fighter Records Matching This Search')
+        self.assertNotContains(response, '<table class="table table-striped table-hover">', html=True)
+
+    def test_broad_empty_search_does_not_show_fighter_record_fallback(self):
+        self.make_person('search_branch_only_person', 'Search Branch Only Person')
+
+        response = self.client.get(reverse('search'), {'branch': self.branch_gd.name})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['page_obj'].paginator.count, 0)
+        self.assertEqual(response.context['person_fallback_results'], [])
+        self.assertNotContains(response, 'Fighter Records Matching This Search')
+
     def test_minor_filter_limits_results(self):
         _, minor = self.make_person(
             'search_minor_yes',
