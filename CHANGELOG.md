@@ -5,7 +5,7 @@
 
 ### Added
 
-- Added a dry-run-first repair command for reattaching surviving history from previously merged accounts to the survivor account.
+
 
 ### Changed
 
