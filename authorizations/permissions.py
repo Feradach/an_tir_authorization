@@ -752,7 +752,20 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
 
     # Rule 14: An Equestrian Senior marshal must already have Junior Marshal and Mounted Gaming Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Senior Marshal':
-        if not (active_authorizations.filter(style__name='Junior Marshal', style__discipline__name='Equestrian').exists() and active_authorizations.filter(style__name='Mounted Gaming').exists()):
+        existing_senior_equestrian = all_authorizations.filter(
+            style__name='Senior Marshal',
+            style__discipline__name='Equestrian',
+        ).exclude(
+            status__name__in=terminal_prerequisite_statuses,
+        ).exists()
+        has_required_junior = existing_senior_equestrian or active_authorizations.filter(
+            style__name='Junior Marshal',
+            style__discipline__name='Equestrian',
+        ).exists()
+        if not (
+            has_required_junior
+            and active_authorizations.filter(style__name='Mounted Gaming').exists()
+        ):
             return False, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.'
 
     # Rule 15: For first-time special authorizations, the authorizing marshal must hold that skill.
@@ -1620,13 +1633,24 @@ def appoint_branch_marshal(request):
     """Adds a new marshal office appointment."""
 
     # Get the data from the request.
-    try:
-        person = Person.objects.get(sca_name=request.POST['person'])
-        branch = Branch.objects.get(name=request.POST['branch'])
-        discipline = Discipline.objects.get(name=request.POST['discipline'])
-        start_date_raw = request.POST['start_date']
-    except Exception:
+    person_id = request.POST.get('person_id')
+    branch_id = request.POST.get('branch_id')
+    discipline_id = request.POST.get('discipline_id')
+    start_date_raw = request.POST.get('start_date')
+    if not person_id or not branch_id or not discipline_id or start_date_raw is None:
         return False, 'Missing data'
+    try:
+        person = Person.objects.select_related('user').get(user_id=person_id)
+    except (TypeError, ValueError, Person.DoesNotExist):
+        return False, 'Selected fighter was not found.'
+    try:
+        branch = Branch.objects.get(id=branch_id)
+    except (TypeError, ValueError, Branch.DoesNotExist):
+        return False, 'Selected branch was not found.'
+    try:
+        discipline = Discipline.objects.get(id=discipline_id)
+    except (TypeError, ValueError, Discipline.DoesNotExist):
+        return False, 'Selected discipline was not found.'
     try:
         start_date = datetime.strptime(start_date_raw, '%Y-%m-%d').date()
     except (TypeError, ValueError):

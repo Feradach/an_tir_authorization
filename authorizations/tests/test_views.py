@@ -44,7 +44,11 @@ from authorizations.models import (
     SYSTEM_USER_IDS,
 )
 from authorizations.reporting import EQUESTRIAN_TYPE_ORDER, QUARTERLY_DISCIPLINE_MAP, REGION_ORDER
-from authorizations.views import _fit_pdf_text_for_field, PDF_NAME_MIN_FONT_SIZE
+from authorizations.views import (
+    _fit_pdf_text_for_field,
+    _legacy_recovery_paper_rules_were_met,
+    PDF_NAME_MIN_FONT_SIZE,
+)
 
 
 class ViewTestBase(TestCase):
@@ -2881,6 +2885,7 @@ class UserAccountViewTests(ViewTestBase):
     def paper_concurrer_fields(self, person=None, count=1):
         person = person or self.paper_concurrer_person
         return {
+            'concurring_officer_id': [str(person.user_id)] * count,
             'concurring_officer_sca_name': [person.sca_name] * count,
             'concurring_officer_first_name': [person.user.first_name] * count,
             'concurring_officer_last_name': [person.user.last_name] * count,
@@ -4341,10 +4346,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id), str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield', 'Armored Combat - Two-Handed'],
+                'marshal_id': [str(self.ao_person.user_id), str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -4404,10 +4411,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id), str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield', 'Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id), str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -4459,6 +4468,7 @@ class UserAccountViewTests(ViewTestBase):
                 'person_phone_number': ['5035550199', '5035550199'],
                 'person_branch': [str(self.branch_gd.id), str(self.branch_gd.id)],
                 'weapon_style': ['Armored Combat - Weapon & Shield', 'Rapier Combat - Dagger'],
+                'marshal_id': [str(self.ao_person.user_id), str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -4490,10 +4500,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id), str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield', 'Rapier Combat - Dagger'],
+                'marshal_id': [str(self.ao_person.user_id), str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -4516,10 +4528,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.owner_person.user_id)],
                 'marshal_sca_name': [self.owner_person.sca_name],
                 'marshal_first_name': [self.owner_user.first_name],
                 'marshal_last_name': [self.owner_user.last_name],
@@ -4545,10 +4559,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(future_marshal.user_id)],
                 'marshal_sca_name': [future_marshal.sca_name],
                 'marshal_first_name': [future_marshal_user.first_name],
                 'marshal_last_name': [future_marshal_user.last_name],
@@ -4568,10 +4584,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4590,10 +4608,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4615,13 +4635,16 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'concurring_officer_id': [str(novice_person.user_id)],
                 'concurring_officer_sca_name': [novice_person.sca_name],
                 'concurring_officer_first_name': [novice_user.first_name],
                 'concurring_officer_last_name': [novice_user.last_name],
@@ -4648,10 +4671,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Rapier Combat - Dagger'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4684,10 +4709,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Rapier Combat - Dagger'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4706,10 +4733,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Equestrian - General Riding'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4730,10 +4759,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4753,10 +4784,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Youth Armored - Gryphon - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4782,10 +4815,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(youth_person.user_id)],
                 'person_sca_name': [youth_person.sca_name],
                 'person_first_name': [youth_user.first_name],
                 'person_last_name': [youth_user.last_name],
                 'weapon_style': ['Youth Armored - Gryphon - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4812,10 +4847,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Equestrian - General Riding'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4842,10 +4879,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(keao_person.user_id)],
                 'marshal_sca_name': [keao_person.sca_name],
                 'marshal_first_name': [keao_user.first_name],
                 'marshal_last_name': [keao_user.last_name],
@@ -4858,6 +4897,65 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Only the Kingdom Authorization Officer can enter non-equestrian paper authorizations.')
         self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
+
+    def test_paper_rules_allow_senior_equestrian_renewal_without_current_junior_marshal(self):
+        style_eq_jm = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_equestrian)
+        style_eq_sm = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_equestrian)
+        style_eq_mounted_gaming = WeaponStyle.objects.create(name='Mounted Gaming', discipline=self.discipline_equestrian)
+        auth_date = date(2025, 5, 10)
+        junior_auth = self.grant_authorization(
+            self.owner_person,
+            style_eq_jm,
+            status=self.status_inactive,
+            expiration=date(2025, 5, 9),
+            marshal=self.ao_person,
+        )
+        senior_auth = self.grant_authorization(
+            self.owner_person,
+            style_eq_sm,
+            expiration=date(2025, 5, 10),
+            marshal=self.ao_person,
+        )
+        mounted_gaming_auth = self.grant_authorization(
+            self.owner_person,
+            style_eq_mounted_gaming,
+            expiration=date(2029, 5, 10),
+            marshal=self.ao_person,
+        )
+        for authorization, start_date, end_date in [
+            (junior_auth, date(2024, 5, 10), date(2025, 5, 9)),
+            (senior_auth, date(2025, 5, 10), date(2025, 5, 10)),
+            (mounted_gaming_auth, date(2024, 5, 10), date(2029, 5, 10)),
+        ]:
+            AuthorizationValidityInterval.objects.create(
+                authorization=authorization,
+                start_date=start_date,
+                end_date=end_date,
+                source='paper_entry',
+                created_by=self.ao_user,
+            )
+
+        renewal_ok, renewal_error = _legacy_recovery_paper_rules_were_met(
+            self.owner_person,
+            style_eq_sm,
+            self.ao_person,
+            auth_date,
+            marshal_promotion=False,
+        )
+        promotion_ok, promotion_error = _legacy_recovery_paper_rules_were_met(
+            self.owner_person,
+            style_eq_sm,
+            self.ao_person,
+            auth_date,
+            marshal_promotion=True,
+        )
+
+        self.assertTrue(renewal_ok, renewal_error)
+        self.assertFalse(promotion_ok)
+        self.assertEqual(
+            promotion_error,
+            'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.',
+        )
 
     def test_staff_can_enter_paper_authorizations_across_kao_and_keao_scopes(self):
         staff_user, staff_person = self.make_person('paper_entry_staff', 'Paper Entry Staff')
@@ -4875,10 +4973,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id), str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield', 'Equestrian - General Riding'],
+                'marshal_id': [str(self.ao_person.user_id), str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -4905,10 +5005,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.owner_person.user_id)],
                 'marshal_sca_name': [self.owner_person.sca_name],
                 'marshal_first_name': [self.owner_user.first_name],
                 'marshal_last_name': [self.owner_user.last_name],
@@ -4934,10 +5036,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -4970,10 +5074,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5004,10 +5110,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5035,12 +5143,14 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'person_membership': [self.owner_user.membership],
                 'person_membership_expiration': ['2025-05-10'],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5064,10 +5174,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5088,10 +5200,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Youth Armored - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5115,10 +5229,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(minor_person.user_id)],
                 'person_sca_name': [minor_person.sca_name],
                 'person_first_name': [minor_user.first_name],
                 'person_last_name': [minor_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5147,11 +5263,13 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id), str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name, self.owner_person.sca_name],
                 'person_email': ['paper-update@example.com', 'paper-update@example.com'],
                 'person_first_name': [self.owner_user.first_name, self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name, self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield', 'Rapier Combat - Dagger'],
+                'marshal_id': [str(self.ao_person.user_id), str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name, self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name, self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name, self.ao_user.last_name],
@@ -5182,10 +5300,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5218,10 +5338,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5244,10 +5366,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5273,16 +5397,20 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Youth Armored - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_id': [str(self.other_person.user_id)],
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_id': [str(self.ao_person.user_id)],
                 'concurring_officer_sca_name': [self.ao_person.sca_name],
                 'concurring_officer_first_name': [self.ao_user.first_name],
                 'concurring_officer_last_name': [self.ao_user.last_name],
@@ -5309,10 +5437,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5334,10 +5464,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5362,10 +5494,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5386,10 +5520,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5409,13 +5545,16 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_id': [str(self.other_person.user_id)],
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
@@ -5445,10 +5584,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5477,10 +5618,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5506,16 +5649,20 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_id': [str(self.other_person.user_id)],
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_id': [str(self.ao_person.user_id)],
                 'concurring_officer_sca_name': [self.ao_person.sca_name],
                 'concurring_officer_first_name': [self.ao_user.first_name],
                 'concurring_officer_last_name': [self.ao_user.last_name],
@@ -5561,16 +5708,20 @@ class UserAccountViewTests(ViewTestBase):
         self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_id': [str(self.other_person.user_id)],
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_id': [str(self.ao_person.user_id)],
                 'concurring_officer_sca_name': [self.ao_person.sca_name],
                 'concurring_officer_first_name': [self.ao_user.first_name],
                 'concurring_officer_last_name': [self.ao_user.last_name],
@@ -5728,10 +5879,12 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Junior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -5792,19 +5945,52 @@ class UserAccountViewTests(ViewTestBase):
             any('Marshal was not found' in message for message in self.messages_for(response))
         )
 
+    def test_legacy_recovery_resolves_selected_person_by_id_before_names(self):
+        self.client.force_login(self.ao_user)
+        self.make_person('legacy_person_duplicate_name', self.owner_person.sca_name)
+
+        response = self.client.post(
+            reverse('paper_authorization_entry'),
+            {
+                'person_id': [str(self.owner_person.user_id)],
+                'person_sca_name': ['Stale Display Name'],
+                'person_first_name': ['Stale'],
+                'person_last_name': ['Name'],
+                'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
+                'marshal_sca_name': [self.ao_person.sca_name],
+                'marshal_first_name': [self.ao_user.first_name],
+                'marshal_last_name': [self.ao_user.last_name],
+                'auth_date': ['2025-05-10'],
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Processed 1 paper authorization row(s).')
+        self.assertTrue(
+            Authorization.objects.filter(
+                person=self.owner_person,
+                style=self.style_weapon_armored,
+            ).exists()
+        )
+
     def test_legacy_recovery_senior_marshal_promotion_requires_concurring_officer(self):
         self.client.force_login(self.ao_user)
 
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_id': [str(self.other_person.user_id)],
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
@@ -5831,16 +6017,20 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'weapon_style': ['Armored Combat - Senior Marshal'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
+                'second_marshal_id': [str(self.other_person.user_id)],
                 'second_marshal_sca_name': [self.other_person.sca_name],
                 'second_marshal_first_name': [self.other_user.first_name],
                 'second_marshal_last_name': [self.other_user.last_name],
+                'concurring_officer_id': [str(concurring_person.user_id)],
                 'concurring_officer_sca_name': [concurring_person.sca_name],
                 'concurring_officer_first_name': [concurring_user.first_name],
                 'concurring_officer_last_name': [concurring_user.last_name],
@@ -6059,12 +6249,14 @@ class UserAccountViewTests(ViewTestBase):
         response = self.client.post(
             reverse('paper_authorization_entry'),
             {
+                'person_id': [str(self.owner_person.user_id)],
                 'person_sca_name': [self.owner_person.sca_name],
                 'person_first_name': [self.owner_user.first_name],
                 'person_last_name': [self.owner_user.last_name],
                 'person_membership': ['222222'],
                 'person_membership_expiration': ['2030-06-15'],
                 'weapon_style': ['Armored Combat - Weapon & Shield'],
+                'marshal_id': [str(self.ao_person.user_id)],
                 'marshal_sca_name': [self.ao_person.sca_name],
                 'marshal_first_name': [self.ao_user.first_name],
                 'marshal_last_name': [self.ao_user.last_name],
@@ -6741,7 +6933,7 @@ class RoadmapViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, 'Version Unreleased')
-        self.assertNotContains(response, 'Added an authorization deletion tool')
+        self.assertNotContains(response, 'Officer appointments and paper authorization entry')
 
     def test_changelog_standalone_route_is_removed(self):
         response = self.client.get('/changelog/')
@@ -6955,9 +7147,9 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
     def _appointment_payload(self, person, branch, discipline):
         return {
             'action': 'appoint_branch_marshal',
-            'person': person.sca_name,
-            'branch': branch.name,
-            'discipline': discipline.name,
+            'person_id': str(person.user_id),
+            'branch_id': str(branch.id),
+            'discipline_id': str(discipline.id),
             'start_date': date.today().isoformat(),
         }
 
@@ -9971,4 +10163,3 @@ class ReportsViewTests(TestCase):
         content = response.content.decode('utf-8-sig').splitlines()
         self.assertEqual(content[0], 'Discipline,Authorization Detail,Q4 2025')
         self.assertIn('Armored Combat,Total Participants,595', content)
-

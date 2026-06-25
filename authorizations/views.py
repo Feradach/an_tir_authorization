@@ -1196,11 +1196,8 @@ def _resolve_legacy_recovery_person_by_id(person_id: int | None, row_label: str)
         raise ValueError(f'{row_label} ID "{person_id}" was not found.')
 
 
-def _resolve_legacy_recovery_person(sca_name: str, first_name: str, last_name: str, row_label: str, person_id: int | None = None):
-    person = _resolve_legacy_recovery_person_by_id(person_id, row_label)
-    if person:
-        return person
-    matches = list(
+def _matching_active_people_for_legacy_recovery(sca_name: str, first_name: str, last_name: str):
+    return list(
         Person.objects.select_related('user', 'branch').filter(
             sca_name__iexact=sca_name.strip(),
             user__first_name__iexact=first_name.strip(),
@@ -1208,16 +1205,18 @@ def _resolve_legacy_recovery_person(sca_name: str, first_name: str, last_name: s
             user__merged_into__isnull=True,
         ).order_by('user_id')
     )
-    if not matches:
+
+
+def _resolve_legacy_recovery_person(sca_name: str, first_name: str, last_name: str, row_label: str, person_id: int | None = None):
+    person = _resolve_legacy_recovery_person_by_id(person_id, row_label)
+    if person:
+        return person
+    if row_label == 'Person':
         raise ValueError(
-            f'{row_label} was not found. Check SCA name, first name, and last name, '
-            'or create the account before entering the authorization.'
+            'Person must be selected from the lookup so their ID is submitted, '
+            'or entered as a new fighter with complete account details.'
         )
-    if len(matches) > 1:
-        raise ValueError(
-            f'{row_label} matched multiple accounts. Merge or clean up the duplicate accounts before entering this row.'
-        )
-    return matches[0]
+    raise ValueError(f'{row_label} must be selected from the lookup so their ID is submitted.')
 
 
 def _find_legacy_recovery_style(style_value: str):
@@ -1624,6 +1623,7 @@ def _legacy_recovery_paper_rules_were_met(
     *,
     submitted_membership_expiration=None,
     concurring_fighter: Person | None = None,
+    marshal_promotion=False,
 ):
     age = _legacy_recovery_age_on_date(person, auth_date)
     fighter_is_minor = _legacy_recovery_minor_on_date(person, auth_date)
@@ -1679,9 +1679,17 @@ def _legacy_recovery_paper_rules_were_met(
             return False, 'Junior Equestrian marshal must have Ground Crew - Senior and General Riding authorization.'
 
     if style.discipline.name == 'Equestrian' and style.name == 'Senior Marshal':
-        if not (
-            _legacy_recovery_interval_exists(person, auth_date, style_names=['Junior Marshal'], discipline=style.discipline)
-            and _legacy_recovery_interval_exists(person, auth_date, style_names=_MOUNTED_GAMING_STYLES, discipline=style.discipline)
+        has_required_junior = not marshal_promotion or _legacy_recovery_interval_exists(
+            person,
+            auth_date,
+            style_names=['Junior Marshal'],
+            discipline=style.discipline,
+        )
+        if not has_required_junior or not _legacy_recovery_interval_exists(
+            person,
+            auth_date,
+            style_names=_MOUNTED_GAMING_STYLES,
+            discipline=style.discipline,
         ):
             return False, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.'
 
@@ -1831,6 +1839,8 @@ def _legacy_recovery_optional_signoff(cleaned: dict, prefix: str, label: str, *,
         raise ValueError(f'{label} requires SCA name, first name, and last name.')
     if not has_any:
         return None
+    if not person_id:
+        raise ValueError(f'{label} must be selected from the lookup so their ID is submitted.')
     return _resolve_legacy_recovery_person(values[0], values[1], values[2], label, person_id)
 
 
@@ -1934,22 +1944,41 @@ def _legacy_recovery_new_fighter_data_from_row(cleaned: dict):
     }
 
 
-def _resolve_or_create_legacy_recovery_person(cleaned: dict, actor: User):
-    try:
-        return _resolve_legacy_recovery_person(
-            cleaned['person_sca_name'],
-            cleaned['person_first_name'],
-            cleaned['person_last_name'],
-            'Person',
-            cleaned.get('person_id'),
+def _legacy_recovery_person_batch_key(cleaned: dict):
+    return (
+        (cleaned.get('person_sca_name') or '').strip().casefold(),
+        (cleaned.get('person_first_name') or '').strip().casefold(),
+        (cleaned.get('person_last_name') or '').strip().casefold(),
+    )
+
+
+def _resolve_or_create_legacy_recovery_person(cleaned: dict, actor: User, batch_people: dict | None = None):
+    person_id = cleaned.get('person_id')
+    if person_id:
+        return _resolve_legacy_recovery_person_by_id(person_id, 'Person')
+
+    batch_key = _legacy_recovery_person_batch_key(cleaned)
+    if batch_people is not None and batch_key in batch_people:
+        return batch_people[batch_key]
+
+    matches = _matching_active_people_for_legacy_recovery(
+        cleaned['person_sca_name'],
+        cleaned['person_first_name'],
+        cleaned['person_last_name'],
+    )
+    if matches:
+        raise ValueError('Person must be selected from the lookup so their ID is submitted.')
+
+    new_fighter_form = LegacyRecoveryNewFighterForm(_legacy_recovery_new_fighter_data_from_row(cleaned))
+    if not new_fighter_form.is_valid():
+        raise ValueError(
+            'Person must be selected from the lookup so their ID is submitted, '
+            'or entered as a new fighter with complete account details.'
         )
-    except ValueError as original_exc:
-        if cleaned.get('person_id'):
-            raise
-        new_fighter_form = LegacyRecoveryNewFighterForm(_legacy_recovery_new_fighter_data_from_row(cleaned))
-        if not new_fighter_form.is_valid():
-            raise original_exc
-        return _create_legacy_recovery_fighter(new_fighter_form, actor)
+    person = _create_legacy_recovery_fighter(new_fighter_form, actor)
+    if batch_people is not None:
+        batch_people[batch_key] = person
+    return person
 
 
 def _update_legacy_recovery_person_from_paper_fields(person: Person, cleaned: dict, posted: dict, actor: User):
@@ -2005,9 +2034,13 @@ def _update_legacy_recovery_person_from_paper_fields(person: Person, cleaned: di
         person.save(update_fields=list(person_updates.keys()) + ['updated_by', 'updated_at'])
 
 
-def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm, actor: User):
+def _create_legacy_recovery_authorization(
+    form: LegacyAuthorizationRecoveryForm,
+    actor: User,
+    batch_people: dict | None = None,
+):
     cleaned = form.cleaned_data
-    person = _resolve_or_create_legacy_recovery_person(cleaned, actor)
+    person = _resolve_or_create_legacy_recovery_person(cleaned, actor, batch_people)
     try:
         _update_legacy_recovery_person_from_paper_fields(person, cleaned, form.data, actor)
     except IntegrityError:
@@ -2066,6 +2099,7 @@ def _create_legacy_recovery_authorization(form: LegacyAuthorizationRecoveryForm,
         auth_date,
         submitted_membership_expiration=cleaned.get('person_membership_expiration'),
         concurring_fighter=concurring_officer if not is_marshal_style else None,
+        marshal_promotion=marshal_promotion,
     )
     if not paper_rules_ok:
         raise ValueError(paper_rules_error)
@@ -8093,9 +8127,10 @@ def legacy_authorization_recovery(request):
             if not has_preflight_errors and valid_forms and len(valid_forms) == len(submitted_rows):
                 runtime_errors = False
                 with transaction.atomic():
+                    batch_people = {}
                     for index, form in valid_forms:
                         try:
-                            _create_legacy_recovery_authorization(form, request.user)
+                            _create_legacy_recovery_authorization(form, request.user, batch_people)
                         except ValueError as exc:
                             row = submitted_rows[index - 1]
                             row['__error'] = '1'

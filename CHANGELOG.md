@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Fixed a bug where people who had merged accounts were not able to be appointed as officers.
+- Senior Equestrian Marshal renewals were being blocked because they didn't have an active junior marshal authorization.
 
 
 ### Removed

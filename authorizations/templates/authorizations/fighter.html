@@ -50,14 +50,14 @@
     <form method="post" action="">
         {% csrf_token %}
         <input type="hidden" name="action" value="appoint_branch_marshal">
-        <input type="hidden" name="person" value="{{ person }}">
+        <input type="hidden" name="person_id" value="{{ person.user_id }}">
         <div class="row g-3">
             <div class="col-md-3">
                 <p><strong>Branch</strong></p>
-                <select id="branch" name="branch" class="choices-dropdown">
+                <select id="branch" name="branch_id" class="choices-dropdown">
                     <option value=""></option>
                     {% for option in branch_choices %}
-                    <option value="{{ option }}">
+                    <option value="{{ option.id }}">
                         {{ option }}
                     </option>
                     {% endfor %}
@@ -65,10 +65,10 @@
             </div>
             <div class="col-md-3">
                 <p><strong>Discipline</strong></p>
-                <select id="discipline" name="discipline" class="choices-dropdown">
+                <select id="discipline" name="discipline_id" class="choices-dropdown">
                     <option value=""></option>
                     {% for option in discipline_choices %}
-                    <option value="{{ option }}">
+                    <option value="{{ option.id }}">
                         {{ option }}
                     </option>
                     {% endfor %}

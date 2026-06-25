@@ -1028,6 +1028,31 @@ class AuthorizationRuleTests(AuthorizationTestBase):
         self.assertTrue(ok)
         self.assertEqual(msg, 'Authorization follows all rules.')
 
+    def test_first_time_senior_equestrian_marshal_requires_active_junior_marshal(self):
+        marshal_user, marshal = self.make_person('eq_sm_first_requires_jm', 'Eq SM First Requires JM')
+        _, fighter = self.make_person('eq_target_first_requires_jm', 'Eq Target First Requires JM')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_mounted_gaming)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_sm_equestrian.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(msg, 'Senior Equestrian marshal must have Junior Equestrian marshal and Mounted Gaming authorization.')
+
+    def test_senior_equestrian_marshal_renewal_does_not_require_active_junior_marshal(self):
+        marshal_user, marshal = self.make_person('eq_sm_renew_marshal', 'Eq SM Renew Marshal')
+        _, fighter = self.make_person('eq_target_renew_sm', 'Eq Target Renew SM')
+        self.grant_authorization(marshal, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_jm_equestrian, status=self.status_inactive)
+        self.grant_authorization(fighter, self.style_sm_equestrian)
+        self.grant_authorization(fighter, self.style_general_riding)
+        self.grant_authorization(fighter, self.style_mounted_gaming)
+
+        ok, msg = authorization_follows_rules(marshal_user, fighter, self.style_sm_equestrian.id)
+
+        self.assertTrue(ok)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
     def test_mounted_gaming_requires_general_riding(self):
         marshal_user, marshal = self.make_person('eq_sm_mg', 'Eq SM MG')
         _, fighter = self.make_person('eq_target_mg', 'Eq Target MG')
@@ -1659,6 +1684,35 @@ class AuthorizationNoteOfficeTests(AuthorizationTestBase):
 
 
 class AppointBranchMarshalTests(AuthorizationTestBase):
+    def test_appoint_branch_marshal_uses_selected_person_id_when_sca_name_is_duplicated(self):
+        ao_user, ao_person = self.make_person('appoint_duplicate_ao', 'Appoint Duplicate AO')
+        self.appoint(ao_person, self.branch_an_tir, self.discipline_auth_officer)
+        _, candidate = self.make_person('appoint_duplicate_candidate', 'Shared Marshal Name')
+        self.make_person('appoint_duplicate_other', 'Shared Marshal Name')
+        self.grant_authorization(candidate, self.style_sm_armored)
+
+        request = self.factory.post(
+            '/authorizations/branch_marshals/',
+            {
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
+                'start_date': date.today().isoformat(),
+            },
+        )
+        request.user = ao_user
+
+        ok, msg = appoint_branch_marshal(request)
+
+        self.assertTrue(ok, msg)
+        self.assertTrue(
+            BranchMarshal.objects.filter(
+                person=candidate,
+                branch=self.branch_gd,
+                discipline=self.discipline_armored,
+            ).exists()
+        )
+
     def test_non_authorization_officer_cannot_appoint_branch_marshal(self):
         normal_user, _ = self.make_person('appoint_normal_user', 'Appoint Normal User')
         _, candidate = self.make_person('appoint_candidate_user', 'Appoint Candidate User')
@@ -1667,9 +1721,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.branch_gd.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1690,9 +1744,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.branch_gd.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1718,9 +1772,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.branch_an_tir.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_an_tir.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1747,9 +1801,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.principality_summits.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.principality_summits.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1776,9 +1830,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         principality_request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': principality_candidate.sca_name,
-                'branch': self.principality_tir_righ.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(principality_candidate.user_id),
+                'branch_id': str(self.principality_tir_righ.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1786,9 +1840,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         local_request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': local_candidate.sca_name,
-                'branch': self.branch_summits_shire.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(local_candidate.user_id),
+                'branch_id': str(self.branch_summits_shire.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1812,9 +1866,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         own_request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': own_candidate.sca_name,
-                'branch': self.branch_summits_shire.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(own_candidate.user_id),
+                'branch_id': str(self.branch_summits_shire.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1822,9 +1876,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         other_request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': other_candidate.sca_name,
-                'branch': self.branch_tir_righ_shire.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(other_candidate.user_id),
+                'branch_id': str(self.branch_tir_righ_shire.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1848,9 +1902,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.principality_tir_righ.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.principality_tir_righ.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1871,9 +1925,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         region_request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': region_candidate.sca_name,
-                'branch': self.branch_inlands.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(region_candidate.user_id),
+                'branch_id': str(self.branch_inlands.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1881,9 +1935,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         other_request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': other_candidate.sca_name,
-                'branch': self.branch_other.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(other_candidate.user_id),
+                'branch_id': str(self.branch_other.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1912,9 +1966,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.branch_an_tir.name,
-                'discipline': self.discipline_seneschal.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_an_tir.id),
+                'discipline_id': str(self.discipline_seneschal.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1942,9 +1996,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.region_summits.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.region_summits.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1966,9 +2020,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.branch_gd.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -1990,9 +2044,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.branch_gd.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -2015,9 +2069,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request_one = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate_one.sca_name,
-                'branch': self.branch_gd.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate_one.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -2027,9 +2081,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request_two = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate_two.sca_name,
-                'branch': self.branch_gd.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate_two.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
@@ -2055,9 +2109,9 @@ class AppointBranchMarshalTests(AuthorizationTestBase):
         request = self.factory.post(
             '/authorizations/branch_marshals/',
             {
-                'person': candidate.sca_name,
-                'branch': self.branch_gd.name,
-                'discipline': self.discipline_armored.name,
+                'person_id': str(candidate.user_id),
+                'branch_id': str(self.branch_gd.id),
+                'discipline_id': str(self.discipline_armored.id),
                 'start_date': date.today().isoformat(),
             },
         )
