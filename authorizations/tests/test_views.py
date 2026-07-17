@@ -7168,6 +7168,8 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
     def setUpTestData(cls):
         super().setUpTestData()
         cls.style_sm_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_rapier)
+        cls.discipline_missile = Discipline.objects.create(name='Missile Combat')
+        cls.style_sm_missile = WeaponStyle.objects.create(name='Senior Marshal', discipline=cls.discipline_missile)
 
         cls.kao_user = User.objects.create_user(
             username='office_kao',
@@ -9002,6 +9004,259 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
                 'action': 'approve_authorization',
                 'authorization_id': str(pending_auth.id),
                 'action_note': 'Final concurrence as Earl Marshal at large',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+
+    def test_regional_marshal_homepage_queue_only_shows_same_region_third_signoffs(self):
+        regional_user, regional_person = self.make_person(
+            'regional_queue_armored',
+            'Regional Queue Armored',
+            branch=self.branch_gd,
+        )
+        self.grant_authorization(regional_person, self.style_sm_armored)
+        self.appoint(regional_person, self.region_summits, self.discipline_armored)
+        same_region_user, same_region_person = self.make_person(
+            'regional_queue_same_target',
+            'Regional Queue Same Target',
+            branch=self.branch_gd,
+        )
+        outside_user, outside_person = self.make_person(
+            'regional_queue_outside_target',
+            'Regional Queue Outside Target',
+            branch=self.branch_lg,
+        )
+        Authorization.objects.create(
+            person=same_region_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=outside_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=regional_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        queued_names = [auth.person.sca_name for auth in response.context['pending_authorizations']]
+        self.assertIn(same_region_person.sca_name, queued_names)
+        self.assertNotIn(outside_person.sca_name, queued_names)
+        self.assertNotContains(response, reverse('fighter', kwargs={'person_id': outside_user.id}))
+        self.assertContains(response, reverse('fighter', kwargs={'person_id': same_region_user.id}))
+
+    def test_regional_earl_marshal_homepage_queue_shows_same_region_all_disciplines(self):
+        regional_earl_user, regional_earl_person = self.make_person(
+            'regional_earl_queue',
+            'Regional Earl Queue',
+            branch=self.branch_gd,
+        )
+        self.grant_authorization(regional_earl_person, self.style_sm_armored)
+        self.appoint(regional_earl_person, self.region_summits, self.discipline_earl_marshal)
+        same_region_rapier_user, same_region_rapier_person = self.make_person(
+            'regional_earl_queue_rapier',
+            'Regional Earl Queue Rapier',
+            branch=self.branch_gd,
+        )
+        same_region_armored_person = self.make_person(
+            'regional_earl_queue_armored',
+            'Regional Earl Queue Armored',
+            branch=self.branch_gd,
+        )[1]
+        outside_person = self.make_person(
+            'regional_earl_queue_outside',
+            'Regional Earl Queue Outside',
+            branch=self.branch_lg,
+        )[1]
+        Authorization.objects.create(
+            person=same_region_rapier_person,
+            style=self.style_sm_rapier,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=same_region_armored_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=outside_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=regional_earl_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        queued_names = [auth.person.sca_name for auth in response.context['pending_authorizations']]
+        self.assertIn(same_region_rapier_person.sca_name, queued_names)
+        self.assertIn(same_region_armored_person.sca_name, queued_names)
+        self.assertNotIn(outside_person.sca_name, queued_names)
+        self.assertContains(response, reverse('fighter', kwargs={'person_id': same_region_rapier_user.id}))
+
+    def test_kingdom_marshal_homepage_queue_shows_all_kingdom_same_discipline(self):
+        kingdom_armored_user, kingdom_armored_person = self.make_person(
+            'kingdom_queue_armored',
+            'Kingdom Queue Armored',
+            branch=self.branch_gd,
+        )
+        self.grant_authorization(kingdom_armored_person, self.style_sm_armored)
+        self.appoint(kingdom_armored_person, self.branch_an_tir, self.discipline_armored)
+        same_region_person = self.make_person(
+            'kingdom_queue_same_armored',
+            'Kingdom Queue Same Armored',
+            branch=self.branch_gd,
+        )[1]
+        outside_region_person = self.make_person(
+            'kingdom_queue_outside_armored',
+            'Kingdom Queue Outside Armored',
+            branch=self.branch_lg,
+        )[1]
+        other_discipline_person = self.make_person(
+            'kingdom_queue_rapier',
+            'Kingdom Queue Rapier',
+            branch=self.branch_lg,
+        )[1]
+        Authorization.objects.create(
+            person=same_region_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=outside_region_person,
+            style=self.style_sm_armored,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        Authorization.objects.create(
+            person=other_discipline_person,
+            style=self.style_sm_rapier,
+            status=self.status_regional,
+            marshal=self.candidate_rapier_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=kingdom_armored_user.username, password='StrongPass!123')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        queued_names = [auth.person.sca_name for auth in response.context['pending_authorizations']]
+        self.assertIn(same_region_person.sca_name, queued_names)
+        self.assertIn(outside_region_person.sca_name, queued_names)
+        self.assertNotIn(other_discipline_person.sca_name, queued_names)
+
+    def test_kingdom_armored_marshal_cannot_approve_missile_senior_marshal(self):
+        kingdom_armored_user, kingdom_armored_person = self.make_person(
+            'kingdom_armored_missile_approve',
+            'Kingdom Armored Missile Approve',
+        )
+        self.grant_authorization(kingdom_armored_person, self.style_sm_armored)
+        self.appoint(kingdom_armored_person, self.branch_an_tir, self.discipline_armored)
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_sm_missile,
+            status=self.status_regional,
+            marshal=kingdom_armored_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=kingdom_armored_user.username, password='StrongPass!123')
+
+        get_response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
+        self.assertEqual(get_response.status_code, 200)
+        pending = get_response.context['pending_authorization_list']['Missile Combat']
+        self.assertFalse(pending['can_approve'])
+        self.assertFalse(pending['can_reject'])
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'Trying to approve as kingdom armored marshal',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_regional)
+        self.assertIn(
+            'You must be a kingdom or regional missile marshal, or an Earl Marshal, to approve this authorization.',
+            self.messages_for(response),
+        )
+
+    def test_kingdom_missile_marshal_can_approve_missile_senior_marshal(self):
+        kingdom_missile_user, kingdom_missile_person = self.make_person(
+            'kingdom_missile_approve',
+            'Kingdom Missile Approve',
+        )
+        self.grant_authorization(kingdom_missile_person, self.style_sm_missile)
+        self.appoint(kingdom_missile_person, self.branch_an_tir, self.discipline_missile)
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_sm_missile,
+            status=self.status_regional,
+            marshal=kingdom_missile_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=kingdom_missile_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'Approving as kingdom missile marshal',
+            },
+            follow=True,
+        )
+
+        pending_auth.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pending_auth.status, self.status_active)
+
+    def test_regional_earl_marshal_can_approve_missile_senior_marshal(self):
+        regional_earl_user, regional_earl_person = self.make_person(
+            'regional_earl_missile_approve',
+            'Regional Earl Missile Approve',
+            branch=self.branch_gd,
+        )
+        self.grant_authorization(regional_earl_person, self.style_sm_armored)
+        self.appoint(regional_earl_person, self.region_summits, self.discipline_earl_marshal)
+        pending_auth = Authorization.objects.create(
+            person=self.candidate_armored_person,
+            style=self.style_sm_missile,
+            status=self.status_regional,
+            marshal=regional_earl_person,
+            expiration=date.today() + relativedelta(years=1),
+        )
+        self.client.login(username=regional_earl_user.username, password='StrongPass!123')
+
+        response = self.client.post(
+            reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}),
+            {
+                'action': 'approve_authorization',
+                'authorization_id': str(pending_auth.id),
+                'action_note': 'Approving as regional Earl Marshal',
             },
             follow=True,
         )

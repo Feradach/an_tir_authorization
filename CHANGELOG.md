@@ -11,13 +11,17 @@
 
 
 
-
 ### Fixed
 
 
 
 ### Removed
 
+## [1.1.8] - 2026-07-16
+### Changed
+- Missile Combat senior marshal regional approvals can no longer be issued by Armored combat regional marshals.
+
+- Regional and principality marshal approval queues now only show pending regional approvals for fighters in that officer's own region or principality, while kingdom officers still see kingdom-wide items in their authority.
 
 ## [1.1.7] - 2026-06-25
 ### Added

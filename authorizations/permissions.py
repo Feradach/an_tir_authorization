@@ -1332,11 +1332,8 @@ def approve_authorization(request):
     # in the discipline. Regional Earl Marshals retain same-region approval authority.
     elif authorization.status.name == 'Awaiting Regional Marshal Approval':
         if authorization.style.discipline.name == 'Missile Combat':
-            if (
-                not _can_regionally_approve_authorization(marshal, 'Missile Combat', auth_region)
-                and not _can_regionally_approve_authorization(marshal, 'Armored Combat', auth_region)
-            ):
-                return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
+            if not _can_regionally_approve_authorization(marshal, 'Missile Combat', auth_region):
+                return False, 'You must be a kingdom or regional missile marshal, or an Earl Marshal, to approve this authorization.'
         else:
             if not _can_regionally_approve_authorization(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline, or a regional Earl Marshal in the fighter region, to approve this authorization.'
@@ -1499,11 +1496,8 @@ def validate_approve_authorization(request_user: User, marshal: User, authorizat
 
     if authorization.status.name == 'Awaiting Regional Marshal Approval':
         if authorization.style.discipline.name == 'Missile Combat':
-            if (
-                not _can_regionally_approve_authorization(marshal, 'Missile Combat', auth_region)
-                and not _can_regionally_approve_authorization(marshal, 'Armored Combat', auth_region)
-            ):
-                return False, 'You must be a regional missile marshal or the regional armored marshal to approve this authorization.'
+            if not _can_regionally_approve_authorization(marshal, 'Missile Combat', auth_region):
+                return False, 'You must be a kingdom or regional missile marshal, or an Earl Marshal, to approve this authorization.'
         else:
             if not _can_regionally_approve_authorization(marshal, discipline, auth_region):
                 return False, 'You must be a regional marshal in this discipline, or a regional Earl Marshal in the fighter region, to approve this authorization.'
@@ -1549,8 +1543,8 @@ def validate_reject_authorization(marshal: User, authorization: Authorization):
     if not is_regional_marshal(marshal, region=auth_region):
         return False, 'You must be a regional marshal in the same region as the fighter to reject this authorization.'
     if auth_discipline == 'Missile Combat':
-        if not is_regional_marshal(marshal, 'Missile Combat', auth_region) and not is_regional_marshal(marshal, 'Armored Combat', auth_region):
-            return False, 'You must be a regional missile marshal or the regional armored marshal to reject this authorization.'
+        if not is_regional_marshal(marshal, 'Missile Combat', auth_region):
+            return False, 'You must be a kingdom or regional missile marshal, or an Earl Marshal, to reject this authorization.'
     elif not is_regional_marshal(marshal, auth_discipline, auth_region):
         return False, 'You must be a regional marshal in this discipline to reject this authorization.'
     return True, 'OK'

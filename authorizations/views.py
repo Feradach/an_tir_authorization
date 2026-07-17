@@ -4048,55 +4048,90 @@ def index(request):
     can_manage_lock = can_manage_maintenance_lock(request.user)
     can_review_background_checks = _can_review_background_checks_on_authorizations(request.user)
 
-    # Are they in the branch marshal table at all?
-    try:
-        marshal = BranchMarshal.objects.get(person=person, end_date__gte=date.today())
-    except BranchMarshal.DoesNotExist:
-        marshal = None
+    pending_authorization_filter = None
 
-    # If they are in the branch marshal table, are they a branch marshal, regional marshal, or authorization officer
-    if marshal:
-        if branch_marshal:
-            if senior_marshal:
-                branch = marshal.branch
-                discipline = marshal.discipline
-                pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                    person__branch=branch,
+    def add_pending_authorization_filter(queue_filter):
+        nonlocal pending_authorization_filter
+        if pending_authorization_filter is None:
+            pending_authorization_filter = queue_filter
+        else:
+            pending_authorization_filter |= queue_filter
+
+    active_marshal_offices = BranchMarshal.objects.filter(
+        person=person,
+        end_date__gte=date.today(),
+    ).select_related('branch', 'discipline')
+    non_marshal_office_names = {
+        KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+        KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+        SENESCHAL_DISCIPLINE,
+    }
+
+    for marshal in active_marshal_offices:
+        branch = marshal.branch
+        discipline = marshal.discipline
+        if not branch or not discipline:
+            continue
+        discipline_name = discipline.name
+
+        if not branch.is_region():
+            if senior_marshal and discipline_name not in non_marshal_office_names:
+                add_pending_authorization_filter(
+                    Q(
+                        person__branch=branch,
+                        style__discipline=discipline,
+                        status__name='Awaiting Second Marshal Concurrence',
+                    )
+                )
+            continue
+
+        if branch.type == 'Kingdom':
+            if discipline_name == 'Earl Marshal':
+                add_pending_authorization_filter(Q(status__name='Awaiting Regional Marshal Approval'))
+            elif discipline_name not in non_marshal_office_names:
+                add_pending_authorization_filter(
+                    Q(
+                        style__discipline=discipline,
+                        status__name='Awaiting Regional Marshal Approval',
+                    )
+                )
+            continue
+
+        regional_scope = Q(person__branch=branch) | Q(person__branch__region=branch)
+        if discipline_name == 'Earl Marshal':
+            add_pending_authorization_filter(
+                Q(status__name='Awaiting Regional Marshal Approval') & regional_scope
+            )
+        elif discipline_name not in non_marshal_office_names:
+            add_pending_authorization_filter(
+                Q(
                     style__discipline=discipline,
-                    status__name='Awaiting Second Marshal Concurrence'
-                ).order_by('effective_expiration_date')
-        if regional_marshal:
-            discipline = marshal.discipline
-            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                person__branch__region=marshal.branch,
-                style__discipline=discipline,
-                status__name='Awaiting Regional Marshal Approval'
-            ).order_by('effective_expiration_date')
-        if kingdom_marshal:
-            discipline = marshal.discipline
-            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                style__discipline=discipline,
-                status__name='Awaiting Regional Marshal Approval'
-            ).order_by('effective_expiration_date')
-        if kingdom_earl_marshal:
-            pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-                status__name='Awaiting Regional Marshal Approval'
-            ).order_by('effective_expiration_date')
+                    status__name='Awaiting Regional Marshal Approval',
+                ) & regional_scope
+            )
+
     if auth_officer or equestrian_auth_officer:
-        status_filter = Q()
+        status_filter = None
         if auth_officer:
-            status_filter |= Q(status__name=KINGDOM_APPROVAL_STATUS) & ~Q(style__discipline__name='Equestrian')
+            status_filter = Q(status__name=KINGDOM_APPROVAL_STATUS) & ~Q(style__discipline__name='Equestrian')
         if equestrian_auth_officer:
-            status_filter |= Q(
+            equestrian_status_filter = Q(
                 status__name__in=[
                     KINGDOM_APPROVAL_STATUS,
                     KINGDOM_EQUESTRIAN_WAIVER_STATUS,
                 ],
                 style__discipline__name='Equestrian',
             )
+            if status_filter is None:
+                status_filter = equestrian_status_filter
+            else:
+                status_filter |= equestrian_status_filter
+        if status_filter is not None:
+            add_pending_authorization_filter(status_filter)
+    if pending_authorization_filter is not None:
         pending_authorizations = Authorization.objects.with_effective_expiration().filter(
-            status_filter,
-        ).order_by('effective_expiration_date')
+            pending_authorization_filter,
+        ).exclude(person__user=request.user).distinct().order_by('effective_expiration_date')
     pending_authorizations = _annotate_homepage_document_alerts(pending_authorizations)
     pending_background_check_documents = (
         _pending_background_check_review_alerts_for_user(request.user)
