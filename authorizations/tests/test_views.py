@@ -13,6 +13,7 @@ from django.core.files.base import ContentFile
 from reportlab.pdfbase import pdfmetrics
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from django.utils.formats import date_format
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from django.urls import reverse
@@ -4492,10 +4493,10 @@ class UserAccountViewTests(ViewTestBase):
         upload = SimpleUploadedFile(
             'legacy_new_person.csv',
             (
-                'SCA Name,First Name,Last Name,Email,Branch,City,State,Country,Phone,Waiver Expiration,'
+                'SCA Name,First Name,Last Name,Email,Branch,City,State,Postal Code,Country,Phone,Waiver Expiration,'
                 'Discipline,Weapon Style,Start Date,Marshal SCA Name\n'
                 'New Legacy Fighter,New,Legacy,new.legacy@example.com,Barony of Glyn Dwfn,Portland,Oregon,'
-                'United States,555-0100,2028-02-01,Armored Combat,Weapon & Shield,2025-02-01,Authorization Officer\n'
+                '97201,United States,555-0100,2028-02-01,Armored Combat,Weapon & Shield,2025-02-01,Authorization Officer\n'
             ).encode('utf-8'),
             content_type='text/csv',
         )
@@ -4514,6 +4515,7 @@ class UserAccountViewTests(ViewTestBase):
         self.assertEqual(person.user.email, 'new.legacy@example.com')
         self.assertEqual(person.user.city, 'Portland')
         self.assertEqual(person.user.state_province, 'Oregon')
+        self.assertEqual(person.user.postal_code, '97201')
         self.assertEqual(person.user.country, 'United States')
         self.assertEqual(person.user.phone_number, '555-0100')
         self.assertEqual(person.user.waiver_expiration, date(2029, 2, 1))
@@ -7067,6 +7069,9 @@ class SupportingDocumentsViewTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get('Content-Type'), 'application/pdf')
+        for closer in response._resource_closers:
+            closer()
+        response._resource_closers.clear()
 
     def test_viewer_cannot_open_unassociated_supporting_document_file(self):
         self.client.login(username=self.viewer_user.username, password='StrongPass!123')
@@ -9651,7 +9656,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        formatted_limited_date = f'({limited_date.strftime("%B")} {limited_date.day}, {limited_date.year})'
+        formatted_limited_date = f"({date_format(limited_date)})"
         self.assertContains(response, formatted_limited_date)
 
     def test_fighter_shows_limited_office_expiration_for_superior(self):
@@ -9670,7 +9675,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_rapier_user.id}))
 
         self.assertEqual(response.status_code, 200)
-        formatted_limited_date = f'({limited_date.strftime("%B")} {limited_date.day}, {limited_date.year})'
+        formatted_limited_date = f"({date_format(limited_date)})"
         self.assertContains(response, formatted_limited_date)
 
     def test_fighter_hides_limited_office_expiration_for_non_superior(self):

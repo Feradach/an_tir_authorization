@@ -7,7 +7,9 @@
 
 
 
+
 ### Changed
+
 
 
 
@@ -25,7 +27,7 @@
 
 ### Changed
 
-
+- Postal codes are now consistently normalized and validated against the selected state or province when accounts are created or updated.
 
 ### Fixed
 

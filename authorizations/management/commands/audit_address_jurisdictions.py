@@ -1,45 +1,28 @@
 import csv
-import re
 from collections import Counter
 from datetime import date
 from pathlib import Path
 
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
 
+from authorizations.addressing import (
+    jurisdiction_for_state,
+    normalize_country,
+    normalize_postal_code,
+    normalize_state_province,
+    postal_code_jurisdiction,
+    postal_code_matches_state,
+    postal_code_within_an_tir,
+)
 from authorizations.models import User, is_minor_from_birthday
 
-
-STATE_PROVINCE_NORMALIZATION = {
-    "OR": "Oregon",
-    "OREGON": "Oregon",
-    "WA": "Washington",
-    "WASHINGTON": "Washington",
-    "ID": "Idaho",
-    "IDAHO": "Idaho",
-    "BC": "British Columbia",
-    "B.C.": "British Columbia",
-    "BRITISH COLUMBIA": "British Columbia",
-}
-COUNTRY_NORMALIZATION = {
-    "USA": "United States",
-    "US": "United States",
-    "U.S.": "United States",
-    "UNITED STATES": "United States",
-    "UNITED STATES OF AMERICA": "United States",
-    "CAN": "Canada",
-    "CA": "Canada",
-    "CANADA": "Canada",
-}
-US_STATES = {"Oregon", "Washington", "Idaho"}
-CANADIAN_PROVINCE = "British Columbia"
-US_POSTAL_CODE_RE = re.compile(r"^\d{5}(?:-\d{4})?$")
-CANADIAN_POSTAL_CODE_RE = re.compile(r"^[A-Z]\d[A-Z][ -]?\d[A-Z]\d$")
-US_AN_TIR_POSTAL_PREFIXES = ("97", "98", "990", "991", "992", "993", "994", "835", "838")
 
 ISSUE_ORDER = [
     "missing_state_province",
     "unsupported_state_province",
     "missing_postal_code",
+    "postal_code_needs_normalization",
     "invalid_postal_code_format",
     "postal_code_outside_an_tir",
     "state_postal_jurisdiction_mismatch",
@@ -48,39 +31,19 @@ ISSUE_ORDER = [
     "minor_status_would_change",
 ]
 
-
-def normalize_state_province(value):
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    return STATE_PROVINCE_NORMALIZATION.get(raw.upper(), raw.title())
-
-
-def normalize_country(value):
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    return COUNTRY_NORMALIZATION.get(raw.upper(), "")
-
-
-def jurisdiction_for_state(state_province):
-    if state_province == CANADIAN_PROVINCE:
-        return "Canada"
-    if state_province in US_STATES:
-        return "United States"
-    return ""
-
-
 def postal_code_details(value):
-    postal_code = str(value or "").strip().upper()
-    if not postal_code:
+    raw_postal_code = str(value or "").strip()
+    if not raw_postal_code:
         return "", "", False
-    if US_POSTAL_CODE_RE.fullmatch(postal_code):
-        within_an_tir = postal_code.startswith(US_AN_TIR_POSTAL_PREFIXES)
-        return postal_code, "United States", within_an_tir
-    if CANADIAN_POSTAL_CODE_RE.fullmatch(postal_code):
-        return postal_code, "Canada", postal_code.startswith("V")
-    return postal_code, "", False
+    try:
+        postal_code = normalize_postal_code(raw_postal_code)
+    except ValidationError:
+        return raw_postal_code.upper(), "", False
+    return (
+        postal_code,
+        postal_code_jurisdiction(postal_code),
+        postal_code_within_an_tir(postal_code),
+    )
 
 
 class Command(BaseCommand):
@@ -158,9 +121,14 @@ class Command(BaseCommand):
         elif not postal_jurisdiction:
             issues.append("invalid_postal_code_format")
         else:
+            if postal_code != str(user.postal_code or ""):
+                issues.append("postal_code_needs_normalization")
             if not postal_within_an_tir:
                 issues.append("postal_code_outside_an_tir")
-            if state_jurisdiction and postal_jurisdiction != state_jurisdiction:
+            if state_jurisdiction and not postal_code_matches_state(
+                postal_code,
+                state_province,
+            ):
                 issues.append("state_postal_jurisdiction_mismatch")
 
         if raw_country and not stored_country:

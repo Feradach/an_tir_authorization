@@ -57,6 +57,96 @@ python manage.py audit_address_jurisdictions --fail-on-issues
 
 This command never changes the database.
 
+### Postal-code cleanup workflow
+
+Use these commands in order to repair the legacy postal-code data. None of them contacts an address service automatically. The export files contain street addresses, so keep them private and remove working copies when the repair is complete.
+
+Start with a current database backup and baseline audit:
+
+```bash
+python manage.py backupdata
+python manage.py audit_address_jurisdictions --output-csv address_jurisdiction_before.csv
+```
+
+#### `normalize_postal_codes` — dry-run by default
+
+Normalizes existing, structurally valid postal codes without guessing missing characters. It uppercases Canadian codes and standardizes them as `A1A 1A1`; it also standardizes a supplied nine-digit U.S. ZIP as `12345-6789`. A five-digit U.S. ZIP remains valid and ZIP+4 is never required.
+
+Review every proposed change:
+
+```bash
+python manage.py normalize_postal_codes
+```
+
+Apply only those deterministic formatting changes:
+
+```bash
+python manage.py normalize_postal_codes --apply
+```
+
+Malformed values are reported and left unchanged.
+
+#### `export_missing_postal_codes` — read-only database operation
+
+Exports every account whose postal code is null, empty, or whitespace:
+
+```bash
+python manage.py export_missing_postal_codes --output-dir postal_code_lookup
+```
+
+It creates:
+
+- `missing_postal_us_review.csv`, for reviewing and manually entering U.S. results;
+- `missing_postal_us_census.csv`, a headerless file ready for the U.S. Census batch geocoder;
+- `missing_postal_canada_review.csv`, for Canada Post or manual Canadian lookup; and
+- `missing_postal_unknown_review.csv`, for records whose state/province must be resolved manually.
+
+The files intentionally contain user IDs and address fields, but no names, email addresses, birthdays, membership numbers, or phone numbers.
+
+Submit the U.S. Census file from a machine allowed to send these addresses to the Census service:
+
+```bash
+curl --form addressFile=@postal_code_lookup/missing_postal_us_census.csv --form benchmark=4 https://geocoding.geo.census.gov/geocoder/locations/addressbatch --output postal_code_lookup/us_census_results.csv
+```
+
+The Census service handles only the U.S. rows. Enter verified Canadian postal codes into the `postal_code` column of `missing_postal_canada_review.csv`. Resolve the unknown-jurisdiction file manually before entering its postal codes.
+
+#### `import_postal_codes` — dry-run by default
+
+Imports only validated postal codes into accounts that are still blank. It never overwrites an existing postal code.
+
+Review the U.S. Census matches:
+
+```bash
+python manage.py import_postal_codes postal_code_lookup/us_census_results.csv --format census
+```
+
+Apply the validated U.S. matches:
+
+```bash
+python manage.py import_postal_codes postal_code_lookup/us_census_results.csv --format census --apply
+```
+
+Review and then apply a manually completed review file:
+
+```bash
+python manage.py import_postal_codes postal_code_lookup/missing_postal_canada_review.csv
+python manage.py import_postal_codes postal_code_lookup/missing_postal_canada_review.csv --apply
+```
+
+Use the same review/apply pair for `missing_postal_unknown_review.csv` after its jurisdictions and postal codes have been resolved.
+
+For review-format files, the importer verifies that the address and state/province still match the exported snapshot. For both formats it validates postal-code structure and state/province jurisdiction, locks each row before writing, and aborts the entire import if any error is found. Blank results and Census non-matches are skipped for later manual work.
+
+Finish by rerunning the audit:
+
+```bash
+python manage.py audit_address_jurisdictions --output-csv address_jurisdiction_after.csv
+python manage.py audit_address_jurisdictions --fail-on-issues
+```
+
+The second command should return success only after all remaining malformed, missing, and jurisdiction-mismatched records have been resolved.
+
 ### `audit_youth_combat_birthdays` — read-only
 
 Reports active Youth Armored and Youth Rapier combatant authorizations whose fighters have no birthday:

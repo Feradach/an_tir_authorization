@@ -80,6 +80,33 @@ class AddressJurisdictionAuditCommandTests(TestCase):
 
         self.assertIn("state_postal_jurisdiction_mismatch: 1", output.getvalue())
 
+    def test_audit_reports_us_state_postal_mismatch(self):
+        self.make_user(
+            "washington_oregon_zip",
+            state_province="Washington",
+            postal_code="97201",
+        )
+        output = StringIO()
+
+        call_command("audit_address_jurisdictions", stdout=output)
+
+        self.assertIn("state_postal_jurisdiction_mismatch: 1", output.getvalue())
+
+    def test_audit_distinguishes_repairable_formatting_from_invalid_data(self):
+        self.make_user(
+            "repairable_bc",
+            state_province="British Columbia",
+            postal_code="v8v  1a1",
+            country="Canada",
+        )
+        output = StringIO()
+
+        call_command("audit_address_jurisdictions", stdout=output)
+
+        report = output.getvalue()
+        self.assertIn("postal_code_needs_normalization: 1", report)
+        self.assertIn("invalid_postal_code_format: 0", report)
+
     def test_fail_on_issues_raises_after_printing_report(self):
         self.make_user("bad_state", state_province="", postal_code="")
         output = StringIO()

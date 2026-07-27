@@ -45,6 +45,7 @@ Instructions for coding agents working in this repository. Keep changes focused,
 - Follow the deployment and branch policy in `deployment_workflow.md`.
 - For user-visible behavior changes, add an entry to the `## [UNRELEASED]` section of `CHANGELOG.md`. Entry should be added as if it is talking to an end user, not a developer. For instance, it should not reference any internal implementation details.
 - For security-sensitive changes (auth, recovery, permissions), include tests in the same change.
+- Every new, renamed, or behaviorally changed Django management command must be documented in `authorizations/management/commands/README.md` in the same change. Include its safety mode, safest command first, and the explicit flag required to write data.
 
 ## Avoid
 - Destructive git operations (`reset --hard`, force-checkouts) unless explicitly requested.

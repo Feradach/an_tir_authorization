@@ -51,6 +51,12 @@ import bleach
 from types import SimpleNamespace
 from authorizations.security.events import log_security_event
 from authorizations.reporting import build_current_report_snapshot, ReportingConfigurationError
+from authorizations.addressing import (
+    jurisdiction_for_state,
+    normalize_postal_code,
+    postal_code_within_an_tir,
+    validate_postal_code_for_state,
+)
 
 
 def _canadian_jurisdiction_q(user_prefix='person__user__'):
@@ -714,8 +720,32 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
             return ''
         return _format_legacy_recovery_phone_number(raw)
 
+    def clean_person_postal_code(self):
+        value = self.cleaned_data.get('person_postal_code')
+        if not value:
+            return ''
+        return normalize_postal_code(value)
+
     def clean(self):
         cleaned = super().clean()
+        if cleaned.get('person_postal_code') and cleaned.get('person_state_province'):
+            try:
+                cleaned['person_postal_code'] = validate_postal_code_for_state(
+                    cleaned['person_postal_code'],
+                    cleaned['person_state_province'],
+                )
+            except ValidationError as exc:
+                self.add_error('person_postal_code', exc)
+        state_jurisdiction = jurisdiction_for_state(cleaned.get('person_state_province'))
+        if (
+            state_jurisdiction
+            and cleaned.get('person_country')
+            and cleaned['person_country'] != state_jurisdiction
+        ):
+            self.add_error(
+                'person_country',
+                'Country does not match the selected state/province.',
+            )
         membership = (cleaned.get('person_membership') or '').strip()
         membership_expiration = cleaned.get('person_membership_expiration')
         cleaned['person_membership'] = membership
@@ -808,8 +838,29 @@ class LegacyRecoveryNewFighterForm(forms.Form):
     def clean_phone_number(self):
         return _format_legacy_recovery_phone_number(self.cleaned_data['phone_number'])
 
+    def clean_postal_code(self):
+        postal_code = normalize_postal_code(self.cleaned_data.get('postal_code'))
+        if not postal_code_within_an_tir(postal_code):
+            raise forms.ValidationError('Postal code must be within An Tir.')
+        return postal_code
+
     def clean(self):
         cleaned = super().clean()
+        if cleaned.get('postal_code') and cleaned.get('state_province'):
+            try:
+                cleaned['postal_code'] = validate_postal_code_for_state(
+                    cleaned['postal_code'],
+                    cleaned['state_province'],
+                )
+            except ValidationError as exc:
+                self.add_error('postal_code', exc)
+        state_jurisdiction = jurisdiction_for_state(cleaned.get('state_province'))
+        if (
+            state_jurisdiction
+            and cleaned.get('country')
+            and cleaned['country'] != state_jurisdiction
+        ):
+            self.add_error('country', 'Country does not match the selected state/province.')
         membership = cleaned.get('membership')
         membership_expiration = cleaned.get('membership_expiration')
         if bool(membership) != bool(membership_expiration):
@@ -1055,6 +1106,12 @@ def _legacy_person_creation_data(row: dict, row_number: int):
         raise ValueError(
             f'Row {row_number}: Membership number and membership expiration must be provided together.'
         )
+    state_province = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_STATE_FIELDS)
+    raw_postal_code = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS)
+    try:
+        postal_code = validate_postal_code_for_state(raw_postal_code, state_province)
+    except ValidationError as exc:
+        raise ValueError(f'Row {row_number}: {" ".join(exc.messages)}') from exc
 
     return {
         'sca_name': sca_name,
@@ -1066,8 +1123,8 @@ def _legacy_person_creation_data(row: dict, row_number: int):
         'address': _csv_optional(row, LEGACY_AUTH_IMPORT_ADDRESS_FIELDS),
         'address2': _csv_optional(row, LEGACY_AUTH_IMPORT_ADDRESS2_FIELDS),
         'city': _csv_optional(row, LEGACY_AUTH_IMPORT_CITY_FIELDS),
-        'state_province': _csv_optional(row, LEGACY_AUTH_IMPORT_STATE_FIELDS),
-        'postal_code': _csv_optional(row, LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS),
+        'state_province': state_province,
+        'postal_code': postal_code,
         'country': _csv_optional(row, LEGACY_AUTH_IMPORT_COUNTRY_FIELDS),
         'phone_number': _csv_optional(row, LEGACY_AUTH_IMPORT_PHONE_FIELDS),
         'membership': membership,
@@ -1089,7 +1146,7 @@ def _legacy_person_creation_data(row: dict, row_number: int):
     }
 
 
-def _legacy_person_update_data(row: dict, row_number: int):
+def _legacy_person_update_data(row: dict, row_number: int, person: Person | None = None):
     data = {}
     branch_name = _csv_optional(row, LEGACY_AUTH_IMPORT_BRANCH_FIELDS)
     if branch_name:
@@ -1123,6 +1180,19 @@ def _legacy_person_update_data(row: dict, row_number: int):
         value = _csv_optional(row, field_names)
         if value:
             data[key] = value
+
+    if 'postal_code' in data:
+        state_province = data.get(
+            'state_province',
+            person.user.state_province if person else '',
+        )
+        try:
+            data['postal_code'] = validate_postal_code_for_state(
+                data['postal_code'],
+                state_province,
+            )
+        except ValidationError as exc:
+            raise ValueError(f'Row {row_number}: {" ".join(exc.messages)}') from exc
 
     date_fields = {
         'membership_expiration': (LEGACY_AUTH_IMPORT_MEMBERSHIP_EXPIRATION_FIELDS, 'membership expiration'),
@@ -2013,6 +2083,16 @@ def _update_legacy_recovery_person_from_paper_fields(person: Person, cleaned: di
             continue
         user_updates[user_field] = value or None
     if user_updates:
+        if 'state_province' in user_updates or 'postal_code' in user_updates:
+            effective_state = user_updates.get('state_province', user.state_province)
+            effective_postal = user_updates.get('postal_code', user.postal_code)
+            try:
+                user_updates['postal_code'] = validate_postal_code_for_state(
+                    effective_postal,
+                    effective_state,
+                )
+            except ValidationError as exc:
+                raise ValueError(' '.join(exc.messages)) from exc
         for field, value in user_updates.items():
             setattr(user, field, value)
         user.updated_by = actor
@@ -2427,7 +2507,7 @@ def _build_legacy_import_rows(uploaded_file):
         rows.append({
             'row_number': row_number,
             'person_key': person_key,
-            'person_update': _legacy_person_update_data(row, row_number),
+            'person_update': _legacy_person_update_data(row, row_number, person=person),
             'style': style,
             'marshal_key': marshal_key,
             'concurring_key': concurring_key,
@@ -10192,24 +10272,9 @@ class CreatePersonForm(forms.Form):
         return formatted
         
     def clean_postal_code(self):
-        postal_code = self.cleaned_data.get('postal_code', '').strip().upper()
-        if not postal_code:
-            raise forms.ValidationError('Postal code is required.')
-            
-        # Check if the postal code matches any of the valid patterns
-        valid = (
-            postal_code.startswith('V') or  # Starts with V
-            postal_code.startswith('97') or  # Starts with 97
-            postal_code.startswith('98') or  # Starts with 98
-            any(postal_code.startswith(prefix) for prefix in ['990', '991', '992', '993', '994']) or  # Starts with 990-994
-            any(postal_code.startswith(prefix) for prefix in ['838', '835'])  # Starts with 838 or 835
-        )
-        
-        if not valid:
-            raise forms.ValidationError(
-                'Postal code must be within An Tir.'
-            )
-            
+        postal_code = normalize_postal_code(self.cleaned_data.get('postal_code'))
+        if not postal_code_within_an_tir(postal_code):
+            raise forms.ValidationError('Postal code must be within An Tir.')
         return postal_code
 
     def clean_state_province(self):
@@ -10242,6 +10307,21 @@ class CreatePersonForm(forms.Form):
 
     def clean(self):
         cleaned_data = super().clean()
+        if cleaned_data.get('postal_code') and cleaned_data.get('state_province'):
+            try:
+                cleaned_data['postal_code'] = validate_postal_code_for_state(
+                    cleaned_data['postal_code'],
+                    cleaned_data['state_province'],
+                )
+            except ValidationError as exc:
+                self.add_error('postal_code', exc)
+        state_jurisdiction = jurisdiction_for_state(cleaned_data.get('state_province'))
+        if (
+            state_jurisdiction
+            and cleaned_data.get('country')
+            and cleaned_data['country'] != state_jurisdiction
+        ):
+            self.add_error('country', 'Country does not match the selected state/province.')
         new_title = cleaned_data.get('new_title')
         new_title_rank = cleaned_data.get('new_title_rank')
 

@@ -2951,10 +2951,48 @@ class CreatePersonFormEdgeTests(AdditionalCoverageBase):
         self.assertTrue(Title.objects.filter(name='Custom Herald', rank='Grant of Arms').exists())
 
     def test_990_zip_code_is_within_an_tir(self):
-        form = CreatePersonForm(data=self.form_payload(postal_code='99004'))
+        form = CreatePersonForm(
+            data=self.form_payload(
+                state_province='Washington',
+                postal_code='99004',
+            )
+        )
 
         self.assertTrue(form.is_valid(), msg=form.errors.as_text())
         self.assertEqual(form.cleaned_data['postal_code'], '99004')
+
+    def test_canadian_postal_code_spacing_and_case_are_normalized(self):
+        form = CreatePersonForm(
+            data=self.form_payload(
+                state_province='British Columbia',
+                postal_code='v8v  1a1',
+                country='Canada',
+            )
+        )
+
+        self.assertTrue(form.is_valid(), msg=form.errors.as_text())
+        self.assertEqual(form.cleaned_data['postal_code'], 'V8V 1A1')
+
+    def test_postal_code_must_match_state_or_province(self):
+        form = CreatePersonForm(
+            data=self.form_payload(
+                state_province='British Columbia',
+                postal_code='97201',
+                country='Canada',
+            )
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn(
+            'Postal code does not match the selected state/province.',
+            form.errors['postal_code'],
+        )
+
+    def test_blank_postal_code_is_rejected(self):
+        form = CreatePersonForm(data=self.form_payload(postal_code=''))
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('Postal code is required.', form.errors['postal_code'])
 
     def test_blank_membership_normalizes_to_none(self):
         form = CreatePersonForm(
