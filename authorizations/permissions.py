@@ -731,10 +731,13 @@ def authorization_follows_rules(marshal, existing_fighter, style_id, concurring_
         ).exists():
             return False, 'Mounted Heavy Combat requires a General Riding authorization.'
 
-    # Rule 12: Youth rapier marshals must already be Senior Rapier marshals
-    if style.discipline.name == 'Youth Rapier' and not is_senior_marshal(existing_fighter.user, 'Rapier Combat'):
-        if style.name == 'Junior Marshal' or style.name == 'Senior Marshal':
-            return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
+    # Rule 12: Youth rapier marshals must already be Junior or Senior Rapier marshals.
+    if style.discipline.name == 'Youth Rapier' and style.name in ['Junior Marshal', 'Senior Marshal']:
+        if not active_authorizations.filter(
+            style__discipline__name='Rapier Combat',
+            style__name__in=['Junior Marshal', 'Senior Marshal'],
+        ).exists():
+            return False, 'Must have a junior or senior rapier marshal authorization to become a youth rapier marshal.'
 
     # Rule 13: An Equestrian Junior marshal must already have Ground Crew - Senior and General Riding Authorizations.
     if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':

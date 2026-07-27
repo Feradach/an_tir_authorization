@@ -4,8 +4,6 @@
 ## Features
 
 ### Urgent
-* Create person search page. Open up to those with an active senior marshal authorization.
-* Add optional middle name and suffix to person form.
 * Remove "country" from the address and infer it from state/province. (make sure that minor calculates correctly, do a check for bad data.)
 * Create Rivers Region
     * Give the central regional marshals authority over Rivers as well.
@@ -19,7 +17,8 @@
 * Add 2FA to the system. Make it optional for now, possibly mandatory for high access users.
 * Notification when authorization expiration is nearing (with ability to turn them off).
 * Create chart/report functionality
-* Ability for users to submit reports in the system.
+* ???Ability for users to submit reports in the system.
+    Society is putting out a new report system so this is likely not needed.
 
 ### Long Term
 

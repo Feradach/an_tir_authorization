@@ -34,7 +34,7 @@ The application infers current minor status from birthday and jurisdiction:
 - Canada or Canadian province: minor until age 19.
 - Missing birthday: treated as non-minor.
 
-The `Person.is_minor` database column is retained temporarily as transition compatibility data. Live behavior should not rely on it. The cleanup command keeps that transitional column aligned and removes stale private data when appropriate.
+The cleanup command removes stale private birthday and parent data when appropriate.
 
 ### Command
 
@@ -58,7 +58,6 @@ The command may:
 
 - Clear birthdays for people age 20 or older.
 - Clear parent links and stored parent names for people who are no longer inferred minors.
-- Resync the transitional `Person.is_minor` column to the inferred value.
 
 The command is idempotent and safe to run repeatedly. A clean production run should normally report zero records.
 
@@ -99,8 +98,6 @@ People to inspect/change: 0
 Birthdays to clear for people age 20+: 0
 Adult parent links to clear: 0
 Adult parent names to clear: 0
-Stored is_minor false -> true: 0
-Stored is_minor true -> false: 0
 ```
 
 If records are found, review the listed `user_id`, SCA name, birthday, country/state, and planned changes before allowing the apply job to run.
@@ -136,7 +133,3 @@ Comment out the two cleanup lines by prefixing each with `#`, then verify:
 ```bash
 crontab -l
 ```
-
-### When To Remove `Person.is_minor`
-
-After the site has been live for a while with no `is_minor` errors and no unexpected cleanup drift, remove the transitional field in a later schema migration. At that point, remove compatibility writes and cleanup logic that only exist to keep `Person.is_minor` synced.

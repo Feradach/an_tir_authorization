@@ -1668,8 +1668,13 @@ def _legacy_recovery_paper_rules_were_met(
 
     if style.discipline.name == 'Youth Rapier' and style.name in ['Junior Marshal', 'Senior Marshal']:
         rapier_discipline = Discipline.objects.filter(name='Rapier Combat').first()
-        if not rapier_discipline or not _legacy_recovery_senior_marshal_interval_exists(person, rapier_discipline, auth_date):
-            return False, 'Must be a senior rapier marshal to become a youth rapier marshal.'
+        if not rapier_discipline or not _legacy_recovery_interval_exists(
+            person,
+            auth_date,
+            style_names=['Junior Marshal', 'Senior Marshal'],
+            discipline=rapier_discipline,
+        ):
+            return False, 'Must have a junior or senior rapier marshal authorization to become a youth rapier marshal.'
 
     if style.discipline.name == 'Equestrian' and style.name == 'Junior Marshal':
         if not (

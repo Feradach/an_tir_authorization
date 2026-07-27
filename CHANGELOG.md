@@ -17,6 +17,24 @@
 
 ### Removed
 
+
+## [1.1.9] - 2026-07-26
+### Added
+- Added a read-only address-jurisdiction audit that identifies data problems before the Country field is removed.
+- For backend code maintenance, added a document that describes all of the back end management commands.
+
+### Changed
+
+
+
+### Fixed
+
+- Youth Rapier Marshal authorizations now accept either a current Junior or Senior Rapier Marshal authorization as the prerequisite.
+
+
+### Removed
+
+
 ## [1.1.8] - 2026-07-16
 ### Changed
 - Missile Combat senior marshal regional approvals can no longer be issued by Armored combat regional marshals.

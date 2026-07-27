@@ -29,6 +29,7 @@ workload of the authorization officer will be reduced.
 - [Deployment workflow](deployment_workflow.md)
 - [Backup and restore runbook](backup_and_restore_runbook_an_tir_authorizations.md)
 - [Maintenance runbook](maintenance_runbook.md)
+- [Project management command catalog](authorizations/management/commands/README.md)
 - [Secret rotation policy](secret_rotation_policy.md)
 
 ### Data Integrity Invariants

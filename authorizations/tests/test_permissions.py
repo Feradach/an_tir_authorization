@@ -720,6 +720,67 @@ class AuthorizationRuleTests(AuthorizationTestBase):
 
         self.assertTrue(ok)
 
+    def test_youth_rapier_marshal_accepts_junior_rapier_marshal_authorization(self):
+        marshal_user, marshal = self.make_person(
+            'youth_rapier_junior_prereq_marshal',
+            'Youth Rapier Junior Prerequisite Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(marshal, self.style_sm_youth_rapier)
+        _, candidate = self.make_person(
+            'youth_rapier_junior_prereq_candidate',
+            'Youth Rapier Junior Prerequisite Candidate',
+        )
+        junior_rapier = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_rapier)
+        youth_rapier_junior = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_youth_rapier)
+        self.grant_authorization(candidate, junior_rapier)
+
+        ok, msg = authorization_follows_rules(marshal_user, candidate, youth_rapier_junior.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_youth_rapier_marshal_accepts_senior_rapier_marshal_authorization(self):
+        marshal_user, marshal = self.make_person(
+            'youth_rapier_senior_prereq_marshal',
+            'Youth Rapier Senior Prerequisite Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(marshal, self.style_sm_youth_rapier)
+        _, candidate = self.make_person(
+            'youth_rapier_senior_prereq_candidate',
+            'Youth Rapier Senior Prerequisite Candidate',
+        )
+        senior_rapier = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_rapier)
+        youth_rapier_senior = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_youth_rapier)
+        self.grant_authorization(candidate, senior_rapier)
+
+        ok, msg = authorization_follows_rules(marshal_user, candidate, youth_rapier_senior.id)
+
+        self.assertTrue(ok, msg)
+        self.assertEqual(msg, 'Authorization follows all rules.')
+
+    def test_youth_rapier_marshal_requires_rapier_marshal_authorization(self):
+        marshal_user, marshal = self.make_person(
+            'youth_rapier_missing_prereq_marshal',
+            'Youth Rapier Missing Prerequisite Marshal',
+            background_check_expiration=date.today() + relativedelta(years=1),
+        )
+        self.grant_authorization(marshal, self.style_sm_youth_rapier)
+        _, candidate = self.make_person(
+            'youth_rapier_missing_prereq_candidate',
+            'Youth Rapier Missing Prerequisite Candidate',
+        )
+        youth_rapier_junior = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_youth_rapier)
+
+        ok, msg = authorization_follows_rules(marshal_user, candidate, youth_rapier_junior.id)
+
+        self.assertFalse(ok)
+        self.assertEqual(
+            msg,
+            'Must have a junior or senior rapier marshal authorization to become a youth rapier marshal.',
+        )
+
     def test_youth_authorization_must_match_age_category(self):
         marshal_user, marshal = self.make_person(
             'youth_category_marshal',
