@@ -1730,6 +1730,170 @@ class SearchViewTests(ViewTestBase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'authorizations/search_form.html')
 
+    def test_private_name_fields_are_hidden_from_anonymous_and_regular_users(self):
+        response = self.client.get(reverse('search'), {'goal': 'search'})
+        self.assertNotContains(response, 'name="first_name"')
+        self.assertNotContains(response, 'name="last_name"')
+
+        viewer_user, _ = self.make_person('private_name_viewer', 'Private Name Viewer')
+        self.client.login(username=viewer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('search'), {'goal': 'search'})
+
+        self.assertNotContains(response, 'name="first_name"')
+        self.assertNotContains(response, 'name="last_name"')
+
+        viewer_user.is_staff = True
+        viewer_user.save(update_fields=['is_staff'])
+        response = self.client.get(reverse('search'), {'goal': 'search'})
+        self.assertContains(response, 'name="first_name"')
+        self.assertContains(response, 'name="last_name"')
+
+    def test_site_admin_can_use_private_name_search(self):
+        admin_user, _ = self.make_person('private_name_admin', 'Private Name Admin')
+        admin_user.is_staff = True
+        admin_user.save(update_fields=['is_staff'])
+        target_user, target_person = self.make_person('private_admin_target', 'Private Admin Target')
+        target_user.first_name = 'Administrative Match'
+        target_user.save(update_fields=['first_name'])
+        target_auth = self.grant_authorization(
+            target_person,
+            self.style_weapon_armored,
+            status=self.status_active,
+        )
+        self.client.force_login(admin_user)
+
+        response = self.client.get(reverse('search'), {'first_name': 'Administrative'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [authorization.id for authorization in response.context['page_obj'].object_list],
+            [target_auth.id],
+        )
+
+    def test_private_name_fields_are_visible_to_each_allowed_role(self):
+        senior_user, senior_person = self.make_person('private_name_senior', 'Private Name Senior')
+        self.grant_authorization(senior_person, self.style_sm_armored, status=self.status_active)
+
+        seneschal_user, seneschal_person = self.make_person('private_name_seneschal', 'Private Name Seneschal')
+        self.appoint(seneschal_person, self.branch_lg, self.discipline_seneschal)
+
+        kao_user, kao_person = self.make_person('private_name_kao', 'Private Name KAO')
+        self.appoint(kao_person, self.branch_an_tir, self.discipline_auth_officer)
+
+        equestrian_user, equestrian_person = self.make_person('private_name_eao', 'Private Name EAO')
+        self.appoint(
+            equestrian_person,
+            self.branch_an_tir,
+            self.discipline_equestrian_auth_officer,
+        )
+
+        for user in [senior_user, seneschal_user, kao_user, equestrian_user]:
+            with self.subTest(username=user.username):
+                self.client.force_login(user)
+                response = self.client.get(reverse('search'), {'goal': 'search'})
+                self.assertContains(response, 'name="first_name"')
+                self.assertContains(response, 'name="last_name"')
+                self.client.logout()
+
+    def test_private_name_query_is_rejected_without_an_allowed_role(self):
+        response = self.client.get(reverse('search'), {'first_name': 'Mike'})
+        self.assertEqual(response.status_code, 403)
+
+        viewer_user, _ = self.make_person('private_name_denied', 'Private Name Denied')
+        self.client.login(username=viewer_user.username, password='StrongPass!123')
+        response = self.client.get(reverse('search'), {'last_name': 'Tester'})
+        self.assertEqual(response.status_code, 403)
+
+    def test_private_first_name_search_matches_complete_words_and_returns_all_records(self):
+        viewer_user, viewer_person = self.make_person('private_name_searcher', 'Private Name Searcher')
+        self.grant_authorization(viewer_person, self.style_sm_armored, status=self.status_active)
+        self.client.force_login(viewer_user)
+
+        expected_auth_ids = set()
+        for index, first_name in enumerate(['Mike', 'Mike B', 'C Mike', 'Mike Mitchell', 'Mike-C']):
+            user, person = self.make_person(f'private_match_{index}', f'Private Match {index}')
+            user.first_name = first_name
+            user.save(update_fields=['first_name'])
+            expected_auth_ids.add(
+                self.grant_authorization(person, self.style_weapon_armored, status=self.status_active).id
+            )
+            if first_name == 'Mike':
+                expected_auth_ids.add(
+                    self.grant_authorization(person, self.style_single_rapier, status=self.status_active).id
+                )
+
+        excluded_auth_ids = set()
+        for index, first_name in enumerate(['Mikel', 'Mke', 'Mik']):
+            user, person = self.make_person(f'private_no_match_{index}', f'Private No Match {index}')
+            user.first_name = first_name
+            user.save(update_fields=['first_name'])
+            excluded_auth_ids.add(
+                self.grant_authorization(person, self.style_weapon_armored, status=self.status_active).id
+            )
+
+        response = self.client.get(reverse('search'), {'first_name': 'mIkE'})
+
+        result_ids = {authorization.id for authorization in response.context['page_obj'].object_list}
+        self.assertEqual(result_ids, expected_auth_ids)
+        self.assertTrue(result_ids.isdisjoint(excluded_auth_ids))
+
+    def test_private_name_search_treats_punctuation_as_spaces_and_combines_fields(self):
+        viewer_user, viewer_person = self.make_person('private_phrase_searcher', 'Private Phrase Searcher')
+        self.grant_authorization(viewer_person, self.style_sm_armored, status=self.status_active)
+        self.client.force_login(viewer_user)
+
+        expected_auth_ids = set()
+        for index, (first_name, last_name) in enumerate([
+            ('Mike C', "O'Neil"),
+            ('A Mike-C B', 'O.Neil'),
+        ]):
+            user, person = self.make_person(f'private_phrase_match_{index}', f'Phrase Match {index}')
+            user.first_name = first_name
+            user.last_name = last_name
+            user.save(update_fields=['first_name', 'last_name'])
+            expected_auth_ids.add(
+                self.grant_authorization(person, self.style_weapon_armored, status=self.status_active).id
+            )
+
+        for index, (first_name, last_name) in enumerate([
+            ('Mike', "O'Neil"),
+            ('C', "O'Neil"),
+            ('Mike B', "O'Neil"),
+            ('Mike C', 'Other'),
+        ]):
+            user, person = self.make_person(f'private_phrase_no_match_{index}', f'Phrase No Match {index}')
+            user.first_name = first_name
+            user.last_name = last_name
+            user.save(update_fields=['first_name', 'last_name'])
+            self.grant_authorization(person, self.style_weapon_armored, status=self.status_active)
+
+        response = self.client.get(
+            reverse('search'),
+            {'first_name': 'Mike.C', 'last_name': 'O-Neil'},
+        )
+
+        result_ids = {authorization.id for authorization in response.context['page_obj'].object_list}
+        self.assertEqual(result_ids, expected_auth_ids)
+
+    def test_private_name_search_fallback_excludes_merged_source_accounts(self):
+        viewer_user, viewer_person = self.make_person('private_fallback_searcher', 'Private Fallback Searcher')
+        self.grant_authorization(viewer_person, self.style_sm_armored, status=self.status_active)
+        survivor_user, _ = self.make_person('private_survivor', 'Private Survivor')
+        merged_user, _ = self.make_person('private_merged', 'Private Merged')
+        merged_user.first_name = 'Fallback'
+        merged_user.last_name = 'Only'
+        merged_user.merged_into = survivor_user
+        merged_user.save(update_fields=['first_name', 'last_name', 'merged_into'])
+        self.client.force_login(viewer_user)
+
+        response = self.client.get(
+            reverse('search'),
+            {'first_name': 'Fallback', 'last_name': 'Only'},
+        )
+
+        self.assertEqual(response.context['page_obj'].paginator.count, 0)
+        self.assertEqual(response.context['person_fallback_results'], [])
+
     def test_membership_filter_in_table_view(self):
         _, fighter_a = self.make_person('search_table_a', 'Search Table A', membership='1111111111')
         _, fighter_b = self.make_person('search_table_b', 'Search Table B', membership='2222222222')
@@ -1864,6 +2028,11 @@ class SearchViewTests(ViewTestBase):
         _, fighter_a = self.make_person('search_csv_a', 'Search CSV A', branch=self.branch_lg)
         _, fighter_b = self.make_person('search_csv_b', 'Search CSV B', branch=self.branch_lg)
         _, fighter_c = self.make_person('search_csv_c', 'Search CSV C', branch=self.branch_gd)
+        _, fighter_without_auth = self.make_person(
+            'search_csv_without_auth',
+            'Search CSV Without Auth',
+            branch=self.branch_lg,
+        )
         self.grant_authorization(fighter_a, self.style_weapon_armored, status=self.status_active)
         self.grant_authorization(fighter_b, self.style_weapon_armored, status=self.status_active)
         self.grant_authorization(fighter_c, self.style_weapon_armored, status=self.status_active)
@@ -1885,6 +2054,7 @@ class SearchViewTests(ViewTestBase):
         self.assertIn('SCA Name,Region,Branch,Discipline,Weapon Style,Marshal,Expiration,Minor', content)
         self.assertIn('Search CSV A', content)
         self.assertIn('Search CSV B', content)
+        self.assertIn('Search CSV Without Auth', content)
         self.assertNotIn('Search CSV C', content)
         self.assertNotIn('<a ', content)
 
@@ -7485,7 +7655,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
         single_sword_expiration = date.today() + timedelta(days=30)
         case_expiration = date.today() + relativedelta(years=1)
-        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
+        formatted_case_expiration = date_format(case_expiration)
         self.grant_authorization(
             self.candidate_ao_person,
             self.style_single_rapier,
@@ -7534,7 +7704,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
         single_sword_expiration = date.today() - timedelta(days=1)
         case_expiration = date.today() + relativedelta(years=1)
-        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
+        formatted_case_expiration = date_format(case_expiration)
         self.grant_authorization(
             self.candidate_ao_person,
             self.style_single_rapier,
@@ -7572,7 +7742,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
         single_sword_expiration = date.today() - timedelta(days=1)
         case_expiration = date.today() + relativedelta(years=1)
-        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
+        formatted_case_expiration = date_format(case_expiration)
         self.grant_authorization(
             self.candidate_ao_person,
             self.style_single_rapier,
@@ -7605,7 +7775,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         style_case = WeaponStyle.objects.create(name='Case', discipline=self.discipline_rapier)
         single_sword_expiration = date.today() - timedelta(days=1)
         case_expiration = date.today() + relativedelta(years=1)
-        formatted_case_expiration = f'{case_expiration.strftime("%B")} {case_expiration.day}, {case_expiration.year}'
+        formatted_case_expiration = date_format(case_expiration)
         self.grant_authorization(
             self.candidate_ao_person,
             self.style_single_rapier,
@@ -7642,10 +7812,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             expiration=date.today() - timedelta(days=1),
             marshal=self.kao_person,
         )
-        formatted_expiration = (
-            f'{expired_authorization.expiration.strftime("%B")} '
-            f'{expired_authorization.expiration.day}, {expired_authorization.expiration.year}'
-        )
+        formatted_expiration = date_format(expired_authorization.expiration)
 
         response = self.client.get(reverse('fighter', kwargs={'person_id': self.candidate_armored_user.id}))
 
@@ -7673,10 +7840,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
             expiration=date.today() + relativedelta(years=1),
             marshal=self.kao_person,
         )
-        formatted_expiration = (
-            f'{marshal_authorization.expiration.strftime("%B")} '
-            f'{marshal_authorization.expiration.day}, {marshal_authorization.expiration.year}'
-        )
+        formatted_expiration = date_format(marshal_authorization.expiration)
 
         response = self.client.get(reverse('fighter', kwargs={'person_id': suspended_user.id}))
 
@@ -7709,10 +7873,7 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.appoint(eq_officer_person, self.branch_an_tir, self.discipline_equestrian_auth_officer)
         general_riding_expiration = date.today() + timedelta(days=30)
         mounted_gaming_expiration = date.today() + relativedelta(years=1)
-        formatted_mounted_gaming_expiration = (
-            f'{mounted_gaming_expiration.strftime("%B")} '
-            f'{mounted_gaming_expiration.day}, {mounted_gaming_expiration.year}'
-        )
+        formatted_mounted_gaming_expiration = date_format(mounted_gaming_expiration)
         self.grant_authorization(
             self.candidate_ao_person,
             style_general_riding,

@@ -18,10 +18,10 @@ from django.http import JsonResponse, Http404, FileResponse
 from datetime import timedelta
 import logging
 from io import BytesIO
-from django.db.models import Q, Prefetch, Max, Case, When, Value, BooleanField
+from django.db.models import Q, Prefetch, Max, Case, When, Value, BooleanField, Exists, OuterRef
 from django.http import HttpResponseRedirect, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
-from django.core.paginator import Paginator
+from django.core.paginator import EmptyPage, Page, PageNotAnInteger, Paginator
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.urls import reverse
@@ -30,7 +30,7 @@ from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
 from .models import User, Authorization, AuthorizationAuditEntry, AuthorizationValidityInterval, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, adult_age_for_jurisdiction, is_minor_from_birthday, sync_authorization_validity_interval
-from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, active_sanction_for_style, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_age, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _equestrian_aliases_for_style_name, _GENERAL_RIDING_STYLES, _JUNIOR_GROUND_CREW_STYLES, _MOUNTED_ARCHERY_STYLES, _MOUNTED_COMBAT_STYLES, _MOUNTED_CREST_COMBAT_STYLES, _MOUNTED_GAMING_STYLES, _MOUNTED_SPECIAL_STYLES, _MOUNTED_WEAPON_GAME_STYLES, _DRIVING_STYLES, _FOAM_TIPPED_JOUSTING_STYLES, _SENIOR_GROUND_CREW_STYLES
+from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_branch_seneschal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, active_sanction_for_style, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_age, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _equestrian_aliases_for_style_name, _GENERAL_RIDING_STYLES, _JUNIOR_GROUND_CREW_STYLES, _MOUNTED_ARCHERY_STYLES, _MOUNTED_COMBAT_STYLES, _MOUNTED_CREST_COMBAT_STYLES, _MOUNTED_GAMING_STYLES, _MOUNTED_SPECIAL_STYLES, _MOUNTED_WEAPON_GAME_STYLES, _DRIVING_STYLES, _FOAM_TIPPED_JOUSTING_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .changelog import build_changelog_sections
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
 from itertools import groupby
@@ -5416,6 +5416,114 @@ def _parse_search_date(value: str):
         return None, True
 
 
+def _can_search_private_names(user):
+    """Return whether user may search the non-public first and last name fields."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if user.is_staff:
+        return True
+    if is_senior_marshal(user) or is_branch_seneschal(user):
+        return True
+
+    officer_appointments = BranchMarshal.objects.filter(
+        person__user=user,
+        branch__name='An Tir',
+        discipline__name__in=[
+            KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE,
+            KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE,
+        ],
+        end_date__gte=date.today(),
+    ).select_related('person__user', 'discipline')
+    for appointment in officer_appointments:
+        effective_expiration = marshal_office_effective_expiration(appointment)
+        if effective_expiration and effective_expiration >= date.today():
+            return True
+    return False
+
+
+def _normalize_private_name(value):
+    """Case-fold a name and treat every non-alphanumeric run as one space."""
+    return ' '.join(
+        ''.join(character.casefold() if character.isalnum() else ' ' for character in (value or '')).split()
+    )
+
+
+def _private_name_matches(candidate, search_term):
+    """Match a complete normalized word or contiguous phrase within a name."""
+    normalized_candidate = _normalize_private_name(candidate)
+    normalized_term = _normalize_private_name(search_term)
+    if not normalized_candidate or not normalized_term:
+        return False
+    return f' {normalized_term} ' in f' {normalized_candidate} '
+
+
+def _private_name_matching_user_ids(first_name_term='', last_name_term=''):
+    """Return every active, non-staff user ID matching all supplied name terms."""
+    matching_ids = []
+    users = User.objects.filter(
+        is_staff=False,
+        merged_into__isnull=True,
+    ).values_list('id', 'first_name', 'last_name')
+    for user_id, first_name, last_name in users.iterator():
+        if first_name_term and not _private_name_matches(first_name, first_name_term):
+            continue
+        if last_name_term and not _private_name_matches(last_name, last_name_term):
+            continue
+        matching_ids.append(user_id)
+    return matching_ids
+
+
+class _SeparatedSearchPaginator:
+    """Paginate primary rows first, then fighter-only records on separate pages."""
+
+    def __init__(self, primary_results, fighter_results, per_page):
+        self.primary_results = primary_results
+        self.fighter_results = fighter_results
+        self.per_page = per_page
+        self.primary_count = primary_results.count()
+        self.fighter_count = fighter_results.count()
+        self.count = self.primary_count + self.fighter_count
+        self.primary_num_pages = (
+            (self.primary_count + per_page - 1) // per_page if self.primary_count else 0
+        )
+        self.fighter_num_pages = (
+            (self.fighter_count + per_page - 1) // per_page if self.fighter_count else 0
+        )
+        self.num_pages = max(1, self.primary_num_pages + self.fighter_num_pages)
+        self.page_range = range(1, self.num_pages + 1)
+
+    def validate_number(self, number):
+        try:
+            number = int(number)
+        except (TypeError, ValueError):
+            raise PageNotAnInteger('That page number is not an integer.')
+        if number < 1:
+            raise EmptyPage('That page number is less than 1.')
+        if number > self.num_pages:
+            raise EmptyPage('That page contains no results.')
+        return number
+
+    def get_page(self, number):
+        try:
+            number = self.validate_number(number)
+        except PageNotAnInteger:
+            number = 1
+        except EmptyPage:
+            number = self.num_pages
+
+        if number <= self.primary_num_pages:
+            start = (number - 1) * self.per_page
+            primary_page_results = self.primary_results[start:start + self.per_page]
+            fighter_page_results = []
+        else:
+            fighter_page_number = number - self.primary_num_pages
+            start = (fighter_page_number - 1) * self.per_page
+            primary_page_results = []
+            fighter_page_results = list(self.fighter_results[start:start + self.per_page])
+
+        return Page(primary_page_results, number, self), fighter_page_results
+
+
 def _ensure_pdf_font_registered():
     global _PDF_FONT_REGISTERED
     if _PDF_FONT_REGISTERED:
@@ -5637,7 +5745,7 @@ def _flatten_pdf_template(template, data, watermark_text=FIGHTER_CARD_WATERMARK,
     return template
 
 
-def _build_search_csv_response(authorizations):
+def _build_search_csv_response(authorizations, fighter_only_people=()):
     """Export search table rows as CSV using current filters without pagination."""
     response = HttpResponse(content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = 'attachment; filename="authorizations_search.csv"'
@@ -5668,6 +5776,20 @@ def _build_search_csv_response(authorizations):
             auth.effective_expiration.isoformat() if auth.effective_expiration else '',
             auth.person.minor_status,
         ])
+    for person in fighter_only_people:
+        region_name = ''
+        if person.branch and person.branch.region:
+            region_name = person.branch.region.name
+        writer.writerow([
+            person.sca_name or '',
+            region_name,
+            person.branch.name if person.branch else '',
+            '',
+            '',
+            '',
+            '',
+            person.minor_status,
+        ])
     return response
 
 
@@ -5675,6 +5797,13 @@ def search(request):
     """
     Handles both the search form display and the search results display.
     """
+
+    can_search_private_names = _can_search_private_names(request.user)
+    first_name_term = (request.GET.get('first_name') or '').strip()
+    last_name_term = (request.GET.get('last_name') or '').strip()
+    private_name_search_requested = bool(first_name_term or last_name_term)
+    if private_name_search_requested and not can_search_private_names:
+        raise PermissionDenied('You do not have permission to search by first or last name.')
 
     # === Step 1: Get dropdown options (we need these for the search form too) ===
     sca_name_options = _exclude_system_people(Person.objects.all()).order_by('sca_name').values_list('sca_name', flat=True).distinct()
@@ -5696,6 +5825,7 @@ def search(request):
             'discipline_options': discipline_options,
             'style_options': style_options,
             'marshal_options': marshal_options,
+            'can_search_private_names': can_search_private_names,
         }
         return render(request, 'authorizations/search_form.html', context)
 
@@ -5719,10 +5849,11 @@ def search(request):
     marshal = request.GET.get('marshal')
     if marshal: dynamic_filter &= Q(marshal__sca_name=marshal)
     is_current = request.GET.get('is_current')
+    start_date_raw = request.GET.get('start_date')
+    end_date_raw = request.GET.get('end_date')
     if is_current:
         dynamic_filter &= Q(effective_expiration_date__gte=date.today())
     else:
-        start_date_raw = request.GET.get('start_date')
         start_date, start_invalid = _parse_search_date(start_date_raw)
         if start_invalid:
             invalid_query_params.add('start_date')
@@ -5731,7 +5862,6 @@ def search(request):
         if start_date:
             dynamic_filter &= Q(effective_expiration_date__gte=start_date)
 
-        end_date_raw = request.GET.get('end_date')
         end_date, end_invalid = _parse_search_date(end_date_raw)
         if end_invalid:
             invalid_query_params.add('end_date')
@@ -5749,8 +5879,22 @@ def search(request):
     if email_addr := request.GET.get('email'):
         # Using 'iexact' makes the email search case-insensitive
         dynamic_filter &= Q(person__user__email__iexact=email_addr)
+    private_name_user_ids = None
+    if private_name_search_requested:
+        private_name_user_ids = _private_name_matching_user_ids(first_name_term, last_name_term)
+        dynamic_filter &= Q(person__user_id__in=private_name_user_ids)
 
-    person_identifying_search = bool(sca_name or membership_num or email_addr)
+    authorization_specific_filter_used = any(
+        value
+        for value in [
+            discipline,
+            style,
+            marshal,
+            is_current,
+            (start_date_raw or '').strip(),
+            (end_date_raw or '').strip(),
+        ]
+    )
     
     
     # === STEP 4: LOGIC FOR DIFFERENT VIEW MODES ===
@@ -5769,6 +5913,38 @@ def search(request):
     if minor_filter_value is not None:
         matching_authorizations = matching_authorizations.filter(inferred_minor=minor_filter_value)
     download_format = (request.GET.get('download') or '').strip().lower()
+
+    fighter_only_people = Person.objects.none()
+    if not authorization_specific_filter_used:
+        fighter_only_people = _exclude_system_people(
+            Person.objects.select_related('branch__region', 'user').filter(
+                user__merged_into__isnull=True,
+            )
+        )
+        if sca_name:
+            fighter_only_people = fighter_only_people.filter(sca_name=sca_name)
+        if region:
+            fighter_only_people = fighter_only_people.filter(branch__region__name=region)
+        if branch:
+            fighter_only_people = fighter_only_people.filter(branch__name=branch)
+        if membership_num:
+            fighter_only_people = fighter_only_people.filter(user__membership=membership_num)
+        if email_addr:
+            fighter_only_people = fighter_only_people.filter(user__email__iexact=email_addr)
+        if private_name_user_ids is not None:
+            fighter_only_people = fighter_only_people.filter(user_id__in=private_name_user_ids)
+        if minor_filter_value is not None:
+            fighter_only_people = fighter_only_people.annotate(
+                inferred_minor=_inferred_minor_annotation('user__'),
+            ).filter(inferred_minor=minor_filter_value)
+
+        fighter_only_people = fighter_only_people.exclude(
+            user_id__in=matching_authorizations.values('person_id'),
+        ).annotate(
+            has_any_authorization=Exists(
+                Authorization.objects.filter(person_id=OuterRef('user_id'))
+            ),
+        ).order_by('sca_name', 'user_id')
 
     if view_mode == 'card':
         # --- CARD VIEW LOGIC ---
@@ -5793,8 +5969,8 @@ def search(request):
         # 4. NOW, we paginate the fully prepared queryset. The paginator will handle
         #    it efficiently.
         items_per_page = int(request.GET.get('items_per_page', 10))
-        paginator = Paginator(people_list, items_per_page)
-        page_obj = paginator.get_page(request.GET.get('page', 1))
+        paginator = _SeparatedSearchPaginator(people_list, fighter_only_people, items_per_page)
+        page_obj, fighter_page_people = paginator.get_page(request.GET.get('page', 1))
     
     # 'table' view is the default
     # --- TABLE VIEW LOGIC ---
@@ -5815,44 +5991,23 @@ def search(request):
         ).order_by(user_sort)
 
         if download_format == 'csv':
-            return _build_search_csv_response(authorization_list)
+            return _build_search_csv_response(authorization_list, fighter_only_people)
 
         items_per_page = int(request.GET.get('items_per_page', 25))
-        paginator = Paginator(authorization_list, items_per_page)
-        page_obj = paginator.get_page(request.GET.get('page', 1))
+        paginator = _SeparatedSearchPaginator(authorization_list, fighter_only_people, items_per_page)
+        page_obj, fighter_page_people = paginator.get_page(request.GET.get('page', 1))
 
-    person_fallback_results = []
-    if page_obj.paginator.count == 0 and person_identifying_search:
-        person_matches = _exclude_system_people(
-            Person.objects.select_related('branch__region', 'user').filter(
-                user__merged_into__isnull=True,
-            )
-        )
-        if sca_name:
-            person_matches = person_matches.filter(sca_name=sca_name)
-        if region:
-            person_matches = person_matches.filter(branch__region__name=region)
-        if branch:
-            person_matches = person_matches.filter(branch__name=branch)
-        if membership_num:
-            person_matches = person_matches.filter(user__membership=membership_num)
-        if email_addr:
-            person_matches = person_matches.filter(user__email__iexact=email_addr)
-        if minor_filter_value is not None:
-            person_matches = person_matches.annotate(
-                inferred_minor=_inferred_minor_annotation('user__'),
-            ).filter(inferred_minor=minor_filter_value)
-
-        person_matches = person_matches.order_by('sca_name', 'user_id')
-        for person in person_matches:
-            if Authorization.objects.filter(person_id=person.user_id).exists():
-                match_status = 'No authorizations match the selected filters.'
-            else:
-                match_status = 'No authorizations on file.'
-            person_fallback_results.append({
-                'person': person,
-                'match_status': match_status,
-            })
+    person_fallback_results = [
+        {
+            'person': person,
+            'match_status': (
+                'No authorizations match the selected filters.'
+                if person.has_any_authorization
+                else 'No authorizations on file.'
+            ),
+        }
+        for person in fighter_page_people
+    ]
 
     # === STEP 4: RENDER THE TEMPLATE ===
     query_params = request.GET.copy()
@@ -5882,6 +6037,7 @@ def search(request):
             'discipline_options': discipline_options,
             'style_options': style_options,
             'marshal_options': marshal_options,
+            'can_search_private_names': can_search_private_names,
         },
     )
 
