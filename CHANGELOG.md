@@ -5,14 +5,8 @@
 
 ### Added
 
-- Site administrators, senior marshals, Seneschals, and kingdom authorization officers can now search for fighter records by first or last name without exposing stored name values in the search form.
-
-
 
 ### Changed
-
-- Searches using person information now show matching fighter records without matching authorization rows on separate pages after the authorization results. Authorization-specific filters continue to return authorization records only.
-
 
 
 ### Fixed
@@ -20,6 +14,16 @@
 
 
 ### Removed
+
+
+## [1.1.10] - 2026-08-13
+### Added
+
+- Site administrators, senior marshals, Seneschals, and kingdom authorization officers can now search for fighter records by first or last name without exposing stored name values in the search form.
+
+### Changed
+
+- Searches using person information now show matching fighter records without matching authorization rows on separate pages after the authorization results. Authorization-specific filters continue to return authorization records only.
 
 
 ## [1.1.9] - 2026-07-26
