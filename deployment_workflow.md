@@ -19,6 +19,21 @@ Local validation should happen before code is pushed for normal release work. St
 
 Staging should use its own configuration and should not share production secrets or write to production systems. For email testing, prefer the file email backend first so staging does not accidentally contact real users. Switch to Gmail/API email only when intentionally testing outbound email behavior.
 
+## Mandatory Staging-to-Production Approval Gate
+
+Staging and production are two separate deployment phases. Completing a staging deploy never authorizes a production deploy.
+
+After deploying and smoke-testing staging, stop and report:
+
+- the staging URL;
+- the exact commit deployed;
+- the checks and smoke tests that passed or failed; and
+- any known caveats or items that still need the owner's review.
+
+Wait for the owner to perform their own staging testing and give a new, explicit instruction to deploy that tested commit to production. A stated intention to launch later or "launch today if everything looks good" does not replace this approval gate.
+
+The commit approved on staging must be the commit deployed to production. If code, configuration, migrations, or release documentation changes after staging approval, deploy the new commit to staging and repeat this gate before touching production.
+
 ## Branch Policy
 Do not use a permanent `develop` branch by default. It is likely to become a second messy `main` in this solo workflow.
 
@@ -39,8 +54,9 @@ For small, bounded changes that can be completed and validated locally in one si
 4. Push `main`.
 5. Deploy `main` to PythonAnywhere staging.
 6. Smoke test staging.
-7. If staging passes, leave the change queued for the Wednesday production deploy.
-8. If staging fails, fix `main` before any production deploy.
+7. Stop, report the staging result and exact commit, and wait for the owner's explicit production approval.
+8. If staging passes, leave the change queued for the Wednesday production deploy until that approval is given.
+9. If staging fails, fix `main`, redeploy staging, and repeat the approval gate before any production deploy.
 
 This flow is acceptable because `main` is still treated as "should be deployable", not as scratch space.
 
@@ -124,8 +140,12 @@ python -m dotenv run -- python manage.py collectstatic --noinput
 
 3. Restart the server and try to load the page.
 
+4. Stop and hand the staging URL and exact commit to the owner for acceptance testing. Do not continue into the production instructions during the same deployment phase.
+
 ## Production Deploy to DigitalOcean
-Before production deployment, promote shipped `CHANGELOG.md` entries out of `## [UNRELEASED]` and into the numbered release section. Production should have `RELEASE_ENV=production` in its environment so the release check blocks unreleased changelog entries.
+Begin this section only after the owner explicitly approves the exact commit tested on staging for production deployment.
+
+Before requesting that approval, promote shipped `CHANGELOG.md` entries out of `## [UNRELEASED]` and into the numbered release section, push the release commit, and deploy that exact commit to staging. Production should have `RELEASE_ENV=production` in its environment so the release check blocks unreleased changelog entries.
 
 To edit the .env file
 ```bash

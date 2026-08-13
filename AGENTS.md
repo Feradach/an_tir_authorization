@@ -43,6 +43,8 @@ Instructions for coding agents working in this repository. Keep changes focused,
 
 ## Release Hygiene
 - Follow the deployment and branch policy in `deployment_workflow.md`.
+- Treat staging and production as separate deployment phases. After staging, stop and wait for a new, explicit production approval from the owner; never infer that approval from a target launch date or from successful automated checks.
+- Deploy only the exact commit the owner approved on staging. Any intervening change must return to staging and pass the approval gate again.
 - For user-visible behavior changes, add an entry to the `## [UNRELEASED]` section of `CHANGELOG.md`. Entry should be added as if it is talking to an end user, not a developer. For instance, it should not reference any internal implementation details.
 - For security-sensitive changes (auth, recovery, permissions), include tests in the same change.
 - Every new, renamed, or behaviorally changed Django management command must be documented in `authorizations/management/commands/README.md` in the same change. Include its safety mode, safest command first, and the explicit flag required to write data.
