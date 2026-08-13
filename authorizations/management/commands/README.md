@@ -61,10 +61,9 @@ This command never changes the database.
 
 Use these commands in order to repair the legacy postal-code data. None of them contacts an address service automatically. The export files contain street addresses, so keep them private and remove working copies when the repair is complete.
 
-Start with a current database backup and baseline audit:
+First confirm that the normal production backup system has a current recoverable backup. The postal-code workflow does not require the project's optional `backupdata` command. Then run the baseline audit:
 
 ```bash
-python manage.py backupdata
 python manage.py audit_address_jurisdictions --output-csv address_jurisdiction_before.csv
 ```
 
