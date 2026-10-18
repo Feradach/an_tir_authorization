@@ -11,6 +11,8 @@
 
 ### Fixed
 
+- Authorization history now preserves gaps caused by lapsed membership, background checks, or prerequisite authorizations when records are updated or renewed.
+- Approval and replacement workflows now record when authorizations become valid or stop being valid. Paper-form checks also respect prerequisite lapses and sanctions on the authorization date.
 
 
 ### Removed

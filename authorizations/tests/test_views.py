@@ -5271,6 +5271,11 @@ class UserAccountViewTests(ViewTestBase):
         self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
 
     def test_paper_rules_allow_senior_equestrian_renewal_without_current_junior_marshal(self):
+        riding = WeaponStyle.objects.create(name='General Riding', discipline=self.discipline_equestrian)
+        riding_auth = self.grant_authorization(self.owner_person, riding, expiration=date(2029, 5, 10))
+        AuthorizationValidityInterval.objects.create(
+            authorization=riding_auth, start_date=date(2024, 5, 10), end_date=date(2029, 5, 10), source='paper_entry',
+        )
         style_eq_jm = WeaponStyle.objects.create(name='Junior Marshal', discipline=self.discipline_equestrian)
         style_eq_sm = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_equestrian)
         style_eq_mounted_gaming = WeaponStyle.objects.create(name='Mounted Gaming', discipline=self.discipline_equestrian)
@@ -7568,6 +7573,9 @@ class MarshalOfficerAppointmentPermissionTests(ViewTestBase):
         self.assertEqual(previous_same_style.status.name, 'Inactive')
         self.assertEqual(previous_other_style.status.name, 'Active')
         self.assertEqual(previous_future_category.status.name, 'Inactive')
+        self.assertFalse(previous_same_style.validity_intervals.filter(end_date__gte=date.today()).exists())
+        self.assertFalse(previous_future_category.validity_intervals.filter(end_date__gte=date.today()).exists())
+        self.assertTrue(previous_other_style.validity_intervals.filter(end_date__gte=date.today()).exists())
         self.assertTrue(
             Authorization.objects.filter(
                 person=target,

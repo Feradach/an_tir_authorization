@@ -3,7 +3,7 @@ from datetime import date
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from authorizations.models import Authorization, AuthorizationStatus, sync_authorization_validity_interval
+from authorizations.models import Authorization, AuthorizationStatus, sync_authorization_validity_interval, sync_dependent_authorization_validity_intervals
 from authorizations.permissions import _JUNIOR_GROUND_CREW_STYLES, _SENIOR_GROUND_CREW_STYLES
 
 
@@ -54,8 +54,10 @@ class Command(BaseCommand):
                 authorization.status = active_status
                 sync_authorization_validity_interval(
                     authorization,
+                    resume_date=date.today(),
                     note="Generated when waiver-blocked authorization became active by repair command.",
                 )
+                sync_dependent_authorization_validity_intervals(authorization)
             senior_ground_crew_user_ids = {
                 authorization.person.user_id
                 for authorization in pending_authorizations
@@ -66,11 +68,13 @@ class Command(BaseCommand):
             }
             if senior_ground_crew_user_ids:
                 inactive_status = self._get_or_create_status("Inactive")
-                Authorization.objects.filter(
+                for junior in Authorization.objects.filter(
                     person__user_id__in=senior_ground_crew_user_ids,
                     style__discipline__name="Equestrian",
                     style__name__in=_JUNIOR_GROUND_CREW_STYLES,
-                ).update(status=inactive_status)
+                ):
+                    junior.status = inactive_status
+                    junior.save(update_fields=['status', 'updated_at'])
 
         self.stdout.write(
             self.style.SUCCESS(f"Marked {len(pending_authorizations)} authorization(s) Active.")

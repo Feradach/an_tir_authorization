@@ -29,7 +29,7 @@ from django.utils.html import format_html
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
-from .models import User, Authorization, AuthorizationAuditEntry, AuthorizationValidityInterval, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, adult_age_for_jurisdiction, is_minor_from_birthday, sync_authorization_validity_interval
+from .models import User, Authorization, AuthorizationAuditEntry, AuthorizationValidityInterval, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, adult_age_for_jurisdiction, is_minor_from_birthday, sync_authorization_validity_interval, sync_dependent_authorization_validity_intervals
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_branch_seneschal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, active_sanction_for_style, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_age, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _equestrian_aliases_for_style_name, _GENERAL_RIDING_STYLES, _JUNIOR_GROUND_CREW_STYLES, _MOUNTED_ARCHERY_STYLES, _MOUNTED_COMBAT_STYLES, _MOUNTED_CREST_COMBAT_STYLES, _MOUNTED_GAMING_STYLES, _MOUNTED_SPECIAL_STYLES, _MOUNTED_WEAPON_GAME_STYLES, _DRIVING_STYLES, _FOAM_TIPPED_JOUSTING_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .changelog import build_changelog_sections
 from .maintenance import active_logged_in_users, can_manage_maintenance_lock, get_portal_setting, maintenance_lock_enabled, maintenance_lock_message
@@ -1317,18 +1317,11 @@ def _legacy_recovery_marshal_renewal_is_allowed(person: Person, style: WeaponSty
 
 
 def _legacy_recovery_interval_exists(person: Person, auth_date: date, *, style_names=None, discipline=None, exclude_style_names=None):
-    query = AuthorizationValidityInterval.objects.filter(
-        authorization__person=person,
-        start_date__lte=auth_date,
-        end_date__gte=auth_date,
+    from .authorization_history import was_authorized_during
+    return was_authorized_during(
+        person, auth_date, auth_date, discipline=discipline,
+        style_names=style_names, exclude_style_names=exclude_style_names,
     )
-    if discipline:
-        query = query.filter(authorization__style__discipline=discipline)
-    if style_names:
-        query = query.filter(authorization__style__name__in=style_names)
-    if exclude_style_names:
-        query = query.exclude(authorization__style__name__in=exclude_style_names)
-    return query.exists()
 
 
 def _legacy_recovery_senior_marshal_interval_exists(person: Person, discipline: Discipline, auth_date: date):
@@ -1662,8 +1655,8 @@ def _mark_authorization_inactive(authorization: Authorization, acting_user: User
         inactive_status = AuthorizationStatus.objects.create(name='Inactive')
     authorization.status = inactive_status
     authorization.updated_by = acting_user
-    authorization.save()
     _close_authorization_validity_intervals_for_delete(authorization, acting_user, note)
+    authorization.save()
     _restore_junior_marshal_superseded_by_deleted_senior(authorization, acting_user, note)
     for dependent in Authorization.objects.select_related(
         'person__user',
@@ -1882,7 +1875,6 @@ def _legacy_recovery_deactivate_superseded_junior_marshal(
         )
         junior_authorization.status = inactive_status
         junior_authorization.updated_by = actor
-        junior_authorization.save()
         _close_authorization_validity_intervals_for_delete(
             junior_authorization,
             actor,
@@ -1890,6 +1882,7 @@ def _legacy_recovery_deactivate_superseded_junior_marshal(
             reason=f'Senior Marshal authorization {senior_authorization.pk} supersession',
             effective_date=auth_date,
         )
+        junior_authorization.save()
         create_authorization_note(
             authorization=junior_authorization,
             created_by=actor,
@@ -5047,15 +5040,20 @@ def _activate_pending_waiver_authorizations(target_user: User, *, updated_by: Op
         authorization.status = active_status
         sync_authorization_validity_interval(
             authorization,
+            resume_date=date.today(),
             note='Generated when Awaiting Waiver authorization became active.',
         )
+        sync_dependent_authorization_validity_intervals(authorization)
     if activates_senior_ground_crew:
         inactive_status = _get_or_create_status_by_name('Inactive')
-        Authorization.objects.filter(
+        for junior in Authorization.objects.filter(
             person__user=target_user,
             style__discipline__name='Equestrian',
             style__name__in=_JUNIOR_GROUND_CREW_STYLES,
-        ).update(status=inactive_status, updated_by=updated_by)
+        ):
+            junior.status = inactive_status
+            junior.updated_by = updated_by
+            junior.save(update_fields=['status', 'updated_by', 'updated_at'])
     return activated_count, max_exp
 
 
@@ -5396,7 +5394,10 @@ def _activate_pending_background_check_authorizations(target_user: User) -> int:
         pending_qs.filter(style__discipline__name='Equestrian').update(status=equestrian_status)
         pending_qs.exclude(style__discipline__name='Equestrian').update(status=kingdom_status)
     else:
-        pending_qs.update(status=_get_or_create_status_by_name('Active'))
+        active_status = _get_or_create_status_by_name('Active')
+        for authorization in pending_qs:
+            authorization.status = active_status
+            authorization.save(update_fields=['status', 'updated_at'])
     return count
 
 
@@ -7339,11 +7340,14 @@ def add_authorization(request, person_id):
                 ]
                 if not replacement_style_ids:
                     return
-                Authorization.objects.filter(
+                for replaced in Authorization.objects.filter(
                     person=current_authorization.person,
                     style_id__in=replacement_style_ids,
                     status=active_status,
-                ).update(status=inactive_status, updated_by=authorizing_marshal)
+                ):
+                    replaced.status = inactive_status
+                    replaced.updated_by = authorizing_marshal
+                    replaced.save(update_fields=['status', 'updated_by', 'updated_at'])
 
             clear_pending_on_exit = bool(is_pending_submit and action_note)
             try:

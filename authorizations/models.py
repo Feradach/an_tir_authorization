@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
@@ -785,9 +785,23 @@ class Authorization(models.Model):
         return self.person.sca_name + ': ' + self.style.discipline.name + ' ' + self.style.name + ' authorization'
 
     def save(self, *args, **kwargs):
+        if kwargs.get('update_fields') is not None and not kwargs['update_fields']:
+            return
+        previous = None
+        if self.pk:
+            previous = Authorization.objects.filter(pk=self.pk).values('expiration', 'status__name').first()
         super().save(*args, **kwargs)
-        sync_authorization_validity_interval(self)
-        sync_dependent_authorization_validity_intervals(self)
+        # update_fields may leave unsaved values on this instance. History must
+        # describe the saved row, not those in-memory edits or cached relations.
+        saved = Authorization.objects.select_related('person__user', 'style__discipline', 'status').get(pk=self.pk)
+        resume_date = None
+        if previous and (
+            previous['expiration'] == saved.expiration
+            or (previous['status__name'] != 'Active' and saved.validity_intervals.exists())
+        ):
+            resume_date = date.today()
+        sync_authorization_validity_interval(saved, resume_date=resume_date)
+        sync_dependent_authorization_validity_intervals(saved)
 
     @property
     def effective_expiration(self):
@@ -973,8 +987,39 @@ def authorization_validity_duration_years(authorization: Authorization) -> int:
 def authorization_validity_candidate_dates(authorization: Authorization):
     if not authorization.expiration or not authorization.style or not authorization.style.discipline:
         return None, None
+    from .authorization_history import prerequisite_style_groups
+
+    # Display-only expired fallback dates are not evidence of past eligibility.
+    # Use real prerequisite/membership dates when generating history.
+    related = list(Authorization.objects.filter(
+        person_id=authorization.person_id,
+        style__discipline_id=authorization.style.discipline_id,
+        status__name='Active',
+    ).select_related('style'))
+    by_name = {item.style.name: item for item in related}
+
+    def real_expiration(item):
+        expiration = item.expiration
+        if item.style.name in ['Junior Marshal', 'Senior Marshal']:
+            membership = authorization.person.user.membership_expiration
+            if not membership:
+                return None
+            expiration = min(expiration, membership)
+            if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+                background = authorization.person.user.background_check_expiration
+                if not background:
+                    return None
+                expiration = min(expiration, background)
+        for names in prerequisite_style_groups(authorization.style.discipline.name, item.style.name, by_name):
+            ends = [real_expiration(by_name[name]) for name in names if name in by_name]
+            ends = [end for end in ends if end is not None]
+            if not ends:
+                return None
+            expiration = min(expiration, max(ends))
+        return expiration
+
     years = authorization_validity_duration_years(authorization)
-    return authorization.expiration - relativedelta(years=years), authorization.effective_expiration
+    return authorization.expiration - relativedelta(years=years), real_expiration(authorization)
 
 
 def sync_authorization_validity_interval(
@@ -992,43 +1037,46 @@ def sync_authorization_validity_interval(
     status_name = getattr(authorization.status, 'name', None)
     if status_name is None and authorization.status_id:
         status_name = AuthorizationStatus.objects.using(db_alias).filter(pk=authorization.status_id).values_list('name', flat=True).first()
-    if status_name != 'Active':
-        return None
-
-    start_date, end_date = authorization_validity_candidate_dates(authorization)
-    if not start_date or not end_date or end_date < start_date:
-        return None
-
     interval_query = AuthorizationValidityInterval.objects.using(db_alias).filter(
         authorization_id=authorization.pk,
     )
     if connections[db_alias].in_atomic_block:
         interval_query = interval_query.select_for_update()
     intervals = list(interval_query.order_by('start_date', 'end_date', 'id'))
-    if resume_date and intervals:
-        latest_end = max(interval.end_date for interval in intervals)
-        if latest_end < resume_date:
-            start_date = max(start_date, resume_date)
-            if end_date < start_date:
-                return None
-    elif resume_date and not intervals:
-        start_date = max(start_date, resume_date)
-        if end_date < start_date:
-            return None
+    start_date, end_date = authorization_validity_candidate_dates(authorization)
+    if status_name != 'Active' or end_date is None:
+        # Missing prerequisites and deactivation end current eligibility today;
+        # they do not erase the period before the change.
+        close_authorization_validity_intervals(authorization)
+        return None
 
-    for interval in intervals:
-        if start_date <= interval.end_date and end_date >= interval.start_date:
-            changed = False
-            if start_date < interval.start_date:
-                interval.start_date = start_date
-                changed = True
-            if end_date != interval.end_date:
-                interval.end_date = end_date
-                changed = True
-            if changed:
-                interval.note = f'{interval.note} Merged with active authorization update.'.strip()
-                interval.save(using=db_alias, update_fields=['start_date', 'end_date', 'note', 'updated_at'])
-            return interval
+    # Only the latest recorded period can be extended. Inferred starts must not
+    # reach back into an earlier period across a membership/prerequisite lapse.
+    latest = intervals[-1] if intervals else None
+    if latest:
+        start_date = max(start_date, latest.start_date)
+    if resume_date:
+        if latest and latest.start_date <= resume_date <= latest.end_date + timedelta(days=1):
+            start_date = max(start_date, latest.start_date)
+        else:
+            start_date = max(start_date, resume_date)
+    if end_date < start_date:
+        # A correction can move the expiry before the current period starts.
+        # Remove/cap that period without rewriting older, completed periods.
+        if latest and latest.end_date >= date.today():
+            if end_date < latest.start_date:
+                latest.delete()
+            else:
+                latest.end_date = end_date
+                latest.save(update_fields=['end_date', 'updated_at'])
+        return None
+
+    if latest and start_date <= latest.end_date and end_date >= latest.start_date:
+        if end_date != latest.end_date:
+            latest.end_date = end_date
+            latest.note = f'{latest.note} Merged with active authorization update.'.strip()
+            latest.save(using=db_alias, update_fields=['end_date', 'note', 'updated_at'])
+        return latest
 
     return AuthorizationValidityInterval.objects.using(db_alias).create(
         authorization_id=authorization.pk,
@@ -1039,6 +1087,18 @@ def sync_authorization_validity_interval(
     )
 
 
+def close_authorization_validity_intervals(authorization, *, effective_date=None):
+    """End open periods while retaining eligibility before the change date."""
+    effective_date = effective_date or date.today()
+    for interval in authorization.validity_intervals.filter(end_date__gte=effective_date):
+        if interval.start_date >= effective_date:
+            interval.delete()
+        else:
+            interval.end_date = effective_date - timedelta(days=1)
+            interval.note = f'{interval.note} Eligibility ended on {effective_date.isoformat()}.'.strip()
+            interval.save(update_fields=['end_date', 'note', 'updated_at'])
+
+
 def sync_active_authorization_validity_for_user(
     user: User,
     *,
@@ -1046,11 +1106,16 @@ def sync_active_authorization_validity_for_user(
     resume_date=None,
     note='Generated from active authorization update.',
 ):
-    for authorization in Authorization.objects.select_related(
+    query = Authorization.objects.select_related(
         'person__user',
         'style__discipline',
         'status',
-    ).filter(person__user=user, status__name='Active'):
+    ).filter(person__user=user, status__name='Active')
+    if source in ['membership_update', 'background_check_update']:
+        query = query.filter(style__name__in=['Junior Marshal', 'Senior Marshal'])
+    if source == 'background_check_update':
+        query = query.filter(style__discipline__name__in=['Youth Armored', 'Youth Rapier'])
+    for authorization in query:
         sync_authorization_validity_interval(
             authorization,
             source=source,
@@ -1062,16 +1127,23 @@ def sync_active_authorization_validity_for_user(
 def sync_dependent_authorization_validity_intervals(authorization: Authorization):
     if not authorization.pk or not authorization.person_id:
         return
-    status_name = getattr(authorization.status, 'name', None)
-    if status_name != 'Active':
+    from .authorization_history import prerequisite_style_groups
+    if not authorization.style:
         return
-    if authorization.effective_expiration < date.today():
-        return
-    for dependent in Authorization.objects.select_related(
+    related = list(Authorization.objects.select_related(
         'person__user',
         'style__discipline',
         'status',
-    ).filter(person=authorization.person, status__name='Active').exclude(pk=authorization.pk):
+    ).filter(person=authorization.person, style__discipline=authorization.style.discipline))
+    names = {item.style.name for item in related}
+
+    def depends_on(name):
+        return any(authorization.style.name in group or any(depends_on(other) for other in group)
+                   for group in prerequisite_style_groups(authorization.style.discipline.name, name, names))
+
+    for dependent in related:
+        if dependent.pk == authorization.pk or getattr(dependent.status, 'name', None) != 'Active' or not depends_on(dependent.style.name):
+            continue
         sync_authorization_validity_interval(
             dependent,
             resume_date=date.today(),

@@ -206,6 +206,9 @@ python manage.py activate_pending_waiver_authorizations --apply
 ```
 
 The apply form marks the reported authorizations Active and records repair notes.
+New validity starts on the activation date; earlier recorded gaps are preserved.
+Superseded junior ground-crew authorizations have their open validity periods closed.
+Dependent authorization history is refreshed when a prerequisite becomes active.
 
 ### `advance_fighter_concurrence_authorizations` — dry-run by default
 
