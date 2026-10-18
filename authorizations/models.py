@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
@@ -973,8 +973,39 @@ def authorization_validity_duration_years(authorization: Authorization) -> int:
 def authorization_validity_candidate_dates(authorization: Authorization):
     if not authorization.expiration or not authorization.style or not authorization.style.discipline:
         return None, None
+    from .authorization_history import prerequisite_style_groups
+
+    # Display-only expired fallback dates are not evidence of past eligibility.
+    # Use real prerequisite/membership dates when generating history.
+    related = list(Authorization.objects.filter(
+        person_id=authorization.person_id,
+        style__discipline_id=authorization.style.discipline_id,
+        status__name='Active',
+    ).select_related('style'))
+    by_name = {item.style.name: item for item in related}
+
+    def real_expiration(item):
+        expiration = item.expiration
+        if item.style.name in ['Junior Marshal', 'Senior Marshal']:
+            membership = authorization.person.user.membership_expiration
+            if not membership:
+                return None
+            expiration = min(expiration, membership)
+            if authorization.style.discipline.name in ['Youth Armored', 'Youth Rapier']:
+                background = authorization.person.user.background_check_expiration
+                if not background:
+                    return None
+                expiration = min(expiration, background)
+        for names in prerequisite_style_groups(authorization.style.discipline.name, item.style.name, by_name):
+            ends = [real_expiration(by_name[name]) for name in names if name in by_name]
+            ends = [end for end in ends if end is not None]
+            if not ends:
+                return None
+            expiration = min(expiration, max(ends))
+        return expiration
+
     years = authorization_validity_duration_years(authorization)
-    return authorization.expiration - relativedelta(years=years), authorization.effective_expiration
+    return authorization.expiration - relativedelta(years=years), real_expiration(authorization)
 
 
 def sync_authorization_validity_interval(
@@ -1005,14 +1036,13 @@ def sync_authorization_validity_interval(
     if connections[db_alias].in_atomic_block:
         interval_query = interval_query.select_for_update()
     intervals = list(interval_query.order_by('start_date', 'end_date', 'id'))
-    if resume_date and intervals:
-        latest_end = max(interval.end_date for interval in intervals)
-        if latest_end < resume_date:
-            start_date = max(start_date, resume_date)
-            if end_date < start_date:
-                return None
-    elif resume_date and not intervals:
-        start_date = max(start_date, resume_date)
+    if resume_date:
+        # Extend the current period, never the old period across a recorded gap.
+        # This matters on the *second* membership/prerequisite update after a lapse.
+        current = [interval for interval in intervals
+                   if interval.start_date <= resume_date <= interval.end_date + timedelta(days=1)]
+        period_start = min(interval.start_date for interval in current) if current else resume_date
+        start_date = max(start_date, period_start)
         if end_date < start_date:
             return None
 

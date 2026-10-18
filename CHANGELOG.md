@@ -7,14 +7,17 @@
 
 
 ### Changed
-
+- First authorizations and returns after more than a year without a valid authorization in a discipline require a second eligible person to concur, including Equestrian. Siege and youth combat remain exempt; marshal promotions keep their existing approval process.
+- Paper authorization entry requires the eligible witness when two-person sign-off is needed.
 
 ### Fixed
-
+- Electronic and paper entries now agree about prior authorization history, including membership lapses and missing Rapier Single Sword prerequisites.
+- Later membership and prerequisite renewals preserve recorded gaps in authorization validity.
 
 
 ### Removed
-
+- Removed the administrative shortcut that advanced authorizations without the required second sign-off during the temporary pause.
+- Retired the completed legacy CSV authorization import tool. Paper authorizations continue to use the validated paper-entry page.
 
 ## [1.1.10] - 2026-08-13
 ### Added

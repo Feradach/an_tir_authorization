@@ -6,6 +6,7 @@ from django.conf import settings
 from django.db.models import Q, Max
 from django.db.utils import OperationalError, ProgrammingError
 from typing import Optional
+from .authorization_history import was_authorized_during
 
 from authorizations.models import BranchMarshal, Authorization, WeaponStyle, User, Branch, AuthorizationStatus, \
     Person, Discipline, AuthorizationNote, AuthorizationPortalSetting, Sanction
@@ -906,35 +907,29 @@ def calculate_authorization_expiration(person: Person, style: WeaponStyle, today
     return base_expiration
 
 def is_authorized_in_discipline(user: User, discipline) -> bool:
-    if not user or not hasattr(user, 'person'):
+    if not user or user.merged_into_id or not hasattr(user, 'person'):
         return False
     discipline_name = discipline.name if hasattr(discipline, 'name') else discipline
-    return Authorization.objects.effectively_active().filter(
+    active_styles = list(Authorization.objects.effectively_active().filter(
         person__user=user,
         style__discipline__name=discipline_name,
-    ).exists()
+    ).values_list('style__name', flat=True))
+    if not active_styles:
+        return False
+    return was_authorized_during(
+        user.person, date.today(), date.today(), discipline=discipline, style_names=active_styles,
+    )
 
 def authorization_requires_concurrence(person: Person, style: WeaponStyle, today: Optional[date] = None) -> bool:
-    if not getattr(settings, 'AUTHZ_REQUIRE_FIGHTER_CONCURRENCE', False):
-        return False
     if today is None:
         today = date.today()
     if style.name in ['Junior Marshal', 'Senior Marshal']:
         return False
     discipline_name = getattr(getattr(style, 'discipline', None), 'name', '')
-    if discipline_name in ['Equestrian', 'Siege', 'Youth Armored', 'Youth Rapier']:
+    if discipline_name in ['Siege', 'Youth Armored', 'Youth Rapier']:
         return False
     cutoff = today - relativedelta(years=1)
-    max_effective = Authorization.objects.with_effective_expiration().with_sanction_flag(today=today).filter(
-        person=person,
-        style__discipline=style.discipline,
-        status__name='Active',
-        has_active_sanction=False,
-    ).aggregate(Max('effective_expiration_date'))['effective_expiration_date__max']
-    max_effective = _coerce_date(max_effective)
-    if not max_effective:
-        return True
-    return max_effective < cutoff
+    return not was_authorized_during(person, cutoff, today, discipline=style.discipline)
 
 
 def _authorization_region_name(authorization: Authorization) -> Optional[str]:

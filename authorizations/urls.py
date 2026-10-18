@@ -28,7 +28,6 @@ urlpatterns = [
         RedirectView.as_view(pattern_name='paper_authorization_entry', permanent=False),
         name='legacy_authorization_recovery',
     ),
-    path('legacy_authorizations/upload', views.upload_legacy_authorizations, name='upload_legacy_authorizations'),
     path('delete', views.delete_authorizations, name='delete_authorizations'),
     path('delete/<int:person_id>', views.delete_authorizations, name='delete_authorizations_for_person'),
     path('supporting_documents', views.supporting_documents, name='supporting_documents'),

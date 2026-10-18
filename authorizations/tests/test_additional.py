@@ -1367,58 +1367,9 @@ class AuthorizationOfficerSignOffFlagTests(AdditionalCoverageBase):
             defaults={'require_kao_verification': enabled},
         )
 
-    def test_advance_fighter_concurrence_command_dry_run_does_not_change_status(self):
-        target_user, target_person = self.make_person('advance_concur_dry_target', 'Advance Concur Dry Target')
-        pending = self.grant_authorization(
-            target_person,
-            self.style_weapon_armored,
-            status=self.status_needs_concurrence,
-        )
-        self._set_sign_off(True)
-        out = StringIO()
-
-        call_command('advance_fighter_concurrence_authorizations', stdout=out)
-
-        pending.refresh_from_db()
-        self.assertEqual(pending.status, self.status_needs_concurrence)
-        self.assertIn('Dry run only', out.getvalue())
-        self.assertIn('Authorizations to advance: 1', out.getvalue())
-
-    def test_advance_fighter_concurrence_command_routes_to_review_and_skips_marshal_styles(self):
-        target_user, target_person = self.make_person('advance_concur_target', 'Advance Concur Target')
-        eq_discipline = Discipline.objects.create(name='Equestrian')
-        eq_style = WeaponStyle.objects.create(name='General Riding', discipline=eq_discipline)
-        pending_armored = self.grant_authorization(
-            target_person,
-            self.style_weapon_armored,
-            status=self.status_needs_concurrence,
-        )
-        pending_armored.concurring_fighter = target_person
-        pending_armored.save()
-        pending_equestrian = self.grant_authorization(
-            target_person,
-            eq_style,
-            status=self.status_needs_concurrence,
-        )
-        malformed_marshal = self.grant_authorization(
-            target_person,
-            self.style_jm_armored,
-            status=self.status_needs_concurrence,
-        )
-        self._set_sign_off(True)
-        out = StringIO()
-
-        call_command('advance_fighter_concurrence_authorizations', '--write', stdout=out)
-
-        pending_armored.refresh_from_db()
-        pending_equestrian.refresh_from_db()
-        malformed_marshal.refresh_from_db()
-        self.assertEqual(pending_armored.status.name, 'Awaiting Kingdom Authorization Officer Review')
-        self.assertIsNone(pending_armored.concurring_fighter)
-        self.assertEqual(pending_equestrian.status.name, 'Awaiting Equestrian Authorization Officer Review')
-        self.assertEqual(malformed_marshal.status, self.status_needs_concurrence)
-        self.assertIn('Advanced 2 authorization(s).', out.getvalue())
-        self.assertIn('marshal authorizations should not use fighter concurrence', out.getvalue())
+    def test_retired_concurrence_bypass_command_is_unavailable(self):
+        with self.assertRaises(CommandError):
+            call_command('advance_fighter_concurrence_authorizations', '--write', stdout=StringIO())
 
     def test_sign_off_disabled_new_non_marshal_can_become_active(self):
         acting_user, acting_person = self.make_person('signoff_off_actor', 'Signoff Off Actor')
