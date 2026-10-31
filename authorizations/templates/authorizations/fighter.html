@@ -451,7 +451,6 @@
                         max="{{ today|date:'Y-m-d' }}"
                     >
                 </div>
-                {% if AUTHZ_REQUIRE_FIGHTER_CONCURRENCE %}
                     <div class="mb-3">
                         <label for="concurring_fighter_id">Concurring Fighter (optional):</label>
                         <input
@@ -468,10 +467,10 @@
                         <input type="hidden" id="concurring_fighter_id" name="concurring_fighter_id" value="{{ pending_concurring_fighter_user_id|default:'' }}">
                         <div class="person-lookup-results list-group" data-results-for="concurring_fighter_lookup"></div>
                         <small class="form-text text-muted">
-                            Used only when a selected authorization requires concurrence.
+                            For a first authorization or a lapse of more than one year in a discipline.
+                            Select the eligible witness, or leave blank to await their sign-off.
                         </small>
                     </div>
-                {% endif %}
             {% endif %}
             <label for="discipline-select">Discipline:</label>
             <select id="discipline-select" name="discipline" class="form-control">

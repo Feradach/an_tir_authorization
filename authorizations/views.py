@@ -653,10 +653,6 @@ class MembershipRosterUploadForm(forms.Form):
     membership_csv = forms.FileField(required=True)
 
 
-class LegacyAuthorizationUploadForm(forms.Form):
-    authorization_csv = forms.FileField(required=True)
-
-
 class LegacyAuthorizationRecoveryForm(forms.Form):
     person_id = forms.IntegerField(required=False)
     person_sca_name = forms.CharField(max_length=255, required=True)
@@ -924,41 +920,8 @@ LEGACY_RECOVERY_BATCH_FIELDS = [
 ]
 
 
-LEGACY_AUTH_IMPORT_PERSON_ID_FIELDS = ['person_id', 'Person ID', 'User ID']
-LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS = ['sca_name', 'SCA Name', 'Fighter SCA Name']
 LEGACY_AUTH_IMPORT_DISCIPLINE_FIELDS = ['discipline', 'Discipline']
 LEGACY_AUTH_IMPORT_STYLE_FIELDS = ['style', 'Weapon Style', 'Authorization']
-LEGACY_AUTH_IMPORT_START_DATE_FIELDS = ['start_date', 'Start Date', 'Authorization Date']
-LEGACY_AUTH_IMPORT_EXPIRATION_FIELDS = ['expiration', 'Expiration', 'End Date']
-LEGACY_AUTH_IMPORT_MARSHAL_ID_FIELDS = ['marshal_person_id', 'Marshal Person ID', 'Marshal User ID']
-LEGACY_AUTH_IMPORT_MARSHAL_NAME_FIELDS = ['marshal_sca_name', 'Marshal SCA Name', 'Authorizing Marshal']
-LEGACY_AUTH_IMPORT_CONCURRING_ID_FIELDS = ['concurring_person_id', 'Concurring Person ID', 'Concurring Fighter ID']
-LEGACY_AUTH_IMPORT_CONCURRING_NAME_FIELDS = ['concurring_sca_name', 'Concurring SCA Name', 'Concurring Fighter']
-LEGACY_AUTH_IMPORT_BRANCH_FIELDS = ['branch', 'Branch']
-LEGACY_AUTH_IMPORT_TITLE_FIELDS = ['title', 'Title']
-LEGACY_AUTH_IMPORT_FIRST_NAME_FIELDS = ['first_name', 'Legal First Name', 'First Name']
-LEGACY_AUTH_IMPORT_LAST_NAME_FIELDS = ['last_name', 'Legal Last Name', 'Last Name']
-LEGACY_AUTH_IMPORT_EMAIL_FIELDS = ['email', 'Email']
-LEGACY_AUTH_IMPORT_ADDRESS_FIELDS = ['address', 'Address']
-LEGACY_AUTH_IMPORT_ADDRESS2_FIELDS = ['address2', 'Address 2']
-LEGACY_AUTH_IMPORT_CITY_FIELDS = ['city', 'City']
-LEGACY_AUTH_IMPORT_STATE_FIELDS = ['state_province', 'State/Province', 'State', 'Province']
-LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS = ['postal_code', 'Postal Code', 'Zip']
-LEGACY_AUTH_IMPORT_COUNTRY_FIELDS = ['country', 'Country']
-LEGACY_AUTH_IMPORT_PHONE_FIELDS = ['phone_number', 'Phone Number', 'Phone']
-LEGACY_AUTH_IMPORT_MEMBERSHIP_FIELDS = ['membership', 'Membership Number', 'Membership #']
-LEGACY_AUTH_IMPORT_MEMBERSHIP_EXPIRATION_FIELDS = [
-    'membership_expiration',
-    'Membership Expiration',
-    'Membership Expiration Date',
-]
-LEGACY_AUTH_IMPORT_WAIVER_EXPIRATION_FIELDS = ['waiver_expiration', 'Waiver Expiration']
-LEGACY_AUTH_IMPORT_BACKGROUND_CHECK_EXPIRATION_FIELDS = [
-    'background_check_expiration',
-    'Background Check Expiration',
-]
-LEGACY_AUTH_IMPORT_BIRTHDAY_FIELDS = ['birthday', 'Birth Date', 'Date of Birth']
-LEGACY_AUTH_IMPORT_MINOR_FIELDS = ['is_minor', 'Minor']
 LEGACY_AUTH_IMPORT_DISCIPLINE_ALIASES = {
     'armored': 'Armored Combat',
     'heavy': 'Armored Combat',
@@ -984,240 +947,11 @@ LEGACY_AUTH_IMPORT_DISCIPLINE_ALIASES = {
 }
 
 
-def _parse_legacy_date(raw: str, row_number: int, label: str, *, required: bool = True):
-    raw = (raw or '').strip()
-    if not raw:
-        if required:
-            raise ValueError(f'Row {row_number}: {label} is required.')
-        return None
-    for fmt in ('%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'):
-        try:
-            return datetime.strptime(raw, fmt).date()
-        except ValueError:
-            continue
-    raise ValueError(f'Row {row_number}: Invalid {label} "{raw}". Use YYYY-MM-DD or MM/DD/YYYY.')
-
-
-def _parse_legacy_bool(raw: str) -> bool:
-    return (raw or '').strip().lower() in {'1', 'true', 'yes', 'y', 'minor'}
-
-
 def _csv_optional(row: dict, field_names: list[str]) -> str:
     for field_name in field_names:
         if field_name in row:
             return (row.get(field_name) or '').strip()
     return ''
-
-
-def _resolve_single_person_by_sca_name(sca_name: str, row_number: int, label: str):
-    matches = list(
-        Person.objects.select_related('user', 'branch').filter(
-            sca_name__iexact=sca_name,
-            user__merged_into__isnull=True,
-        ).order_by('user_id')
-    )
-    if not matches:
-        return None
-    if len(matches) > 1:
-        raise ValueError(
-            f'Row {row_number}: Multiple people match {label} "{sca_name}". '
-            'Use person_id or marshal_person_id to disambiguate.'
-        )
-    return matches[0]
-
-
-def _resolve_person_reference(row: dict, row_number: int):
-    raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_PERSON_ID_FIELDS)
-    if raw_id:
-        try:
-            return Person.objects.select_related('user', 'branch').get(user_id=int(raw_id), user__merged_into__isnull=True)
-        except (TypeError, ValueError, Person.DoesNotExist):
-            raise ValueError(f'Row {row_number}: Person ID "{raw_id}" was not found.')
-
-    sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
-    return _resolve_single_person_by_sca_name(sca_name, row_number, 'SCA Name')
-
-
-def _resolve_marshal_reference(row: dict, row_number: int):
-    raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_MARSHAL_ID_FIELDS)
-    if raw_id:
-        try:
-            return Person.objects.select_related('user', 'branch').get(user_id=int(raw_id), user__merged_into__isnull=True)
-        except (TypeError, ValueError, Person.DoesNotExist):
-            raise ValueError(f'Row {row_number}: Marshal Person ID "{raw_id}" was not found.')
-
-    marshal_name = _csv_optional(row, LEGACY_AUTH_IMPORT_MARSHAL_NAME_FIELDS)
-    if not marshal_name:
-        raise ValueError(
-            f'Row {row_number}: Authorizing marshal is required. '
-            'Use marshal_person_id or marshal_sca_name.'
-        )
-    return _resolve_single_person_by_sca_name(marshal_name, row_number, 'Marshal SCA Name')
-
-
-def _resolve_concurring_reference(row: dict, row_number: int):
-    raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_CONCURRING_ID_FIELDS)
-    if raw_id:
-        try:
-            return Person.objects.select_related('user', 'branch').get(user_id=int(raw_id), user__merged_into__isnull=True)
-        except (TypeError, ValueError, Person.DoesNotExist):
-            raise ValueError(f'Row {row_number}: Concurring Person ID "{raw_id}" was not found.')
-
-    concurring_name = _csv_optional(row, LEGACY_AUTH_IMPORT_CONCURRING_NAME_FIELDS)
-    if not concurring_name:
-        return None
-    return _resolve_single_person_by_sca_name(concurring_name, row_number, 'Concurring SCA Name')
-
-
-def _legacy_person_creation_data(row: dict, row_number: int):
-    sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
-    branch_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_BRANCH_FIELDS)
-    branch = Branch.objects.filter(name__iexact=branch_name).order_by('id').first()
-    if not branch:
-        raise ValueError(f'Row {row_number}: Branch "{branch_name}" was not found for new person "{sca_name}".')
-
-    title = None
-    title_name = _csv_optional(row, LEGACY_AUTH_IMPORT_TITLE_FIELDS)
-    if title_name:
-        title = Title.objects.filter(name__iexact=title_name).order_by('id').first()
-        if not title:
-            raise ValueError(f'Row {row_number}: Title "{title_name}" was not found for new person "{sca_name}".')
-
-    first_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_FIRST_NAME_FIELDS)
-    last_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_LAST_NAME_FIELDS)
-    email = _csv_optional(row, LEGACY_AUTH_IMPORT_EMAIL_FIELDS)
-    membership = _csv_optional(row, LEGACY_AUTH_IMPORT_MEMBERSHIP_FIELDS) or None
-    membership_expiration = _parse_legacy_date(
-        _csv_optional(row, LEGACY_AUTH_IMPORT_MEMBERSHIP_EXPIRATION_FIELDS),
-        row_number,
-        'membership expiration',
-        required=False,
-    )
-    birthday = _parse_legacy_date(
-        _csv_optional(row, LEGACY_AUTH_IMPORT_BIRTHDAY_FIELDS),
-        row_number,
-        'birthday',
-        required=False,
-    )
-    is_minor = _parse_legacy_bool(_csv_optional(row, LEGACY_AUTH_IMPORT_MINOR_FIELDS))
-    if is_minor and not birthday:
-        raise ValueError(f'Row {row_number}: Birthday is required when creating a minor account.')
-    if bool(membership) != bool(membership_expiration):
-        raise ValueError(
-            f'Row {row_number}: Membership number and membership expiration must be provided together.'
-        )
-    state_province = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_STATE_FIELDS)
-    raw_postal_code = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS)
-    try:
-        postal_code = validate_postal_code_for_state(raw_postal_code, state_province)
-    except ValidationError as exc:
-        raise ValueError(f'Row {row_number}: {" ".join(exc.messages)}') from exc
-
-    return {
-        'sca_name': sca_name,
-        'branch': branch,
-        'title': title,
-        'first_name': first_name,
-        'last_name': last_name,
-        'email': email or f'legacy-import+{uuid.uuid4().hex[:12]}@invalid.local',
-        'address': _csv_optional(row, LEGACY_AUTH_IMPORT_ADDRESS_FIELDS),
-        'address2': _csv_optional(row, LEGACY_AUTH_IMPORT_ADDRESS2_FIELDS),
-        'city': _csv_optional(row, LEGACY_AUTH_IMPORT_CITY_FIELDS),
-        'state_province': state_province,
-        'postal_code': postal_code,
-        'country': _csv_optional(row, LEGACY_AUTH_IMPORT_COUNTRY_FIELDS),
-        'phone_number': _csv_optional(row, LEGACY_AUTH_IMPORT_PHONE_FIELDS),
-        'membership': membership,
-        'membership_expiration': membership_expiration,
-        'waiver_expiration': _parse_legacy_date(
-            _csv_optional(row, LEGACY_AUTH_IMPORT_WAIVER_EXPIRATION_FIELDS),
-            row_number,
-            'waiver expiration',
-            required=False,
-        ),
-        'background_check_expiration': _parse_legacy_date(
-            _csv_optional(row, LEGACY_AUTH_IMPORT_BACKGROUND_CHECK_EXPIRATION_FIELDS),
-            row_number,
-            'background check expiration',
-            required=False,
-        ),
-        'birthday': birthday,
-        'is_minor': is_minor,
-    }
-
-
-def _legacy_person_update_data(row: dict, row_number: int, person: Person | None = None):
-    data = {}
-    branch_name = _csv_optional(row, LEGACY_AUTH_IMPORT_BRANCH_FIELDS)
-    if branch_name:
-        branch = Branch.objects.filter(name__iexact=branch_name).order_by('id').first()
-        if not branch:
-            raise ValueError(f'Row {row_number}: Branch "{branch_name}" was not found.')
-        data['branch'] = branch
-
-    title_name = _csv_optional(row, LEGACY_AUTH_IMPORT_TITLE_FIELDS)
-    if title_name:
-        title = Title.objects.filter(name__iexact=title_name).order_by('id').first()
-        if not title:
-            raise ValueError(f'Row {row_number}: Title "{title_name}" was not found.')
-        data['title'] = title
-
-    string_fields = {
-        'sca_name': LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS,
-        'first_name': LEGACY_AUTH_IMPORT_FIRST_NAME_FIELDS,
-        'last_name': LEGACY_AUTH_IMPORT_LAST_NAME_FIELDS,
-        'email': LEGACY_AUTH_IMPORT_EMAIL_FIELDS,
-        'address': LEGACY_AUTH_IMPORT_ADDRESS_FIELDS,
-        'address2': LEGACY_AUTH_IMPORT_ADDRESS2_FIELDS,
-        'city': LEGACY_AUTH_IMPORT_CITY_FIELDS,
-        'state_province': LEGACY_AUTH_IMPORT_STATE_FIELDS,
-        'postal_code': LEGACY_AUTH_IMPORT_POSTAL_CODE_FIELDS,
-        'country': LEGACY_AUTH_IMPORT_COUNTRY_FIELDS,
-        'phone_number': LEGACY_AUTH_IMPORT_PHONE_FIELDS,
-        'membership': LEGACY_AUTH_IMPORT_MEMBERSHIP_FIELDS,
-    }
-    for key, field_names in string_fields.items():
-        value = _csv_optional(row, field_names)
-        if value:
-            data[key] = value
-
-    if 'postal_code' in data:
-        state_province = data.get(
-            'state_province',
-            person.user.state_province if person else '',
-        )
-        try:
-            data['postal_code'] = validate_postal_code_for_state(
-                data['postal_code'],
-                state_province,
-            )
-        except ValidationError as exc:
-            raise ValueError(f'Row {row_number}: {" ".join(exc.messages)}') from exc
-
-    date_fields = {
-        'membership_expiration': (LEGACY_AUTH_IMPORT_MEMBERSHIP_EXPIRATION_FIELDS, 'membership expiration'),
-        'waiver_expiration': (LEGACY_AUTH_IMPORT_WAIVER_EXPIRATION_FIELDS, 'waiver expiration'),
-        'background_check_expiration': (
-            LEGACY_AUTH_IMPORT_BACKGROUND_CHECK_EXPIRATION_FIELDS,
-            'background check expiration',
-        ),
-        'birthday': (LEGACY_AUTH_IMPORT_BIRTHDAY_FIELDS, 'birthday'),
-    }
-    for key, (field_names, label) in date_fields.items():
-        if _csv_optional(row, field_names):
-            data[key] = _parse_legacy_date(_csv_optional(row, field_names), row_number, label)
-
-    minor_value = _csv_optional(row, LEGACY_AUTH_IMPORT_MINOR_FIELDS)
-    if minor_value:
-        data['is_minor'] = _parse_legacy_bool(minor_value)
-
-    if bool(data.get('membership')) != bool(data.get('membership_expiration')):
-        if 'membership' in data or 'membership_expiration' in data:
-            raise ValueError(
-                f'Row {row_number}: Membership number and membership expiration must be provided together.'
-            )
-
-    return data
 
 
 def _find_legacy_style(row: dict, row_number: int):
@@ -1470,19 +1204,7 @@ def _legacy_recovery_youth_rules_were_met(person: Person, style: WeaponStyle, au
 
 
 def _legacy_recovery_requires_concurrence_on_date(person: Person, style: WeaponStyle, auth_date: date):
-    if not getattr(settings, 'AUTHZ_REQUIRE_FIGHTER_CONCURRENCE', False):
-        return False
-    if style.name in ['Junior Marshal', 'Senior Marshal']:
-        return False
-    if style.discipline.name in ['Equestrian', 'Siege', 'Youth Armored', 'Youth Rapier']:
-        return False
-    cutoff = auth_date - relativedelta(years=1)
-    return not AuthorizationValidityInterval.objects.filter(
-        authorization__person=person,
-        authorization__style__discipline=style.discipline,
-        start_date__lte=auth_date,
-        end_date__gte=cutoff,
-    ).exists()
+    return authorization_requires_concurrence(person, style, today=auth_date)
 
 
 def _officer_can_delete_authorization(user: User, authorization: Authorization) -> bool:
@@ -2149,8 +1871,6 @@ def _create_legacy_recovery_authorization(
         'Concurring Officer',
         required=marshal_promotion and style.name == 'Senior Marshal',
     )
-    if not is_marshal_style and not getattr(settings, 'AUTHZ_REQUIRE_FIGHTER_CONCURRENCE', False):
-        concurring_officer = None
     if not _legacy_recovery_senior_marshal_interval_exists(marshal, style.discipline, auth_date):
         raise ValueError(
             f'{marshal.sca_name} was not a Senior Marshal in {style.discipline.name} on {auth_date.isoformat()}.'
@@ -2401,284 +2121,6 @@ def _legacy_recovery_audit_csv_response():
             entry.previous_expiration.isoformat() if entry.previous_expiration else '',
         ])
     return response
-
-
-def _build_legacy_import_rows(uploaded_file):
-    decoded = uploaded_file.read().decode('utf-8-sig', errors='replace')
-    reader = csv.DictReader(decoded.splitlines())
-    if not reader.fieldnames:
-        raise ValueError('The uploaded file does not contain a header row.')
-
-    raw_rows = [
-        (row_number, row)
-        for row_number, row in enumerate(reader, start=2)
-        if any((value or '').strip() for value in row.values())
-    ]
-    rows = []
-    pending_people = {}
-    seen_authorizations = set()
-
-    for row_number, row in raw_rows:
-        raw_id = _csv_optional(row, LEGACY_AUTH_IMPORT_PERSON_ID_FIELDS)
-        if raw_id:
-            continue
-        sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
-        if _resolve_single_person_by_sca_name(sca_name, row_number, 'SCA Name'):
-            continue
-        person_data = _legacy_person_creation_data(row, row_number)
-        person_key = f'new:{person_data["sca_name"].strip().casefold()}'
-        existing_data = pending_people.get(person_key)
-        if existing_data and (
-            existing_data['first_name'] != person_data['first_name']
-            or existing_data['last_name'] != person_data['last_name']
-            or existing_data['branch'].id != person_data['branch'].id
-        ):
-            raise ValueError(
-                f'Row {row_number}: New person "{person_data["sca_name"]}" has conflicting account details.'
-            )
-        pending_people.setdefault(person_key, person_data)
-
-    for row_number, row in raw_rows:
-        style = _find_legacy_style(row, row_number)
-        start_date = _parse_legacy_date(
-            _csv_value(row, row_number, LEGACY_AUTH_IMPORT_START_DATE_FIELDS),
-            row_number,
-            'start date',
-        )
-        explicit_expiration = _parse_legacy_date(
-            _csv_optional(row, LEGACY_AUTH_IMPORT_EXPIRATION_FIELDS),
-            row_number,
-            'expiration',
-            required=False,
-        )
-        if explicit_expiration and explicit_expiration < start_date:
-            raise ValueError(f'Row {row_number}: Expiration cannot be before start date.')
-
-        person = _resolve_person_reference(row, row_number)
-        person_key = None
-        if person:
-            person_key = f'id:{person.user_id}'
-        else:
-            sca_name = _csv_value(row, row_number, LEGACY_AUTH_IMPORT_SCA_NAME_FIELDS)
-            person_key = f'new:{sca_name.strip().casefold()}'
-
-        marshal = _resolve_marshal_reference(row, row_number)
-        marshal_name = _csv_optional(row, LEGACY_AUTH_IMPORT_MARSHAL_NAME_FIELDS)
-        marshal_key = None
-        if marshal:
-            marshal_key = f'id:{marshal.user_id}'
-        elif marshal_name:
-            pending_key = f'new:{marshal_name.strip().casefold()}'
-            if pending_key not in pending_people:
-                raise ValueError(
-                    f'Row {row_number}: Marshal "{marshal_name}" was not found. '
-                    'Import or create that person first, or leave marshal_sca_name blank.'
-                )
-            marshal_key = pending_key
-
-        concurring = _resolve_concurring_reference(row, row_number)
-        concurring_name = _csv_optional(row, LEGACY_AUTH_IMPORT_CONCURRING_NAME_FIELDS)
-        concurring_key = None
-        if concurring:
-            concurring_key = f'id:{concurring.user_id}'
-        elif concurring_name:
-            pending_key = f'new:{concurring_name.strip().casefold()}'
-            if pending_key not in pending_people:
-                raise ValueError(
-                    f'Row {row_number}: Concurring fighter "{concurring_name}" was not found. '
-                    'Import or create that person first, or leave concurring_sca_name blank.'
-                )
-            concurring_key = pending_key
-
-        auth_key = (person_key, style.id)
-        if auth_key in seen_authorizations:
-            raise ValueError(
-                f'Row {row_number}: Duplicate authorization for the same person and style in this CSV.'
-            )
-        seen_authorizations.add(auth_key)
-
-        rows.append({
-            'row_number': row_number,
-            'person_key': person_key,
-            'person_update': _legacy_person_update_data(row, row_number, person=person),
-            'style': style,
-            'marshal_key': marshal_key,
-            'concurring_key': concurring_key,
-            'start_date': start_date,
-            'explicit_expiration': explicit_expiration,
-        })
-
-    if not rows:
-        raise ValueError('The uploaded file has no authorization rows.')
-    return rows, pending_people
-
-
-def _legacy_import_username(sca_name: str) -> str:
-    base = re.sub(r'[^a-z0-9]+', '.', sca_name.strip().lower()).strip('.') or 'legacy.user'
-    base = base[:120]
-    candidate = f'{base}.legacy'
-    while User.objects.filter(username=candidate).exists():
-        candidate = f'{base[:110]}.{uuid.uuid4().hex[:8]}'
-    return candidate
-
-
-def _apply_legacy_person_update(person: Person, data: dict, actor: User) -> bool:
-    if not data:
-        return False
-
-    user = person.user
-    user_fields = [
-        'first_name',
-        'last_name',
-        'email',
-        'address',
-        'address2',
-        'city',
-        'state_province',
-        'postal_code',
-        'country',
-        'phone_number',
-        'membership',
-        'membership_expiration',
-        'waiver_expiration',
-        'background_check_expiration',
-        'birthday',
-    ]
-    person_fields = ['sca_name', 'branch', 'title']
-
-    user_changed = False
-    for field_name in user_fields:
-        if field_name in data and getattr(user, field_name) != data[field_name]:
-            setattr(user, field_name, data[field_name])
-            user_changed = True
-    if user_changed:
-        user.updated_by = actor
-        user.save()
-
-    person_changed = False
-    for field_name in person_fields:
-        if field_name in data and getattr(person, field_name) != data[field_name]:
-            setattr(person, field_name, data[field_name])
-            person_changed = True
-    if person_changed:
-        person.updated_by = actor
-        person.save()
-
-    return user_changed or person_changed
-
-
-def _apply_legacy_authorization_import(rows, pending_people, actor: User, source_filename: str):
-    person_map = {}
-    for key, person_data in pending_people.items():
-        user = User.objects.create_user(
-            username=_legacy_import_username(person_data['sca_name']),
-            password=None,
-            email=person_data['email'],
-            first_name=person_data['first_name'],
-            last_name=person_data['last_name'],
-            membership=person_data['membership'],
-            membership_expiration=person_data['membership_expiration'],
-            address=person_data['address'],
-            address2=person_data['address2'],
-            city=person_data['city'],
-            state_province=person_data['state_province'],
-            postal_code=person_data['postal_code'],
-            country=person_data['country'],
-            phone_number=person_data['phone_number'],
-            birthday=person_data['birthday'],
-            waiver_expiration=person_data['waiver_expiration'],
-            background_check_expiration=person_data['background_check_expiration'],
-            is_active=True,
-            created_by=actor,
-            updated_by=actor,
-        )
-        person = Person.objects.create(
-            user=user,
-            sca_name=person_data['sca_name'],
-            branch=person_data['branch'],
-            title=person_data['title'],
-            created_by=actor,
-            updated_by=actor,
-        )
-        person_map[key] = person
-        UserNote.objects.create(
-            person=person,
-            created_by=actor,
-            note='Placeholder account created during legacy authorization CSV import.',
-        )
-
-    created_count = 0
-    updated_count = 0
-    profile_updated_keys = set()
-    imported_users = {}
-    active_status = _get_or_create_status_by_name('Active')
-
-    for row in rows:
-        person = person_map.get(row['person_key'])
-        if person is None:
-            person_id = int(row['person_key'].split(':', 1)[1])
-            person = Person.objects.select_related('user').get(user_id=person_id)
-
-        if row['person_key'] not in profile_updated_keys:
-            if _apply_legacy_person_update(person, row['person_update'], actor):
-                UserNote.objects.create(
-                    person=person,
-                    created_by=actor,
-                    note='Account details updated from legacy authorization CSV paperwork.',
-                )
-            profile_updated_keys.add(row['person_key'])
-
-        marshal = None
-        if row['marshal_key']:
-            marshal = person_map.get(row['marshal_key'])
-            if marshal is None:
-                marshal_id = int(row['marshal_key'].split(':', 1)[1])
-                marshal = Person.objects.get(user_id=marshal_id)
-
-        concurring = None
-        if row['concurring_key']:
-            concurring = person_map.get(row['concurring_key'])
-            if concurring is None:
-                concurring_id = int(row['concurring_key'].split(':', 1)[1])
-                concurring = Person.objects.get(user_id=concurring_id)
-
-        expiration = row['explicit_expiration'] or calculate_authorization_expiration(
-            person,
-            row['style'],
-            today=row['start_date'],
-        )
-        authorization, created = Authorization.objects.update_or_create(
-            person=person,
-            style=row['style'],
-            defaults={
-                'status': active_status,
-                'marshal': marshal,
-                'concurring_fighter': concurring,
-                'expiration': expiration,
-                'created_by': actor,
-                'updated_by': actor,
-            },
-        )
-        if created:
-            created_count += 1
-        else:
-            updated_count += 1
-        imported_users[person.user_id] = person.user
-
-        AuthorizationNote.objects.create(
-            authorization=authorization,
-            created_by=actor,
-            action='marshal_approved',
-            note=(
-                f'Legacy authorization CSV import from {source_filename}. '
-                f'Historical start date: {row["start_date"].isoformat()}.'
-            ),
-        )
-
-    for user in imported_users.values():
-        _record_legacy_imported_waiver_if_needed(user, recorded_by=actor, source_filename=source_filename)
-
-    return created_count, updated_count, len(pending_people)
 
 
 SUPPORTED_DOCUMENT_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png'}
@@ -6709,7 +6151,6 @@ def fighter(request, person_id):
         )
 
 
-
     # All branches except for type = other
     branch_choices = Branch.objects.exclude(type='Other').order_by('name')
     discipline_choices = Discipline.objects.all().order_by('name')
@@ -7263,6 +6704,18 @@ def add_authorization(request, person_id):
             selected_style_ids = _ordered_authorization_basket_style_ids(selected_style_ids, selected_style_map)
             selected_styles = [str(style_id) for style_id in selected_style_ids]
 
+            if authorization_date != date.today():
+                for selected_style in selected_style_map.values():
+                    if not _legacy_recovery_senior_marshal_interval_exists(
+                        authorizing_marshal.person, selected_style.discipline, authorization_date,
+                    ):
+                        messages.error(request, f'The authorizing marshal was not a Senior Marshal in {selected_style.discipline.name} on {authorization_date.isoformat()}.')
+                        return redirect('fighter', person_id=person_id)
+
+            # Snapshot eligibility before any row in this basket is created or renewed.
+            for selected_style in selected_style_map.values():
+                requires_concurrence(selected_style)
+
             if concurring_fighter:
                 if concurring_fighter.user_id == person.user_id:
                     messages.error(request, 'Concurring fighter must be different from the fighter receiving the authorization.')
@@ -7273,10 +6726,15 @@ def add_authorization(request, person_id):
                 for style_id in selected_style_ids:
                     style = selected_style_map.get(style_id)
                     if style and requires_concurrence(style):
-                        if not is_authorized_in_discipline(concurring_fighter.user, style.discipline):
+                        if not _legacy_recovery_interval_exists(
+                            concurring_fighter, authorization_date, discipline=style.discipline,
+                        ) or (
+                            authorization_date == date.today()
+                            and not is_authorized_in_discipline(concurring_fighter.user, style.discipline)
+                        ):
                             messages.error(
                                 request,
-                                f"{concurring_fighter.sca_name} is not currently authorized in {style.discipline.name} and cannot concur."
+                                f"{concurring_fighter.sca_name} was not authorized in {style.discipline.name} on {authorization_date.isoformat()} and cannot concur."
                             )
                             return redirect('fighter', person_id=person_id)
 
@@ -8267,50 +7725,6 @@ def upload_membership_roster(request):
             request,
             f'{skipped_rows} row(s) were skipped because required membership fields were missing or invalid.',
         )
-    return redirect(next_url)
-
-
-def upload_legacy_authorizations(request):
-    if not request.user.is_authenticated:
-        return redirect('login')
-    if not is_kingdom_authorization_officer(request.user):
-        raise PermissionDenied
-    if request.method != 'POST':
-        return redirect('index')
-
-    next_url = request.POST.get('next') or reverse('index')
-    form = LegacyAuthorizationUploadForm(request.POST, request.FILES)
-    if not form.is_valid():
-        messages.error(request, 'Please choose a legacy authorization CSV file to upload.')
-        return redirect(next_url)
-
-    uploaded_file = form.cleaned_data['authorization_csv']
-    try:
-        rows, pending_people = _build_legacy_import_rows(uploaded_file)
-    except ValueError as exc:
-        messages.error(request, f'Legacy authorization import failed: {exc}')
-        return redirect(next_url)
-
-    try:
-        with transaction.atomic():
-            created_count, updated_count, person_count = _apply_legacy_authorization_import(
-                rows,
-                pending_people,
-                request.user,
-                uploaded_file.name,
-            )
-    except Exception:
-        logger.exception('Legacy authorization CSV import failed for file %s', uploaded_file.name)
-        messages.error(request, 'Legacy authorization import failed before any rows were saved.')
-        return redirect(next_url)
-
-    messages.success(
-        request,
-        (
-            f'Legacy authorization import complete: {created_count} created, '
-            f'{updated_count} updated, {person_count} placeholder account(s) created.'
-        ),
-    )
     return redirect(next_url)
 
 

@@ -19,6 +19,9 @@
 </style>
 
 <h1>Paper Authorization Entry</h1>
+<p>For a first authorization in a discipline, or a return after more than one year without a valid authorization in that discipline,
+    check Concurrence and select the second signer from the form. Both signers must have been eligible on the authorization date.
+    This includes Equestrian; Siege and youth combat are exempt. Marshal promotions use the separate marshal sign-off fields.</p>
 
 <div class="mb-4">
     <h2>Fighter</h2>
@@ -232,7 +235,7 @@
                 {% endfor %}
             </select>
         </div>
-        <div class="col-md-2 align-items-end{% if not AUTHZ_REQUIRE_FIGHTER_CONCURRENCE %} d-none{% endif %}" id="fighter_concurrence_field">
+        <div class="col-md-2 align-items-end" id="fighter_concurrence_field">
             <div class="form-check">
                 <input id="editor_fighter_concurrence" type="checkbox" class="form-check-input">
                 <label for="editor_fighter_concurrence" class="form-check-label"><strong>Concurrence</strong></label>
@@ -427,7 +430,6 @@
         const concurringOfficerLabel = document.getElementById('concurring_officer_label');
         const marshalPromotionField = document.getElementById('marshal_promotion_field');
         const marshalPromotionCheckbox = document.getElementById('editor_marshal_promotion');
-        const fighterConcurrenceEnabled = {{ AUTHZ_REQUIRE_FIGHTER_CONCURRENCE|yesno:"true,false" }};
         const paperParentFields = document.querySelectorAll('.paper-parent-field');
         let editingRowIndex = null;
         const lockedBatchFieldNames = [
@@ -606,7 +608,8 @@
             const isMarshalStyle = isJuniorMarshalStyle(styleValue) || isSeniorMarshalStyle(styleValue);
             const isPromotion = isMarshalStyle && marshalPromotionCheckbox.checked;
             const needsSecondMarshal = isPromotion;
-            const showsFighterConcurrence = fighterConcurrenceEnabled && !isMarshalStyle;
+            const exemptDiscipline = ['Siege', 'Youth Armored', 'Youth Rapier'].includes(styleValue.split(' - ')[0]);
+            const showsFighterConcurrence = !exemptDiscipline && !isMarshalStyle;
             const needsConcurringOfficer = (showsFighterConcurrence && fighterConcurrenceCheckbox.checked)
                 || (isPromotion && isSeniorMarshalStyle(styleValue));
 

@@ -1163,12 +1163,11 @@ class AuthorizationRuleTests(AuthorizationTestBase):
 
 
 class ConcurrenceRequirementTests(AuthorizationTestBase):
-    def test_concurrence_requirement_is_disabled_by_default(self):
+    def test_concurrence_requirement_is_permanent(self):
         _, fighter = self.make_person('concur_disabled', 'Concur Disabled')
 
-        self.assertFalse(authorization_requires_concurrence(fighter, self.style_weapon_armored))
+        self.assertTrue(authorization_requires_concurrence(fighter, self.style_weapon_armored))
 
-    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
     def test_requires_concurrence_when_no_prior_authorization_in_discipline(self):
         _, fighter = self.make_person('concur_none', 'Concur None')
 
@@ -1185,7 +1184,6 @@ class ConcurrenceRequirementTests(AuthorizationTestBase):
 
         self.assertFalse(authorization_requires_concurrence(fighter, self.style_weapon_armored))
 
-    @override_settings(AUTHZ_REQUIRE_FIGHTER_CONCURRENCE=True)
     def test_requires_concurrence_for_lapsed_authorization_older_than_one_year(self):
         _, fighter = self.make_person('concur_old', 'Concur Old')
         self.grant_authorization(
@@ -1202,10 +1200,10 @@ class ConcurrenceRequirementTests(AuthorizationTestBase):
 
         self.assertFalse(authorization_requires_concurrence(fighter, self.style_sm_armored))
 
-    def test_equestrian_non_marshal_never_requires_concurrence(self):
+    def test_equestrian_first_authorization_requires_concurrence(self):
         _, fighter = self.make_person('concur_eq_exempt', 'Concur EQ Exempt')
 
-        self.assertFalse(authorization_requires_concurrence(fighter, self.style_general_riding))
+        self.assertTrue(authorization_requires_concurrence(fighter, self.style_general_riding))
 
     def test_siege_non_marshal_never_requires_concurrence(self):
         _, fighter = self.make_person('concur_siege_exempt', 'Concur Siege Exempt')

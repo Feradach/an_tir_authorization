@@ -210,16 +210,11 @@ New validity starts on the activation date; earlier recorded gaps are preserved.
 Superseded junior ground-crew authorizations have their open validity periods closed.
 Dependent authorization history is refreshed when a prerequisite becomes active.
 
-### `advance_fighter_concurrence_authorizations` — dry-run by default
+### Retired: `advance_fighter_concurrence_authorizations`
 
-Finds non-marshal authorizations stuck in `Awaiting Fighter Concurrence` after fighter concurrence has been disabled. It calculates the next status using the current authorization-officer sign-off setting:
-
-```bash
-python manage.py advance_fighter_concurrence_authorizations
-python manage.py advance_fighter_concurrence_authorizations --write
-```
-
-Review the reported sign-off setting and every proposed destination status before using `--write`.
+Removed with permanent Society two-person integrity enforcement. It must not be
+used to bypass a missing witness. Pending authorizations must complete the normal
+concurrence workflow. There is no replacement bulk-write command.
 
 ### `deactivate_superseded_junior_marshals` — dry-run by default
 

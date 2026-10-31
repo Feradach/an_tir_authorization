@@ -31,6 +31,7 @@ workload of the authorization officer will be reduced.
 - [Maintenance runbook](maintenance_runbook.md)
 - [Project management command catalog](authorizations/management/commands/README.md)
 - [Secret rotation policy](secret_rotation_policy.md)
+- [Society two-person integrity activation handoff](society_two_person_integrity.md)
 
 ### Data Integrity Invariants
 
