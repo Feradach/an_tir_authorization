@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The FAQ now explains how new people can create their own accounts through the login page as the preferred method, while continuing to welcome marshal-created accounts.
 
 ### Fixed
 

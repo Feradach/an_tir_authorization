@@ -16,6 +16,7 @@
 <ul>
     <li><a href="#training-videos">Where can I find training videos?</a></li>
     <li><a href="#new-features">How is this different from the old An Tir Lists authorization page?</a></li>
+    <li><a href="#create-account">How do I create an account?</a></li>
     <li><a href="#login-recovery">How do I log in or recover my account?</a></li>
     <li><a href="#finding-people">How do I find a specific person?</a></li>
     <li><a href="#table-vs-card">What is the difference between "Table View" and "Card View"?</a></li>
@@ -72,6 +73,14 @@
     <li>Officer actions for appointments, sanctions, and notes with stronger permission enforcement.</li>
     <li>Current-system reports and CSV exports from both reports and search pages.</li>
 </ul>
+
+<h3 id="create-account">How do I create an account?</h3>
+<p>Creating your own account is the preferred way to get started. Marshals with the required authority are also welcome to create accounts for new people.</p>
+<ol>
+    <li>Go to the <a href="{% url 'login' %}">login page</a> and select <strong>Create an Account</strong>.</li>
+    <li>Fill in your details and select <strong>Create Account</strong> to submit the form.</li>
+    <li>Check your email for your username and password setup link. Follow the link to set your password, then return to the login page to sign in.</li>
+</ol>
 
 <h3 id="login-recovery">How do I log in or recover my account?</h3>
 <p>Use the login page for normal sign-in. If needed, use the recovery link for username lookup or password reset instructions.</p>
@@ -186,6 +195,7 @@
 
 <h3 id="add-fighter">How do I add a new fighter to the database?</h3>
 <p>If you have the required marshal authority, you will see an add-fighter action on the home page. The system then creates the person record and account through the normal onboarding workflow.</p>
+<p>New fighters can also <a href="#create-account">create their own accounts through the login page</a>.</p>
 
 <h3 id="add-authorization">How do I add a new authorization for an existing fighter?</h3>
 <p>On the fighter page, use the add-authorization form. The system only shows disciplines/styles you are allowed to issue and validates requirements (such as age and prerequisites) before it creates records.</p>
