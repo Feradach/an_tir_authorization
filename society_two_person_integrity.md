@@ -1,10 +1,12 @@
-# Society two-person integrity: parked activation branch
+# Society two-person integrity: integrated release candidate
 
 Prepared: 2026-10-18. Branch: `agent/society-two-person-integrity`.
 Base: `a9c538cc0d3c610a8f6f241955ecb9aa155436fd` (fetched `origin/main`).
 
-This is a local activation candidate awaiting the owner's instruction following
-the Earl Marshal's go-ahead. It is not deployed or authorized for deployment.
+On 2026-10-31, the owner authorized combining this feature with the history fixes
+and the approved FAQ/home-page updates, validating it, and merging it into local
+`main` for review. Integration branch: `agent/society-release-integration`.
+Hosted publication, staging, and production deployment remain separate steps.
 The code enforces the rule permanently when deployed; there is no feature switch.
 An old `AUTHZ_REQUIRE_FIGHTER_CONCURRENCE` environment value has no effect.
 
@@ -45,7 +47,8 @@ No database migration or bulk repair is part of this change. Reviewed existing
 history is retained. Missing history is not guessed: entry requires concurrence
 or rejects an unverified historical signer. The branch cannot reconstruct gaps
 that were already lost or data written directly to the database without history.
-This work does not certify the production data; no production data was accessed.
+This work does not certify production data. Feature validation uses local test
+fixtures; the separately authorized production backup is not a data-quality audit.
 
 ## Retirement and release
 
@@ -55,12 +58,10 @@ future explicitly reviewed recovery operation. Normal paper-form entry and its
 audit CSV download remain supported. The membership-roster importer is unrelated
 and remains available.
 
-Before release, fetch current `origin/main`, integrate intervening approved work,
-review conflicts, and rerun the full isolated test suite. Obtain publication and
-staging authorization. Follow the owner's branch review and two-stage staging
-workflow: branch staging and merge approval, then staging of the exact merged
-release commit and new explicit production approval. Do not deploy this branch
-merely because its local checks pass.
+The owner authorized the local merge on 2026-10-31 after integration review and
+validation. Obtain publication and staging authorization before hosted release.
+Stage the exact release commit, then wait for new explicit production approval
+under `deployment_workflow.md`. Passing local checks does not authorize deployment.
 
 ## Local validation
 
@@ -77,7 +78,9 @@ venv\Scripts\python.exe manage.py test --settings=authorizations.tests.test_sett
 venv\Scripts\python.exe manage.py makemigrations --check --dry-run --settings=authorizations.tests.test_settings
 ```
 
-The isolated worktree used the existing repository virtual environment's Python;
-it did not copy environment files or credentials. Hosted acceptance and browser
-smoke testing remain release steps. No branch push, merge, or deployment has
-been performed as part of this work.
+On 2026-10-31, the combined history, Society rule, FAQ, and home-page changes
+passed all 679 tests using the same isolated settings. Migration detection found
+no changes, and `git diff --check` passed. The isolated worktree used the existing
+repository virtual environment without copying credentials. The owner authorized
+merging this verified result into local `main`. No push or hosted deployment was
+performed; hosted acceptance remains a release step.

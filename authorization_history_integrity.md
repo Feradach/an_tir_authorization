@@ -20,7 +20,7 @@ Updates extend only the latest recorded validity period and preserve earlier gap
 
 Historical checks use recorded intervals, prerequisite validity, and sanction dates. They preserve earlier valid periods on inactive authorizations and transferred history on survivor accounts, while rejecting merged source accounts. Missing history fails closed.
 
-The Society concurrence switch and its existing exemptions remain unchanged on this branch. The permanent-rule activation and retirement of the two obsolete backlog tools remain on `agent/society-two-person-integrity`. This follow-up can therefore be reviewed and released independently. After these fixes are merged into `main`, synchronize the parked Society branch with `main`, resolve overlapping history changes, and rerun its concurrence tests before activation.
+The original history-only branch left the Society concurrence switch unchanged. On 2026-10-31, the owner authorized combining these fixes with `agent/society-two-person-integrity` and the FAQ/home-page updates for a local `main` merge. The integration retains the newer history handling, permanently enables the Society rule, and retires the two obsolete backlog tools. Hosted publication and deployment remain separate steps.
 
 ## Verification and limits
 

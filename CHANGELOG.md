@@ -1,4 +1,4 @@
-ï»¿
+﻿
 ## [UNRELEASED]
 ### Major Changes
 
@@ -9,6 +9,9 @@
 ### Changed
 - First authorizations and returns after more than a year without a valid authorization in a discipline require a second eligible person to concur, including Equestrian. Siege and youth combat remain exempt; marshal promotions keep their existing approval process.
 - Paper authorization entry requires the eligible witness when two-person sign-off is needed.
+
+- The home page now highlights the two-person authorization requirement effective 2026-11-01, links to the Society rule, and explains account creation in place of the original launch welcome.
+- The FAQ now explains how new people can create their own accounts through the login page as the preferred method, while continuing to welcome marshal-created accounts.
 
 ### Fixed
 

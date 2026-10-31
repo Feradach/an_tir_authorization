@@ -5095,7 +5095,7 @@ class UserAccountViewTests(ViewTestBase):
         self.assertFalse(Authorization.objects.filter(person=self.owner_person, style=self.style_weapon_armored).exists())
 
     def test_paper_rules_allow_senior_equestrian_renewal_without_current_junior_marshal(self):
-        riding = WeaponStyle.objects.create(name='General Riding', discipline=self.discipline_equestrian)
+        riding = self.style_eq_general_riding
         riding_auth = self.grant_authorization(self.owner_person, riding, expiration=date(2029, 5, 10))
         AuthorizationValidityInterval.objects.create(
             authorization=riding_auth, start_date=date(2024, 5, 10), end_date=date(2029, 5, 10), source='paper_entry',
@@ -5104,10 +5104,6 @@ class UserAccountViewTests(ViewTestBase):
         style_eq_sm = WeaponStyle.objects.create(name='Senior Marshal', discipline=self.discipline_equestrian)
         style_eq_mounted_gaming = WeaponStyle.objects.create(name='Mounted Gaming', discipline=self.discipline_equestrian)
         auth_date = date(2025, 5, 10)
-        self.grant_authorization(
-            self.owner_person, self.style_eq_general_riding,
-            expiration=date(2029, 5, 10), marshal=self.ao_person,
-        )
         junior_auth = self.grant_authorization(
             self.owner_person,
             style_eq_jm,

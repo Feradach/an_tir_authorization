@@ -9,40 +9,32 @@
             aria-controls="launchNotice"
         >
             <span class="launch-notice-caret" aria-hidden="true"></span>
-            <strong>Welcome to the New An Tir Authorization Portal</strong>
+            <strong>Key Information: Authorizations and New Accounts</strong>
         </button>
     </div>
     <div id="launchNotice" class="collapse{% if not request.user.is_authenticated %} show{% endif %}">
         <div class="card-body">
+            <h2 class="h5">Two-person authorization requirement: effective November 1, 2026</h2>
             <p>
-                Welcome to the new online portal for An Tir martial authorizations!
+                Effective November 1, 2026, An Tir requires two people to sign off on a fighter's first authorization in a discipline, or when the fighter has had no valid authorizations in that discipline for more than one year. This is required by the <a href="https://society-rules.fullmesh.co.nz/index.php/Global:Authorization#Two_person_integrity_rule" target="_blank" rel="noopener noreferrer">Society's two person integrity rule</a>.
+            </p>
+            <ul>
+                <li><strong>An authorizing marshal</strong> who is qualified to conduct authorizations in that discipline.</li>
+                <li><strong>A second person</strong> who holds any current, valid authorization in the same discipline. This person may be another marshal or an authorized participant.</li>
+            </ul>
+            <p>
+                These must be two different people, neither of whom is the person being authorized. Both take part in the authorization process, with the second person serving as a witness and providing concurrence.
             </p>
             <p>
-                This system has been in development for several months and will be used for all An Tir authorizations going forward. This new site supports all of the same functions as the previous system as well as several additional features. Most exciting of all is that it includes the ability for marshals to upload authorizations directly online rather than needing to fill out paper forms!
+                This requirement does not apply to Siege or Youth Combat. Existing approval requirements for marshal authorizations remain unchanged.
+            </p>
+
+            <h2 class="h5">Creating a new account</h2>
+            <p>
+                Creating your own account is the preferred way to get started. Go to the <a href="{% url 'login' %}">login page</a>, select <strong>Create an Account</strong>, and fill in your details. You will receive an email with your username and a link to set your password.
             </p>
             <p>
-                We know this change is very sudden, but there was an emergency which forced us to expedite this transition. The previous system is now permanently unavailable and, unfortunately, some of the more recent authorizations have been deleted. You can read more about this situation on the <a href="https://antir.org/announcements/new-an-tir-authorizations-database-is-live/" target="_blank">An Tir Website</a>. We are working on restoring all of those from the archived forms and expect to have everything up to date within the next few weeks. We apologize for any inconvenience this may cause.
-            </p>
-            <p>
-                We are looking on the bright side of this, and we hope you will find this new system easier to use. In order to make this transition as smooth as possible, we have produced training videos to help you get started with the new system and every user of the site already has an account set up for them. 
-            </p>
-            <p>
-                We will be sending out account setup links in batches in order to avoid hitting spam limits, but if you would like to receive your account setup link sooner you can go to your fighter page and request it directly. These account setup emails will be sent to the email address that was filed during your last authorization. If you no longer have access to that email, you can fill out a request for email update form on the contact page.
-            </p>
-            <p>
-                Use the buttons below to watch the training videos, find your fighter page so you can request an account setup link, or review the authorization flowchart to see how authorization requests move through the new system.
-            </p>
-            <p>
-                <a
-                    href="https://www.youtube.com/playlist?list=PLJmmPor-P9kcPjxOokyyBJZYO2lYxm8QL"
-                    class="btn btn-primary"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                >
-                    Watch Training Videos
-                </a>
-                <a href="{% url 'search' %}?goal=search" class="btn btn-outline-primary ms-2">Find Your Fighter Page</a>
-                <a href="{% url 'faq' %}#authorization-status-flow" class="btn btn-outline-primary ms-2">View Authorization Flowchart</a>
+                Marshals with the required authority are also welcome to create accounts for new people using the add-fighter action on their home page. See the <a href="{% url 'faq' %}#create-account">FAQ account-creation instructions</a> for more details.
             </p>
         </div>
     </div>
