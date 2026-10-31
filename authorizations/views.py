@@ -698,6 +698,7 @@ class LegacyAuthorizationRecoveryForm(forms.Form):
     concurring_officer_last_name = forms.CharField(max_length=150, required=False)
     marshal_promotion = forms.BooleanField(required=False)
     auth_date = forms.DateField(
+        label='Authorization Date',
         required=True,
         input_formats=['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y'],
         widget=forms.DateInput(attrs={'type': 'date'}),
@@ -7877,10 +7878,14 @@ def legacy_authorization_recovery(request):
                 if not form.is_valid():
                     row['__error'] = '1'
                     has_preflight_errors = True
-                    messages.error(
-                        request,
-                        f'Row {index} ({style_label}): Please complete all required fields with a valid date.',
-                    )
+                    for field_name, errors in form.errors.items():
+                        field_label = '' if field_name == '__all__' else f'{form[field_name].label}: '
+                        for error in errors:
+                            messages.error(
+                                request,
+                                f'Row {index} ({style_label}): {field_label}{error} '
+                                'Select Edit on this row to correct it.',
+                            )
                     continue
                 valid_forms.append((index, form))
             if not has_preflight_errors and valid_forms and len(valid_forms) == len(submitted_rows):

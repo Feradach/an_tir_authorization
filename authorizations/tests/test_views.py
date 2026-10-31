@@ -5449,6 +5449,60 @@ class UserAccountViewTests(ViewTestBase):
         self.assertContains(response, 'Cannot authorize a minor in Rapier, Cut &amp; Thrust, or Armored Combat unless you are a regional marshal.')
         self.assertFalse(Authorization.objects.filter(person=minor_person, style=self.style_weapon_armored).exists())
 
+    def test_paper_entry_reports_specific_form_errors_and_preserves_row(self):
+        self.client.force_login(self.ao_user)
+        row = {
+            'person_id': str(self.owner_person.user_id),
+            'person_sca_name': self.owner_person.sca_name,
+            'person_first_name': self.owner_user.first_name,
+            'person_last_name': self.owner_user.last_name,
+            'weapon_style': 'Armored Combat - Weapon & Shield',
+            'marshal_id': str(self.ao_person.user_id),
+            'marshal_sca_name': self.ao_person.sca_name,
+            'marshal_first_name': self.ao_user.first_name,
+            'marshal_last_name': self.ao_user.last_name,
+            'auth_date': '2026-10-31',
+        }
+        cases = [
+            (
+                {'person_postal_code': '97360', 'person_state_province': 'British Columbia', 'person_country': 'Canada'},
+                ['Person postal code: Postal code does not match the selected state/province.'],
+            ),
+            (
+                {'auth_date': '2026-02-30', 'marshal_first_name': ''},
+                ['Authorization Date: Enter a valid date.', 'Marshal first name: This field is required.'],
+            ),
+            (
+                {'person_phone_number': '123'},
+                ['Person phone number: Enter a 10-digit U.S. phone number.'],
+            ),
+            (
+                {'person_membership': '12345', 'person_membership_expiration': ''},
+                ['Member Number and Member Exp must be provided together.'],
+            ),
+        ]
+        authorization_count = Authorization.objects.count()
+        for overrides, expected_errors in cases:
+            with self.subTest(overrides=overrides):
+                submitted = {**row, **overrides}
+                response = self.client.post(reverse('paper_authorization_entry'), submitted)
+
+                self.assertEqual(response.status_code, 200)
+                for error in expected_errors:
+                    self.assertContains(
+                        response,
+                        'Row 1 (Armored Combat - Weapon &amp; Shield): '
+                        f'{error} Select Edit on this row to correct it.',
+                    )
+                self.assertNotContains(response, 'Please complete all required fields with a valid date.')
+                pending = response.context['pending_rows']
+                self.assertEqual(len(pending), 1)
+                self.assertEqual(pending[0]['__error'], '1')
+                for field, value in submitted.items():
+                    self.assertEqual(pending[0][field], value)
+                self.assertEqual(Authorization.objects.count(), authorization_count)
+                self.assertFalse(LegacyAuthorizationRecoveryEntry.objects.exists())
+
     def test_paper_entry_rolls_back_existing_fighter_updates_when_later_row_fails(self):
         original_email = self.owner_user.email
         style_rapier_dagger = WeaponStyle.objects.create(name='Dagger', discipline=self.discipline_rapier)

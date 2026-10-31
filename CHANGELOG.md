@@ -1,5 +1,7 @@
 ﻿
 ## [UNRELEASED]
+
+## [1.1.11] - 2026-10-31
 ### Major Changes
 
 
@@ -15,6 +17,7 @@
 
 ### Fixed
 
+- Paper authorization entry now identifies the field and specific problem when a batch row needs correction, instead of showing a generic required-fields/date error.
 - Authorization history now preserves gaps caused by lapsed membership, background checks, or prerequisite authorizations when records are updated or renewed.
 - Approval and replacement workflows now record when authorizations become valid or stop being valid. Paper-form checks also respect prerequisite lapses and sanctions on the authorization date.
 
