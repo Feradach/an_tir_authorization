@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The home page now highlights the two-person authorization requirement effective 2026-11-01, links to the Society rule, and explains account creation in place of the original launch welcome.
 - The FAQ now explains how new people can create their own accounts through the login page as the preferred method, while continuing to welcome marshal-created accounts.
 
 ### Fixed
