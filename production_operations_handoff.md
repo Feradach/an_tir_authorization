@@ -36,6 +36,14 @@ Older/staging Nginx site:
 - Enabled symlink: `/etc/nginx/sites-enabled/an_tir_authorizations`
 - Server name: `apps.authorizations.thebusinessduck.com`
 
+## NGINX security update (2026-11-20)
+
+On `antir-authorizations` (Ubuntu 24.04.5 LTS), `nginx` and `nginx-common` were upgraded from `1.24.0-2ubuntu7.19` to `1.24.0-2ubuntu7.21` for CVE-2026-123007 and CVE-2026-123633. Both installed package versions were verified. NGINX was active, `nginx -t` passed, and the master and worker processes were running the installed executable. Its checksum matched the package.
+
+A filtered public search at `https://authorizations.thebusinessduck.com/authorizations/search` returned HTTP 200 and the expected no-results message through Cloudflare. The response reported cache status `DYNAMIC` and Ray ID `a5d9b74548511fa8-SJC`.
+
+The root-only rollback directory on the Droplet, `/var/backups/antir-nginx-qDtHeB3v/`, contains both previous `.19` packages verified against signed Ubuntu archive metadata and the pre-upgrade configuration archive, `nginx.tar.gz`.
+
 ## DigitalOcean Infrastructure
 
 Droplet:
