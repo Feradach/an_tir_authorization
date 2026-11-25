@@ -1,5 +1,8 @@
 ﻿
 ## [UNRELEASED]
+### Added
+- You can read the exact list of blocked common passwords in your browser from either password reset page.
+
 ### Fixed
 - Password reset pages show all password requirements before you submit and explain which rules your password failed.
 

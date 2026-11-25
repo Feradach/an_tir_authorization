@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
+from django.contrib.auth.password_validation import CommonPasswordValidator
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.contrib.messages import get_messages
 from django.core.cache import cache
@@ -2522,6 +2523,19 @@ class RegisterViewTests(ViewTestBase):
         )
 
 
+class CommonPasswordsViewTests(TestCase):
+    def test_anonymous_visitor_can_read_the_complete_list_in_browser(self):
+        response = self.client.get(reverse('common_passwords'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Content-Type'], 'text/plain; charset=utf-8')
+        self.assertNotIn('Content-Disposition', response.headers)
+        self.assertEqual(
+            response.content.decode('utf-8').split('\n')[:-1],
+            sorted(CommonPasswordValidator().passwords),
+        )
+
+
 class TombstoneBehaviorTests(ViewTestBase):
     @classmethod
     def setUpTestData(cls):
@@ -2786,6 +2800,7 @@ class TombstoneBehaviorTests(ViewTestBase):
             'at least 8 characters',
             'list of common passwords',
             'entirely numeric',
+            f'href="{reverse("common_passwords")}"',
         )
 
         for path in (token_url, account_url):
