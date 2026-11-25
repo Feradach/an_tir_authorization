@@ -1,5 +1,7 @@
 ﻿
 ## [UNRELEASED]
+### Fixed
+- Password reset pages show all password requirements before you submit and explain which rules your password failed.
 
 ## [1.1.11] - 2026-10-31
 ### Major Changes

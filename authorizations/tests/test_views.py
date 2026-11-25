@@ -2771,6 +2771,42 @@ class TombstoneBehaviorTests(ViewTestBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'invalid or has expired')
+        self.assertNotContains(response, 'Password requirements')
+
+    def test_password_reset_forms_show_requirements_with_validation_errors(self):
+        user, _ = self.make_person('password_help_user', 'Password Help User')
+        token_url = reverse('password_reset_token', kwargs={
+            'uidb64': urlsafe_base64_encode(force_bytes(user.pk)),
+            'token': PasswordResetTokenGenerator().make_token(user),
+        })
+        account_url = reverse('password_reset', kwargs={'user_id': user.id})
+        requirements = (
+            'Password requirements',
+            'username, first name, last name, and email address',
+            'at least 8 characters',
+            'list of common passwords',
+            'entirely numeric',
+        )
+
+        for path in (token_url, account_url):
+            with self.subTest(path=path):
+                if path == account_url:
+                    self.client.force_login(user)
+
+                response = self.client.get(path)
+                for requirement in requirements:
+                    self.assertContains(response, requirement)
+
+                response = self.client.post(path, {
+                    'password': 'password123',
+                    'confirmation': 'password123',
+                })
+                self.assertContains(response, '<li>This password is too common.</li>', html=True)
+                for requirement in requirements:
+                    self.assertContains(response, requirement)
+
+        user.refresh_from_db()
+        self.assertTrue(user.check_password('StrongPass!123'))
 
     @patch('authorizations.views.send_mail')
     def test_logged_in_password_change_sends_security_notice(self, mock_send_mail):
