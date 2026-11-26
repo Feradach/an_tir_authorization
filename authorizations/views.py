@@ -9,7 +9,12 @@ from django.conf import settings
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 from django.db import IntegrityError, transaction
-from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.password_validation import (
+    CommonPasswordValidator,
+    get_default_password_validators,
+    password_validators_help_texts,
+    validate_password,
+)
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -29,6 +34,7 @@ from django.utils.html import format_html
 from django.utils import timezone
 from django.contrib.staticfiles import finders
 from django.core.cache import cache
+from django.views.decorators.http import require_safe
 from .models import User, Authorization, AuthorizationAuditEntry, AuthorizationValidityInterval, Branch, Discipline, WeaponStyle, AuthorizationStatus, Person, BranchMarshal, Title, TITLE_RANK_CHOICES, AuthorizationNote, UserNote, AuthorizationPortalSetting, ReportingPeriod, ReportValue, Sanction, MembershipRosterImport, MembershipRosterEntry, WaiverRecord, SupportingDocument, SupportingDocumentPerson, SupportingDocumentAuthorization, LegacyAuthorizationRecoveryEntry, SYSTEM_USER_IDS, CANADIAN_PROVINCE_ABBREVIATIONS, CANADIAN_PROVINCE_NAMES, adult_age_for_jurisdiction, is_minor_from_birthday, sync_authorization_validity_interval, sync_dependent_authorization_validity_intervals
 from .permissions import is_senior_marshal, is_branch_marshal, is_regional_marshal, is_kingdom_marshal, is_kingdom_authorization_officer, is_kingdom_equestrian_authorization_officer, is_kingdom_earl_marshal, is_branch_seneschal, is_kingdom_seneschal, can_authorize_in_discipline, authorization_follows_rules, calculate_age, approve_authorization, appoint_branch_marshal, waiver_signed, authorization_officer_sign_off_enabled, membership_is_current, calculate_authorization_expiration, validate_approve_authorization, validate_reject_authorization, authorization_requires_concurrence, is_authorized_in_discipline, active_sanction_for_style, can_branch_have_seneschal, can_manage_branch_marshal_office, can_manage_any_branch_marshal_office, marshal_office_effective_expiration, create_authorization_note, kingdom_review_status_name_for_style, is_kingdom_review_status_name, youth_age_category_for_age, youth_age_category_for_style_name, youth_base_style_name, KINGDOM_APPROVAL_STATUS, KINGDOM_EQUESTRIAN_WAIVER_STATUS, KINGDOM_AUTHORIZATION_OFFICER_DISCIPLINE, KINGDOM_EQUESTRIAN_AUTHORIZATION_OFFICER_DISCIPLINE, SENESCHAL_DISCIPLINE, _equestrian_aliases_for_style_name, _GENERAL_RIDING_STYLES, _JUNIOR_GROUND_CREW_STYLES, _MOUNTED_ARCHERY_STYLES, _MOUNTED_COMBAT_STYLES, _MOUNTED_CREST_COMBAT_STYLES, _MOUNTED_GAMING_STYLES, _MOUNTED_SPECIAL_STYLES, _MOUNTED_WEAPON_GAME_STYLES, _DRIVING_STYLES, _FOAM_TIPPED_JOUSTING_STYLES, _SENIOR_GROUND_CREW_STYLES
 from .changelog import build_changelog_sections
@@ -4174,6 +4180,22 @@ def register(request):
     return render(request, 'authorizations/register.html', {'person_form': person_form})
 
 
+@require_safe
+def common_passwords(request):
+    validators = [
+        validator for validator in get_default_password_validators()
+        if isinstance(validator, CommonPasswordValidator)
+    ]
+    if not validators:
+        raise Http404
+
+    passwords = {password for validator in validators for password in validator.passwords}
+    return HttpResponse(
+        '\n'.join(sorted(passwords)) + '\n',
+        content_type='text/plain; charset=utf-8',
+    )
+
+
 @login_required
 def password_reset(request, user_id):
     # Make sure it is the right user.
@@ -4181,25 +4203,22 @@ def password_reset(request, user_id):
         messages.error(request, "You don't have permission to reset this password.")
         return redirect('index')
 
-
-    # Get the old password
+    context = {'password_requirements': password_validators_help_texts()}
     if request.method == 'POST':
         
         # Create new password
         password = request.POST['password']
         confirmation = request.POST['confirmation']
         if password != confirmation:
-            return render(request, 'authorizations/password_reset.html', {
-                'message': 'Passwords must match.'
-            })
+            context['password_errors'] = ['Passwords must match.']
+            return render(request, 'authorizations/password_reset.html', context)
 
         # Validate the new password
         try:
             validate_password(password, user=request.user)
         except ValidationError as e:
-            return render(request, 'authorizations/password_reset.html', {
-                'message': ' '.join(e.messages),
-            })
+            context['password_errors'] = e.messages
+            return render(request, 'authorizations/password_reset.html', context)
 
         # Set the new password
         user = User.objects.get(id=user_id)
@@ -4213,8 +4232,8 @@ def password_reset(request, user_id):
         login(request, user)
         messages.success(request, 'Your password has been reset successfully.')
         return redirect('index')
-    else:
-        return render(request, 'authorizations/password_reset.html')
+
+    return render(request, 'authorizations/password_reset.html', context)
 
 def _build_password_reset_link(user: User) -> str:
     uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
@@ -4269,22 +4288,22 @@ def password_reset_token(request, uidb64, token):
         messages.error(request, 'This password reset link is invalid or has expired.')
         return render(request, 'authorizations/password_reset_token.html', {'valid_link': False})
 
+    context = {
+        'valid_link': True,
+        'password_requirements': password_validators_help_texts(),
+    }
     if request.method == 'POST':
         password = request.POST.get('password', '')
         confirmation = request.POST.get('confirmation', '')
         if password != confirmation:
-            return render(request, 'authorizations/password_reset_token.html', {
-                'valid_link': True,
-                'message': 'Passwords must match.'
-            })
+            context['password_errors'] = ['Passwords must match.']
+            return render(request, 'authorizations/password_reset_token.html', context)
 
         try:
             validate_password(password, user=user)
         except ValidationError as e:
-            return render(request, 'authorizations/password_reset_token.html', {
-                'valid_link': True,
-                'message': ' '.join(e.messages),
-            })
+            context['password_errors'] = e.messages
+            return render(request, 'authorizations/password_reset_token.html', context)
 
         user.set_password(password)
         user.is_active = True
@@ -4297,7 +4316,7 @@ def password_reset_token(request, uidb64, token):
         messages.success(request, 'Your password has been set. You can now log in.')
         return redirect('login')
 
-    return render(request, 'authorizations/password_reset_token.html', {'valid_link': True})
+    return render(request, 'authorizations/password_reset_token.html', context)
 
 
 def recover_account(request):
