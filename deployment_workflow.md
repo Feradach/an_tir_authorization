@@ -29,6 +29,24 @@ python scripts/deploy/check_pythonanywhere_access.py
 
 The check reads that one credential, contacts the US PythonAnywhere API over HTTPS, and prints only the result. A passing check establishes read access to the staging web app and console API. Staging deploys still require owner authorization and validation of the console commands and web app reload against the approved commit.
 
+### Run a routine release
+
+The following staging commands use the existing staging Bash console `47120879`. Reserve it for deployments and leave it idle at the shell prompt. The API can send commands to a running console and reload the site without a browser session. PythonAnywhere currently requires a browser connection to start a new console process. If the reserved console stops, start a replacement before using its ID here.
+
+```powershell
+python scripts/deploy/pythonanywhere_deploy.py --console 47120879
+python scripts/deploy/pythonanywhere_deploy.py --console 47120879 --commit APPROVED_SHA --ref agent/REVIEW_BRANCH
+python scripts/deploy/pythonanywhere_deploy.py --console 47120879 --commit APPROVED_MERGED_SHA --ref main
+```
+
+After final staging and explicit owner approval of the production SHA and version, run the production command from the repository with Git and SSH access.
+
+```powershell
+python scripts/deploy/production_deploy.py --commit APPROVED_MERGED_SHA --version X.Y.Z
+```
+
+The production command checks the version, deployed revision, backup jobs, and restart permission. It verifies the restarted service and the public login and release notes before pushing the annotated tag. Add `--smoke-path /PUBLIC_PATH` for each additional public URL that must return HTTP 200 before tagging. The automated commands stop before a restart if migrations are pending. Use the reviewed migration and recovery procedures below in that case.
+
 ### One-time production restart setup
 
 The production service and the existing deployment SSH account both run as `antir`. A server administrator installs [the restart rule](scripts/deploy/production-restart.sudoers) as `/etc/sudoers.d/an-tir-deploy` using `sudo visudo -f /etc/sudoers.d/an-tir-deploy`. Confirm the drop-in is owned by `root:root`, has mode `0440`, and passes `sudo visudo -c`. This access change needs its own owner approval. Keep the sudoers file and the systemd unit root-controlled.
