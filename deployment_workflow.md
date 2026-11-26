@@ -1,7 +1,63 @@
 # Deployment Workflow
 
 ## Purpose
-This document records the working deployment decisions for this live solo project. Use it as the default release policy unless the owner gives different instructions.
+This document is the authoritative branch, staging, production, and rollback workflow, whether one person or several volunteers contribute. Use it unless the owner explicitly approves a different plan. Last updated 2026-11-25.
+
+Committing saves a local snapshot. Pushing publishes Git history to GitHub. Merging combines reviewed changes into `main`. Deploying changes the running site. These are separate actions; completing one does not authorize the next.
+
+## Agent-operated releases
+
+The owner approves the release decisions in chat or on the pull request. The agent executes the authorized Git, staging, production, verification, and tagging steps. A single message can authorize multiple named actions, such as publishing the review branch and deploying that branch to staging. Production approval applies to the exact merged commit verified on final staging and can cover the deployment, service restart, live verification, and release tag. Include compatible rollback authority in that approval if the agent should be able to recover without another handoff.
+
+When the release version is known before branch review, include the numbered changelog in the release PR before its staging round. This lets one PR cover both the behavior and its release notes. If the notes change after final staging, test the resulting merged commit again.
+
+### Authenticated access
+
+- Use the authorized GitHub connector or Git credential helper for GitHub. Use the designated PythonAnywhere account or its existing authenticated browser session for staging. Use the configured SSH identity and pinned host key for production.
+- The agent may sign in with an approved account and its password when a supported connector, credential helper, or secret store can supply the credential directly to the intended service. The owner provisions access once and can rotate or revoke it. Keep passwords, tokens, and keys out of chat, repositories, command arguments, and logs. If the authentication provider requires direct user participation, request it at that step.
+- Before changing the production checkout, test access to GitHub, the production host, and the exact non-interactive restart permission. Resolve access issues before deploying.
+
+#### PythonAnywhere access from Windows
+
+Create or reuse a PythonAnywhere API token under the `feradach` account's **Account > API token** tab. The token has account-wide API access. Keep it in Windows Credential Manager as a generic credential with address `AnTir.PythonAnywhere.Staging`, username `feradach`, and the API token in the Password field. Enter it privately in Windows Credential Manager. Revoking or rotating the token is done in the PythonAnywhere account.
+
+Run the read-only check from the same Windows account used by the deployment agent.
+
+```powershell
+python scripts/deploy/check_pythonanywhere_access.py
+```
+
+The check reads that one credential, contacts the US PythonAnywhere API over HTTPS, and prints only the result. A passing check establishes read access to the staging web app and console API. Staging deploys still require owner authorization and validation of the console commands and web app reload against the approved commit.
+
+### Run a routine release
+
+The following staging commands use the existing staging Bash console `47120879`. Reserve it for deployments and leave it idle at the shell prompt. The API can send commands to a running console and reload the site without a browser session. PythonAnywhere currently requires a browser connection to start a new console process. If the reserved console stops, start a replacement before using its ID here.
+
+```powershell
+python scripts/deploy/pythonanywhere_deploy.py --console 47120879
+python scripts/deploy/pythonanywhere_deploy.py --console 47120879 --commit APPROVED_SHA --ref agent/REVIEW_BRANCH
+python scripts/deploy/pythonanywhere_deploy.py --console 47120879 --commit APPROVED_MERGED_SHA --ref main
+```
+
+After final staging and explicit owner approval of the production SHA and version, run the production command from the repository with Git and SSH access.
+
+```powershell
+python scripts/deploy/production_deploy.py --commit APPROVED_MERGED_SHA --version X.Y.Z
+```
+
+The production command checks the version, deployed revision, backup jobs, and restart permission. It verifies the restarted service and the public login and release notes before pushing the annotated tag. Add `--smoke-path /PUBLIC_PATH` for each additional public URL that must return HTTP 200 before tagging. The automated commands stop before a restart if migrations are pending. Use the reviewed migration and recovery procedures below in that case.
+
+### One-time production restart setup
+
+The production service and the existing deployment SSH account both run as `antir`. A server administrator installs [the restart rule](scripts/deploy/production-restart.sudoers) as `/etc/sudoers.d/an-tir-deploy` using `sudo visudo -f /etc/sudoers.d/an-tir-deploy`. Confirm the drop-in is owned by `root:root`, has mode `0440`, and passes `sudo visudo -c`. This access change needs its own owner approval. Keep the sudoers file and the systemd unit root-controlled.
+
+From a new SSH connection as `antir`, check the delegated permission without restarting the service.
+
+```bash
+sudo -n -l -- /usr/bin/systemctl restart an_tir_authorizations.service
+```
+
+The rule delegates this exact restart command to the deployment account. Its authority applies to anyone who can authenticate as `antir`. Revoke it by removing the single drop-in through the administrator's approved access change and validating sudoers again.
 
 ## Cadence
 - Production deploys normally happen on Wednesday morning.
@@ -19,84 +75,99 @@ Local validation should happen before code is pushed for normal release work. St
 
 Staging should use its own configuration and should not share production secrets or write to production systems. For email testing, prefer the file email backend first so staging does not accidentally contact real users. Switch to Gmail/API email only when intentionally testing outbound email behavior.
 
-## Mandatory Staging-to-Production Approval Gate
+### Test email inbox and delivery gates
+
+- File delivery requires `AUTHZ_TEST_FEATURES=1` and a non-production environment.
+  Non-test sites must select `EMAIL_DELIVERY_MODE=gmail` or `smtp` with the required
+  provider configuration. A conflicting file configuration blocks startup.
+- Browser previews additionally require `AUTHZ_EMAIL_PREVIEW_ENABLED=1`,
+  `RELEASE_ENV=local` or `staging`, and file delivery. Defaults are disabled and
+  allowlist access. See README for the full setup and tester ID examples.
+- `AUTHZ_EMAIL_PREVIEW_ACCESS=allowlist` uses the server-configured
+  `AUTHZ_EMAIL_PREVIEW_USER_IDS`. `public` deliberately exposes all saved test mail
+  and recovery links to everyone, including anonymous visitors. Use public access
+  only with fake data and disposable accounts; never use production passwords,
+  signing secrets, database copies containing real information, or mail folders.
+- Configure these settings through the server environment and restart. They cannot
+  be changed through a request, profile, officer role, or the preview page.
+- Keep `EMAIL_FILE_PATH` private and outside all web-server static/media aliases.
+  The inbox checks Django's public paths, but cannot inspect external hosting aliases.
+  Page responses are private/no-store; do not override that with proxy caching.
+- For production, set `AUTHZ_TEST_FEATURES=0`, `AUTHZ_EMAIL_PREVIEW_ENABLED=0`,
+  `RELEASE_ENV=production`, and the chosen real-mail provider. The production release
+  check rejects preview opt-in. Preview endpoints also deny production requests.
+- Changing delivery to a real provider never sends previously saved files. Retire
+  old test mail through normal private-folder housekeeping, not through this page.
+
+## Mandatory Review and Production Approval Gates
 
 Staging and production are two separate deployment phases. Completing a staging deploy never authorizes a production deploy.
 
-After deploying and smoke-testing staging, stop and report:
+There are two staging rounds: the feature/hotfix branch before merge, and the resulting `main` release commit after merge. After each round, stop and report:
 
 - the staging URL;
 - the exact commit deployed;
+- the branch and whether this is pre-merge or final release testing;
 - the checks and smoke tests that passed or failed; and
 - any known caveats or items that still need the owner's review.
 
-Wait for the owner to perform their own staging testing and give a new, explicit instruction to deploy that tested commit to production. A stated intention to launch later or "launch today if everything looks good" does not replace this approval gate.
+After branch testing, wait for the owner's merge approval. After final `main` testing, wait for the owner to perform acceptance testing and give a new, explicit instruction to deploy that exact commit to production. Approval to merge does not authorize production deployment. A stated intention to launch later or "launch today if everything looks good" does not replace this approval gate.
 
 The commit approved on staging must be the commit deployed to production. If code, configuration, migrations, or release documentation changes after staging approval, deploy the new commit to staging and repeat this gate before touching production.
 
 ## Branch Policy
-Do not use a permanent `develop` branch by default. It is likely to become a second messy `main` in this solo workflow.
+- `main` is the human-reviewed integration and release branch. This repository uses `main`, not a separate `master`. The currently deployed production commit may be older than `main`; record it independently.
+- Create a dedicated branch before any edits, including small fixes, configuration changes, and documentation. There is no direct-to-`main` small-change exception.
+- Use `agent/<work-item-slug>` for agent work, including `agent/hotfix-<slug>` for urgent fixes. Keep each branch limited to one bounded work item.
+- Start from the latest fetched `origin/main` after checking that it is the appropriate base. Record the base SHA. Using a release tag or another feature branch as the base requires the owner's agreement, and the dependency must be stated in the review handoff.
+- Preserve dirty checkouts. Use a separate worktree for concurrent work rather than switching branches, stashing someone else's changes, or copying unfinished work into a hotfix. Set up its local environment deliberately; worktrees do not automatically copy ignored `.env` files or virtual environments. Use separate ports and test databases when concurrent tests or schema changes could interfere.
+- Agents may commit locally when review-ready. Push only the authorized branch when the owner authorizes publication; do not push directly to `main`, force-push, merge, or deploy autonomously. Owner approval is required for merging and for each deployment scope.
+- No permanent `develop` branch is required. Feature branches can coexist, but a shared staging site must have a clearly identified branch and exact SHA. Coordinate its use before replacing another tester's deployment.
 
-Use this model:
+## Standard Change Flow
 
-- `main`: the current release path and expected deployable state.
-- Short-lived feature branches: temporary isolation for larger work.
-- Hotfix branches: narrow urgent fixes from `main`.
+1. **Branch and stabilize locally.** Create the branch before editing. Implement the bounded change, update applicable documentation and `CHANGELOG.md`, run targeted checks and the appropriate broader suite, and review the diff. Documentation-only changes need consistency, command, and link checks rather than application tests unless runtime behavior also changes.
+2. **Publish the branch for review.** With owner authorization, push the branch and open a pull request into `main`. Report its base SHA, head SHA, validation, and any dependent work. A local commit is not a GitHub backup until it is pushed.
+3. **Test the branch on staging.** With staging authorization, deploy the identified branch commit to PythonAnywhere and perform smoke/acceptance tests. Fix problems on the branch, validate locally, push authorized updates, and repeat branch staging testing. Stop for owner review and merge approval.
+4. **Merge the reviewed result.** Check whether `main` has advanced. If so, bring those changes into the feature branch, resolve conflicts, retest, and renew staging acceptance and approval for the changed result. After approval, merge the pull request into `main`. The merge updates GitHub's `main`; it does not deploy production. Prepare the intended numbered release/changelog before final staging, through the same reviewed branch process if a separate release-preparation change is needed.
+5. **Test the final release commit on staging.** Deploy the exact resulting `main` commit, including version/release documentation, to staging and repeat stability and acceptance tests. Record the full SHA. A passing pre-merge branch test does not replace this round. If `main` later advances, the approved SHA remains pinned; newer commits need their own staging validation and approval.
+6. **Request production approval and deploy.** Stop and obtain a new, explicit owner approval for that exact final staging SHA. Deploy only it to production, verify the live site, then create and push the matching version tag when authorized. Never replace the approved SHA with whatever happens to be newest on `main`.
+7. **Finish the handoff.** Report the branch/base SHA, merged/release SHA, staging and production results separately, release tag, and outstanding issues. Retire the feature branch/worktree when its work is merged and no longer needed; preserve any uncommitted or ignored files still needed.
 
-Branches are for isolation, not parallel routine development.
+## Keeping Unfinished Branches Current
 
-## Default Small-Change Flow
-For small, bounded changes that can be completed and validated locally in one sitting:
+Changes merged into `main` do not automatically appear in a feature branch. After a hotfix or other relevant merge, promptly synchronize each unfinished branch before further dependent work, and always check again before final review.
 
-1. Work locally on `main`.
-2. Make the code work locally.
-3. Run targeted checks/tests for touched behavior.
-4. Push `main`.
-5. Deploy `main` to PythonAnywhere staging.
-6. Smoke test staging.
-7. Stop, report the staging result and exact commit, and wait for the owner's explicit production approval.
-8. If staging passes, leave the change queued for the Wednesday production deploy until that approval is given.
-9. If staging fails, fix `main`, redeploy staging, and repeat the approval gate before any production deploy.
-
-This flow is acceptable because `main` is still treated as "should be deployable", not as scratch space.
-
-## Larger-Change Flow
-Use a branch when the work:
-
-- will likely span multiple sessions;
-- has architectural uncertainty;
-- may need to be abandoned or postponed;
-- touches auth, permissions, account recovery, email, imports, migrations, deployment settings, or other high-risk workflows;
-- could block regular production deploys if kept on `main`.
-
-Examples include offline database support, major permission model changes, import/recovery overhauls, email backend changes, and substantial schema work.
-
-When a feature branch is active, normal development on `main` pauses. The only expected exceptions are urgent hotfixes, release-blocking fixes, or trivial docs/admin cleanup that cannot reasonably wait.
-
-If `main` changes while a feature branch is active, bring it back into the branch promptly:
+In the feature branch's clean worktree, fetch the latest remote state and merge it:
 
 ```bash
-git switch feature/some-change
-git merge main
+git status --short
+git fetch origin
+git merge origin/main
 ```
 
-After the branch is complete:
-
-1. Validate locally.
-2. Deploy/test the branch on staging if needed.
-3. Merge to `main` only when it is ready for the release queue.
-4. Delete the branch after merge.
+Confirm the checkout is the intended feature branch and is clean before running the merge. If it is dirty, preserve that work and arrange a clean checkpoint with its owner; do not force a switch or discard changes. Review conflicts and the combined behavior even when Git reports an automatic merge. Run relevant tests and repeat staging validation for the changed commit. Coordinate with a collaborator before modifying their branch or fork.
 
 ## Hotfix Flow
 For urgent production fixes:
 
-1. Start from current `main`.
-2. Create a narrow `hotfix/...` branch if useful.
-3. Fix only the production issue.
-4. Run targeted tests/checks.
-5. Merge to `main`.
-6. Deploy outside the Wednesday cadence if the issue is critical.
-7. If another feature branch exists, merge `main` back into that branch immediately to prevent drift.
+1. Record the current production SHA/tag and check current `origin/main`. Create a separate `agent/hotfix-<slug>` branch/worktree from the appropriate reviewed `main` base, leaving unfinished features untouched. If `main` contains unapproved release changes or is failing staging, ask the owner to approve a base at the deployed release commit instead; do not silently include unreleased work in an emergency deployment.
+2. Fix only the emergency and run local checks. Push the hotfix branch and open a pull request when authorized.
+3. Test the hotfix branch on staging, obtain merge approval, merge into `main`, and test the final merged release commit on staging. If `main` contains other changes, all changes in the final candidate need acceptance; an emergency does not authorize releasing them implicitly.
+4. Obtain explicit production approval for the final tested SHA, deploy and verify it, then tag the release. Critical fixes may bypass the Wednesday schedule, but not the branch, testing, or approval gates.
+5. Promptly merge updated `origin/main` into unfinished feature branches, resolve conflicts, and retest. Their work can then continue with the emergency fix included.
+
+## If Final Staging Fails After Merge
+
+Do not deploy production or create a successful release tag. Either fix the problem on a new branch through the same review/staging sequence, or open a revert pull request that reverses the faulty merge. The owner approves the remedy and its merge. Test the corrected/reverted `main` commit on staging before requesting any production deployment.
+
+Use a revert commit to preserve shared Git history; do not erase the merge with `reset --hard` or force-push `main`. GitHub's merged pull request Revert action can prepare this change, though conflicts may need manual resolution. Reintroducing a reverted feature requires a new reviewed change; do not assume merging the unchanged old branch will reapply it.
+
+Reverting code does not reverse database migrations, file changes, or data edits. Check compatibility and plan the required migration/restore work separately. If necessary, restore staging to its previous compatible tested state while preparing the fix. Production remains on its existing version throughout a staging-only failure.
+
+## Volunteer Contributions and Forks
+
+A fork is a separate repository; a contributor can develop an offshoot without changing this repository. Contributions returning here go through a pull request and the same local, branch-staging, merge, final-staging, and production-approval gates. Review the actual diff and tests regardless of where the branch originated. Coordinate shared staging explicitly, keep secrets out of Git, and do not assume code collaboration grants production or database access.
 
 ## Validation Expectations
 Before production deployment, run checks appropriate to the change. For mature or risky changes, prefer:
@@ -118,138 +189,145 @@ Smoke test the hosted site after reload. At minimum, check that the site loads, 
 
 ## Staging Deploy to PythonAnywhere
 
-To edit the .env file
-```bash
-nano .env
-```
-
-1. Close any existing consoles and start up a new one from the [web app page](https://www.pythonanywhere.com/user/feradach/webapps/#tab_id_feradach_pythonanywhere_com). In the console pull the code:
+1. Coordinate use of the shared staging site, then open a console from the [web app page](https://www.pythonanywhere.com/user/feradach/webapps/#tab_id_feradach_pythonanywhere_com). Do not close another contributor's active console. In the application directory, inspect the checkout and fetch published code:
 
 ```bash
-git pull
+git status --short
+git fetch origin --tags
 ```
 
-2. If neccessary, deploy core changes:
+Stop for unexpected local changes; preserve and resolve them before checkout. For a fork contribution whose commit is not present in the fetched branches, explicitly fetch the reviewed pull request ref before proceeding. Record whether this is a branch test or final merged `main` test. Replace `STAGING_FULL_COMMIT_SHA` below with the full SHA selected for that round:
+
+```bash
+git checkout --detach STAGING_FULL_COMMIT_SHA || exit 1
+git rev-parse HEAD
+```
+
+Confirm the printed SHA matches the intended commit. The detached checkout keeps the test pinned while branches move. For final release testing, also verify this commit is in the fetched `main` history:
+
+```bash
+git merge-base --is-ancestor STAGING_FULL_COMMIT_SHA origin/main || exit 1
+```
+
+2. Activate the staging virtual environment. Use staging-only configuration and data. To edit its environment file, use `nano .env`. Review any migrations, then deploy the changes:
 
 ```bash
 python -m pip install -r requirements.txt
 python -m dotenv run -- python manage.py check
+python -m dotenv run -- python manage.py migrate --plan
 python -m dotenv run -- python manage.py migrate
 python -m dotenv run -- python manage.py collectstatic --noinput
 ```
 
-3. Restart the server and try to load the page.
+3. Reload the staging web app and perform smoke and acceptance tests. Record results against the exact SHA. Changed code requires a new deployment and repeated testing.
 
-4. Stop and hand the staging URL and exact commit to the owner for acceptance testing. Do not continue into the production instructions during the same deployment phase.
+4. Stop and report the staging URL, source branch, testing round, SHA, and results. Branch testing requests owner merge approval; final `main` testing requests a new production approval. Do not continue into production during the same deployment phase.
 
 ## Production Deploy to DigitalOcean
-Begin this section only after the owner explicitly approves the exact commit tested on staging for production deployment.
 
-Before requesting that approval, promote shipped `CHANGELOG.md` entries out of `## [UNRELEASED]` and into the numbered release section, push the release commit, and deploy that exact commit to staging. Production should have `RELEASE_ENV=production` in its environment so the release check blocks unreleased changelog entries.
+Begin only after the owner explicitly approves the exact merged release commit tested on final staging for production deployment.
 
-To edit the .env file
-```bash
-nano /home/antir/apps/an_tir_authorizations/.env
-```
+Before requesting approval, move the release's `CHANGELOG.md` entries out of `## [UNRELEASED]` into its numbered section through the reviewed branch process. Merge that preparation and test the resulting exact `main` commit on staging. Production must have `RELEASE_ENV=production` so the release check enforces production settings and blocks unreleased changelog entries. Do not edit release notes or code after approval without repeating final staging and approval.
 
-1. SSH into the server and enter the app directory:
+1. SSH into the server and enter the application directory:
 
 ```bash
 ssh antir@138.68.242.105
 cd /home/antir/apps/an_tir_authorizations
-```
-
-2. Activate the virtual environment:
-
-```bash
 source venv/bin/activate
 ```
 
-3. Confirm the current branch:
+The production environment file is `/home/antir/apps/an_tir_authorizations/.env`. Environment changes must be included in the deployment's validation and approval; do not improvise them to bypass a failed check.
+
+2. Record the currently deployed SHA and inspect local changes. Confirm the rollback target and backup/migration plan within the approved deployment scope:
 
 ```bash
 git status -sb
+git rev-parse HEAD
+sudo -n -l -- /usr/bin/systemctl restart an_tir_authorizations.service
 ```
 
-If the server is on the wrong branch:
+Stop for unexpected modifications. Do not overwrite server changes or force a checkout. Replace `APPROVED_FULL_COMMIT_SHA` below with the full SHA approved after final staging:
 
 ```bash
-git branch -r
-git checkout main
-git status -sb
+git fetch --no-tags origin main
+git merge-base --is-ancestor APPROVED_FULL_COMMIT_SHA origin/main || exit 1
+git checkout --detach APPROVED_FULL_COMMIT_SHA || exit 1
+git rev-parse HEAD
 ```
 
-4. Pull the code that already passed local and staging validation:
+Confirm the printed SHA matches the owner's approval before continuing. Do not pull a moving branch or deploy a newer commit. The detached checkout is the intended production state.
 
-```bash
-git pull origin main
-```
-
-5. Run pre-deploy checks:
-
-```bash
-python manage.py check
-python manage.py migrate --check
-python manage.py check_release_ready
-```
-
-If `check_release_ready` fails, do not continue the production deploy. Fix the reported configuration or changelog issue, push again if code changed, then rerun the check on the server.
-
-6. Install requirements, apply migrations, and collect static files as needed:
+3. Install requirements for that approved commit if needed, then run pre-deploy checks:
 
 ```bash
 pip install -r requirements.txt
+python manage.py check
+python manage.py check_release_ready
+python manage.py migrate --plan
+```
+
+If a check fails or the migration plan differs from the reviewed plan, stop. Correct code or release documentation on a branch, repeat staging validation and approval, and deploy the newly approved SHA. Configuration corrections also require renewed staging validation and approval for the deployment. Do not patch production to bypass the gate.
+
+4. Confirm the required backup is available, then apply the approved migrations and collect static files:
+
+```bash
 python manage.py migrate
+python manage.py migrate --check
 python manage.py collectstatic --noinput
 ```
 
-7. Restart and verify the service:
+5. Restart and verify the service:
 
 ```bash
-sudo systemctl restart an_tir_authorizations.service
+sudo -n -- /usr/bin/systemctl restart an_tir_authorizations.service
 systemctl status an_tir_authorizations.service --no-pager
+git rev-parse HEAD
 ```
 
-The service should report `active`. Also smoke test the public site before tagging the release.
+Confirm `active`, that the service started after checkout, the approved SHA, and the live smoke-test results before tagging the release. Use read-only production smoke tests for account workflows. Keep a failed restart or smoke check untagged and follow the authorized rollback scope.
 
-8. After production is verified, tag the exact deployed commit and push the tag:
+6. After production is verified, create and push the release tag when authorized. Replace `vX.X.X` with the actual version from `CHANGELOG.md` and use the same approved full SHA:
 
 ```bash
-git tag -a vX.X.X -m "Release vX.X.X"
+git tag -a vX.X.X APPROVED_FULL_COMMIT_SHA -m "Release vX.X.X"
+git rev-list -n 1 vX.X.X
+```
+
+Confirm the tag's printed SHA matches the deployed SHA, then push it:
+
+```bash
 git push origin vX.X.X
 ```
 
-Use the actual release version from `CHANGELOG.md`.
+A GitHub Release, if used, references this same tag; never tag a newer `main` tip merely because it exists.
 
 ## Production Rollback
-If the deploy fails before migrations are applied, return to the previous stable release tag and restart. Checking out a tag puts Git in detached HEAD state; that is expected for a rollback because the server is running an exact checkpoint rather than a branch.
+
+Obtain rollback authorization, which may be included explicitly in the deployment approval. Record the previous stable tag before deploying. A code-only rollback is appropriate only after checking database, dependency, configuration, and static-file compatibility. If migrations or data changes have run, a forward fix or an explicitly approved restore may be required; reverting code does not undo them.
+
+For an approved compatible rollback, replace `PREVIOUS_STABLE_TAG` with the recorded tag. Inspect and preserve unexpected server changes before checkout:
 
 ```bash
-git fetch --tags
-git checkout vX.X.X
-git status -sb
-sudo systemctl restart an_tir_authorizations.service
-systemctl status an_tir_authorizations.service --no-pager
-```
-
-Use the actual previous stable tag. `git status -sb` should show `HEAD (no branch)` or detached HEAD. It may also show modified generated `staticfiles/...` files after `collectstatic`; confirm there are no unexpected source-code or changelog modifications before trusting the visual rollback test.
-
-To return production to the current release path after testing or after a forward fix:
-
-```bash
-git switch main
-git pull origin main
+git status --short
+git fetch origin --tags
+git checkout --detach PREVIOUS_STABLE_TAG || exit 1
+git rev-parse HEAD
+pip install -r requirements.txt
+python manage.py check
 python manage.py collectstatic --noinput
-sudo systemctl restart an_tir_authorizations.service
+sudo -n -- /usr/bin/systemctl restart an_tir_authorizations.service
 systemctl status an_tir_authorizations.service --no-pager
 ```
 
-If migrations already ran, rollback may require a forward fix or restoring from backup; do not assume a code checkout alone is enough.
+Confirm the expected SHA and smoke-test the site. Detached HEAD is intentional. Review generated `staticfiles/...` modifications separately from source changes; never discard unexpected changes automatically.
+
+A server rollback does not remove a merge from GitHub. Repair shared history with a reviewed fix or revert pull request. To roll forward again, follow the full final-staging and production-approval process and deploy the exact newly approved SHA. Do not switch production to the latest `main` as a shortcut.
 
 ## Release Hygiene
-- User-visible behavior changes should have a user-facing `CHANGELOG.md` entry under `## [UNRELEASED]` until release time.
-- Production release versions are marked by Git tags such as `v1.1.2` after the deployed site is verified.
-- Do not move or reuse pushed release tags. Use the next patch version for hotfixes.
-- Security-sensitive changes must include targeted tests.
-- Do not deploy late if there is no time to monitor and fix issues.
-- If a production deploy breaks a critical workflow and the fix is not obvious quickly, roll back rather than debugging live for an extended period.
+
+- User-visible changes go under `## [UNRELEASED]` until release preparation. Include numbered release notes before final staging so approval covers the entire release commit.
+- Production versions use immutable tags such as `v1.1.2`, created after the deployed site is verified. Never move or reuse a pushed tag; choose the next version for a corrected release or hotfix.
+- Security-sensitive changes include targeted tests in the same branch.
+- Do not deploy without time to monitor and verify the result.
+- If production breaks and a quick fix is unclear, use the approved rollback plan rather than extending unreviewed production changes.
