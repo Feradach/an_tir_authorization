@@ -17,6 +17,18 @@ When the release version is known before branch review, include the numbered cha
 - The agent may sign in with an approved account and its password when a supported connector, credential helper, or secret store can supply the credential directly to the intended service. The owner provisions access once and can rotate or revoke it. Keep passwords, tokens, and keys out of chat, repositories, command arguments, and logs. If the authentication provider requires direct user participation, request it at that step.
 - Before changing the production checkout, test access to GitHub, the production host, and the exact non-interactive restart permission. Resolve access issues before deploying.
 
+#### PythonAnywhere access from Windows
+
+Create or reuse a PythonAnywhere API token under the `feradach` account's **Account > API token** tab. The token has account-wide API access. Keep it in Windows Credential Manager as a generic credential with address `AnTir.PythonAnywhere.Staging`, username `feradach`, and the API token in the Password field. Enter it privately in Windows Credential Manager. Revoking or rotating the token is done in the PythonAnywhere account.
+
+Run the read-only check from the same Windows account used by the deployment agent.
+
+```powershell
+python scripts/deploy/check_pythonanywhere_access.py
+```
+
+The check reads that one credential, contacts the US PythonAnywhere API over HTTPS, and prints only the result. A passing check establishes read access to the staging web app and console API. Staging deploys still require owner authorization and validation of the console commands and web app reload against the approved commit.
+
 ### One-time production restart setup
 
 The production service and the existing deployment SSH account both run as `antir`. A server administrator installs [the restart rule](scripts/deploy/production-restart.sudoers) as `/etc/sudoers.d/an-tir-deploy` using `sudo visudo -f /etc/sudoers.d/an-tir-deploy`. Confirm the drop-in is owned by `root:root`, has mode `0440`, and passes `sudo visudo -c`. This access change needs its own owner approval. Keep the sudoers file and the systemd unit root-controlled.
