@@ -1,8 +1,8 @@
 # An Tir Authorizations Production Operations Handoff
 
-Last updated: 2026-05-07
+Operational state snapshot: 2026-05-07. Release-policy references updated: 2026-10-18.
 
-This document is the working source of truth for the production authorization portal after the emergency launch migration. Do not store passwords, tokens, private keys, or full database dumps in this file.
+This document records the production operations context after the emergency launch migration. The branch, staging, deployment, approval, and rollback rules in [deployment_workflow.md](deployment_workflow.md) take precedence over historical launch procedures here. Do not store passwords, tokens, private keys, or full database dumps in this file.
 
 ## Current Production State
 
@@ -154,15 +154,9 @@ Django test databases have explicit scratch names so tests do not collide with t
 
 ## Standard Production Commands
 
-From `/home/antir/apps/an_tir_authorizations` with the virtualenv active:
+For releases and rollbacks, follow [the deployment workflow](deployment_workflow.md), including branch staging, owner-approved merge, final staging of the merged commit, and separate production approval. Deploy only the exact approved SHA; do not use a bare `git pull` to update the running site. The older abbreviated deployment sequence has been superseded.
 
-```bash
-git pull
-python manage.py migrate
-python manage.py check
-sudo systemctl restart an_tir_authorizations.service
-sudo systemctl status an_tir_authorizations.service
-```
+The diagnostic and service commands below are operations references, not permission to deploy, restart production, or perform database work. Use them only within the owner's authorized scope.
 
 Recent logs:
 

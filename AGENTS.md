@@ -43,8 +43,16 @@ Instructions for coding agents working in this repository. Keep changes focused,
 
 ## Release Hygiene
 - Follow the deployment and branch policy in `deployment_workflow.md`.
+- Create a dedicated branch before editing, including for small fixes and documentation changes. Use `agent/<work-item-slug>` for agent work. Start from current, verified `main` unless the owner approves a different base, and report the base commit and final commit (or uncommitted state) at handoff. Do not develop or push directly on `main`.
+- Keep each branch focused. Preserve unfinished or unrelated work; use a separate worktree when another branch needs attention. Never switch a dirty checkout or move its changes to make room for a hotfix.
+- Local commits are allowed when review-ready. Pushing a branch, deploying staging, merging a pull request, and deploying production are separate actions requiring owner authorization for their respective scope. This workflow is not standing permission to publish, merge, or deploy.
+- Required release sequence: local validation on the branch; authorized branch push and pull request; branch staging test and owner merge approval; merge to `main`; final staging test of the exact merged release commit; new explicit production approval; deploy that exact commit; verify production; tag the verified release. Include version/changelog changes before final staging validation.
+- A hotfix uses its own branch/worktree and the same staging and approval gates. After it lands, promptly merge updated `main` into unfinished feature branches, review conflicts, and retest; do not carry unfinished feature code into the emergency release.
+- Shared staging has one identified branch/commit under test at a time. Coordinate before replacing it, and repeat acceptance testing if its deployed commit changes.
+- Undo a published merge with a reviewed revert, not a history rewrite or force-push. Code reverts do not undo database migrations or data changes; plan and approve those separately.
 - Treat staging and production as separate deployment phases. After staging, stop and wait for a new, explicit production approval from the owner; never infer that approval from a target launch date or from successful automated checks.
 - Deploy only the exact commit the owner approved on staging. Any intervening change must return to staging and pass the approval gate again.
+- After exact-commit production approval, use configured deployment credentials and the narrowly scoped service restart in `deployment_workflow.md`. Verify the live release before pushing its authorized tag. Provisioning or broadening production access requires separate owner approval.
 - For user-visible behavior changes, add an entry to the `## [UNRELEASED]` section of `CHANGELOG.md`. Entry should be added as if it is talking to an end user, not a developer. For instance, it should not reference any internal implementation details.
 - For security-sensitive changes (auth, recovery, permissions), include tests in the same change.
 - Every new, renamed, or behaviorally changed Django management command must be documented in `authorizations/management/commands/README.md` in the same change. Include its safety mode, safest command first, and the explicit flag required to write data.

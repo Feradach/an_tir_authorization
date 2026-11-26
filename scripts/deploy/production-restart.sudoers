@@ -1,0 +1,2 @@
+# Install as root-owned /etc/sudoers.d/an-tir-deploy using visudo.
+antir ALL=(root) NOPASSWD: /usr/bin/systemctl restart an_tir_authorizations.service
