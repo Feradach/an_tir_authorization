@@ -1,10 +1,12 @@
 ﻿
 ## [UNRELEASED]
+
+## [1.1.12] - 2026-11-25
 ### Added
-- You can read the exact list of blocked common passwords in your browser from either password reset page.
+- Both password reset pages link to the list of common passwords the site blocks. The list opens directly in your browser.
 
 ### Fixed
-- Password reset pages show all password requirements before you submit and explain which rules your password failed.
+- Password reset pages show all requirements before you submit and explain what needs to change if your password is rejected.
 
 ## [1.1.11] - 2026-10-31
 ### Major Changes
